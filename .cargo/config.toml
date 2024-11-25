@@ -1,0 +1,8 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+runner = "probe-rs run --chip STM32L471RG --connect-under-reset --catch-reset --catch-hardfault --always-print-stacktrace"
+
+[build]
+target = "thumbv7m-none-eabi"
+
+[env]
+DEFMT_LOG = "rocsys_rcm_embedded=trace,info"
