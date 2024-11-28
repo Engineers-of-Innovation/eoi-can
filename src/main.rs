@@ -85,7 +85,7 @@ async fn main(_spawner: Spawner) {
 
     let mut led = Output::new(p.PC1, Level::High, Speed::Low);
 
-    let busy = Input::new(p.PA6, Pull::None);
+    let busy = Input::new(p.PA8, Pull::None);
 
     let dc = Output::new(p.PC9, Level::High, Speed::Low);
 
@@ -99,7 +99,7 @@ async fn main(_spawner: Spawner) {
 
     info!("Init display");
 
-    let mut epd = Epd2in7b::new(&mut spi_device, busy, dc, reset, &mut Delay, None).unwrap();
+    let mut epd = Epd2in7b::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(100)).unwrap();
 
     info!("Init done");
 
@@ -120,6 +120,11 @@ async fn main(_spawner: Spawner) {
     Text::with_text_style("Hello World", Point::new(1, 5), style, text_style)
         .draw(&mut display)
         .ok();
+
+    epd.update_frame(&mut spi_device, &display.buffer(), &mut Delay)
+        .unwrap();
+
+    epd.display_frame(&mut spi_device, &mut Delay).unwrap();
 
     loop {
         info!("high");
