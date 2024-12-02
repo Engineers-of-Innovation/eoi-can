@@ -1,12 +1,14 @@
 #![no_std]
 #![no_main]
 
+use arrform::{arrform, ArrForm};
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{spi, Peripherals};
-use embassy_time::{Delay, Timer};
+use embassy_time::Delay;
+use embedded_hal::delay::DelayNs;
 use {defmt_rtt as _, panic_probe as _};
 
 use embedded_graphics::{
@@ -16,7 +18,7 @@ use embedded_graphics::{
 };
 
 use epd_waveshare::{
-    epd2in7b::{Display2in7b, Epd2in7b},
+    epd2in9_v2::{Display2in9, Epd2in9},
     prelude::*,
 };
 
@@ -81,15 +83,15 @@ pub fn embassy_init() -> Peripherals {
 #[embassy_executor::main]
 async fn main(_spawner: Spawner) {
     let p = embassy_init();
-    info!("Hello World!");
+    info!("Hello Rust!");
 
     let mut led = Output::new(p.PC1, Level::High, Speed::Low);
 
-    let busy = Input::new(p.PA8, Pull::None);
+    let busy = Input::new(p.PA8, Pull::Down);
 
-    let dc = Output::new(p.PC9, Level::High, Speed::Low);
+    let dc = Output::new(p.PC9, Level::High, Speed::VeryHigh);
 
-    let reset = Output::new(p.PC8, Level::High, Speed::Low);
+    let reset = Output::new(p.PC8, Level::Low, Speed::VeryHigh);
 
     let spi = spi::Spi::new_blocking(p.SPI2, p.PB13, p.PB15, p.PB14, spi::Config::default());
 
@@ -97,15 +99,17 @@ async fn main(_spawner: Spawner) {
 
     let mut spi_device = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs, Delay).unwrap();
 
+    Delay.delay_ms(1000);
+
     info!("Init display");
 
-    let mut epd = Epd2in7b::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(100)).unwrap();
+    let mut epd = Epd2in9::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000)).unwrap();
 
     info!("Init done");
 
     epd.clear_frame(&mut spi_device, &mut Delay).unwrap();
 
-    let mut display = Display2in7b::default();
+    let mut display = Display2in9::default();
 
     display.clear(Color::White).unwrap();
 
@@ -117,22 +121,27 @@ async fn main(_spawner: Spawner) {
 
     let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
-    Text::with_text_style("Hello World", Point::new(1, 5), style, text_style)
+    let mut i = 0u8;
+
+    loop {
+        led.toggle();
+
+        let display_text_buffer = arrform!(64, "Hello Rust! {}", i);
+
+        Text::with_text_style(
+            display_text_buffer.as_str(),
+            Point::new(1, 5),
+            style,
+            text_style,
+        )
         .draw(&mut display)
         .ok();
 
-    epd.update_frame(&mut spi_device, &display.buffer(), &mut Delay)
-        .unwrap();
+        epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
+            .unwrap();
 
-    epd.display_frame(&mut spi_device, &mut Delay).unwrap();
+        i = i.wrapping_add(1);
 
-    loop {
-        info!("high");
-        led.set_high();
-        Timer::after_millis(1000).await;
-
-        info!("low");
-        led.set_low();
-        Timer::after_millis(1000).await;
+        Delay.delay_ms(10000);
     }
 }
