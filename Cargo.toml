@@ -26,7 +26,7 @@ embedded-can = "0.4.1"
 embedded-hal = "1.0.0"
 embedded-hal-bus = "0.3.0"
 nb = "1.1.0"
-epd-waveshare = "0.6.0"
+epd-waveshare = { git = "https://github.com/caemor/epd-waveshare", rev = "1edb243c7328557304e253ef8c4401157ba96b3a"}
 embedded-graphics = "0.8.1"
 profont = "0.7.0"
 arrform = "0.1.1"

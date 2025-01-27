@@ -18,7 +18,8 @@ use embedded_graphics::{
 };
 
 use epd_waveshare::{
-    epd2in9_v2::{Display2in9, Epd2in9},
+    // epd2in9_v2::{Display2in9, Epd2in9},  // board now used to connect 5in7 display
+    epd7in5_v2::{Display7in5, Epd7in5},
     prelude::*,
 };
 
@@ -85,7 +86,12 @@ async fn main(_spawner: Spawner) {
     let p = embassy_init();
     info!("Hello Rust!");
 
-    let mut led = Output::new(p.PC1, Level::High, Speed::Low);
+    // leds are low active
+    let mut led_green = Output::new(p.PC1, Level::High, Speed::Low);
+    let mut led_red = Output::new(p.PC2, Level::High, Speed::Low);
+    let mut led_blue = Output::new(p.PC3, Level::High, Speed::Low);
+
+    led_red.set_low();
 
     let busy = Input::new(p.PA8, Pull::Down);
 
@@ -103,28 +109,34 @@ async fn main(_spawner: Spawner) {
 
     info!("Init display");
 
-    let mut epd = Epd2in9::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000)).unwrap();
+    let mut epd = Epd7in5::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000)).unwrap();
 
     info!("Init done");
 
     epd.clear_frame(&mut spi_device, &mut Delay).unwrap();
 
-    let mut display = Display2in9::default();
+    // currently display colors are inverted, not sure what is going on, changing BWRBIT does not do much
+    let mut display = Display7in5::default();
 
-    display.clear(Color::White).unwrap();
+    display.clear(Color::Black).unwrap();
 
     let style = MonoTextStyleBuilder::new()
         .font(&embedded_graphics::mono_font::ascii::FONT_9X18_BOLD)
-        .text_color(Color::Black)
-        .background_color(Color::White)
+        .text_color(Color::White)
+        .background_color(Color::Black)
         .build();
 
     let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
 
     let mut i = 0u8;
 
+    led_red.set_high();
+    led_green.set_low();
+
     loop {
-        led.toggle();
+        led_blue.toggle();
+
+        display.clear(Color::Black).unwrap();
 
         let display_text_buffer = arrform!(64, "Hello Rust! {}", i);
 
@@ -142,6 +154,6 @@ async fn main(_spawner: Spawner) {
 
         i = i.wrapping_add(1);
 
-        Delay.delay_ms(10000);
+        Delay.delay_ms(60000);
     }
 }
