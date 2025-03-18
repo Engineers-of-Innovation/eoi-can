@@ -1,13 +1,5 @@
-[package]
-name = "can-display"
-version = "0.1.0"
-edition = "2021"
-
 [workspace]
-members = [ "can-display-sim"]
+resolver = "3"
+
+members = [ "can-display-sim", "draw-display"]
 exclude = [ "can-display-firmware" ]
-
-[dependencies]
-
-
-
