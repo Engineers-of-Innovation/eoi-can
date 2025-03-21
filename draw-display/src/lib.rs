@@ -1,3 +1,5 @@
+#![cfg_attr(not(test), no_std)]
+
 use embedded_graphics::{
     mono_font::{
         ascii::{FONT_10X20, FONT_4X6},
@@ -8,26 +10,31 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
+use heapless::String;
 
-pub fn draw_display<D: DrawTarget<Color = BinaryColor>>(display: &mut D) -> Result<(), D::Error> {
-    display.clear(BinaryColor::On)?;
+pub fn draw_display<D, C>(display: &mut D) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = C>,
+    C: PixelColor + From<BinaryColor>,
+{
+    display.clear(BinaryColor::On.into())?;
 
-    let zwarte_doos: MonoTextStyle<'_, BinaryColor> = MonoTextStyleBuilder::new()
+    let zwarte_doos: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
-        .text_color(BinaryColor::On)
-        .background_color(BinaryColor::Off)
+        .text_color(BinaryColor::On.into())
+        .background_color(BinaryColor::Off.into())
         .build();
 
-    let normal: MonoTextStyle<'_, BinaryColor> = MonoTextStyleBuilder::new()
+    let normal: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
-        .text_color(BinaryColor::Off)
-        .background_color(BinaryColor::On)
+        .text_color(BinaryColor::Off.into())
+        .background_color(BinaryColor::On.into())
         .build();
 
     // power meter
 
     Line::new(Point::new(0, 70), Point::new(800, 70))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off, 2))
+        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off.into(), 2))
         .draw(display)?;
 
     Text::with_alignment(
@@ -49,7 +56,7 @@ pub fn draw_display<D: DrawTarget<Color = BinaryColor>>(display: &mut D) -> Resu
     Text::with_alignment("1500", Point::new(300, 130), normal, Alignment::Center).draw(display)?;
 
     Line::new(Point::new(0, 140), Point::new(800, 140))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off, 2))
+        .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 2))
         .draw(display)?;
 
     Text::with_alignment(
@@ -89,16 +96,18 @@ pub fn draw_display<D: DrawTarget<Color = BinaryColor>>(display: &mut D) -> Resu
     Text::new(
         "MPPT",
         Point::new(15, 370),
-        MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
-
+    let mut panel_text: String<64> = String::new();
+    use core::fmt::Write;
     for panel in 0..11 {
-        let panel_text = format!("Panel {:2}   50 W 24 V 2 A", panel + 1);
+        panel_text.clear();
+        write!(&mut panel_text, "Panel {:2}   50 W 24 V 2 A", panel + 1).unwrap();
         Text::new(
             panel_text.as_str(),
             Point::new(15, (panel * 8) + 390),
-            MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
         )
         .draw(display)?;
     }
@@ -176,28 +185,32 @@ pub fn draw_display<D: DrawTarget<Color = BinaryColor>>(display: &mut D) -> Resu
     )
     .draw(display)?;
 
+    let mut cell_text: String<64> = String::new();
+
     for cell in 0..7 {
-        let cell_text = format!("Cell {:2}: 3.123 V", cell + 1);
+        cell_text.clear();
+        write!(&mut cell_text, "Cell {:2}: 3.123 V", cell + 1).unwrap();
         Text::new(
             cell_text.as_str(),
             Point::new(650, (cell * 8) + 420),
-            MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
         )
         .draw(display)?;
     }
 
     for cell in 7..14 {
-        let cell_text = format!("Cell {:2}: 4.123 V", cell + 1);
+        cell_text.clear();
+        write!(&mut cell_text, "Cell {:2}: 4.123 V", cell + 1).unwrap();
         Text::new(
             cell_text.as_str(),
             Point::new(730, ((cell - 7) * 8) + 420),
-            MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
         )
         .draw(display)?;
     }
 
     Line::new(Point::new(400, 140), Point::new(400, 480))
-        .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off, 2))
+        .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 2))
         .draw(display)?;
 
     // Create a new window
@@ -271,14 +284,14 @@ pub fn draw_display<D: DrawTarget<Color = BinaryColor>>(display: &mut D) -> Resu
     Text::new(
         "Last updated: 12:34:56",
         Point::new(300, 470),
-        MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
 
     Text::new(
         "Ip address: 127.0.0.1",
         Point::new(415, 470),
-        MonoTextStyle::new(&FONT_4X6, BinaryColor::Off),
+        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
 
