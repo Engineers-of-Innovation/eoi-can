@@ -1,7 +1,6 @@
 #![no_std]
 #![no_main]
 
-use arrform::{arrform, ArrForm};
 use defmt::info;
 use embassy_executor::Spawner;
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
@@ -10,12 +9,6 @@ use embassy_stm32::{spi, Peripherals};
 use embassy_time::Delay;
 use embedded_hal::delay::DelayNs;
 use {defmt_rtt as _, panic_probe as _};
-
-use embedded_graphics::{
-    mono_font::MonoTextStyleBuilder,
-    prelude::*,
-    text::{Baseline, Text, TextStyleBuilder},
-};
 
 use epd_waveshare::{
     // epd2in9_v2::{Display2in9, Epd2in9},  // board now used to connect 5in7 display
@@ -118,42 +111,16 @@ async fn main(_spawner: Spawner) {
     // currently display colors are inverted, not sure what is going on, changing BWRBIT does not do much
     let mut display = Display7in5::default();
 
-    display.clear(Color::Black).unwrap();
-
-    let style = MonoTextStyleBuilder::new()
-        .font(&embedded_graphics::mono_font::ascii::FONT_9X18_BOLD)
-        .text_color(Color::White)
-        .background_color(Color::Black)
-        .build();
-
-    let text_style = TextStyleBuilder::new().baseline(Baseline::Top).build();
-
-    let mut i = 0u8;
-
     led_red.set_high();
     led_green.set_low();
 
+    draw_display::draw_display(&mut display).unwrap();
+
+    epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
+        .unwrap();
+
     loop {
         led_blue.toggle();
-
-        display.clear(Color::Black).unwrap();
-
-        let display_text_buffer = arrform!(64, "Hello Rust! {}", i);
-
-        Text::with_text_style(
-            display_text_buffer.as_str(),
-            Point::new(1, 5),
-            style,
-            text_style,
-        )
-        .draw(&mut display)
-        .ok();
-
-        epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
-            .unwrap();
-
-        i = i.wrapping_add(1);
-
-        Delay.delay_ms(60000);
+        Delay.delay_ms(500);
     }
 }

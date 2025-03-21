@@ -1,0 +1,8 @@
+[package]
+name = "draw-display"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-graphics = "0.8.1"
+heapless = "0.8.0"

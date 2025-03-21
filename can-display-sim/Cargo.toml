@@ -1,0 +1,15 @@
+[package]
+name = "can-display-sim"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = "0.4.39"
+eg-seven-segment = "0.2.0"
+embedded-graphics = "0.8.1"
+embedded-graphics-simulator = "0.7.0"
+embedded-text = "0.7.2"
+tinybmp = "0.6.0"
+tinytga = "0.5.0"
+tokio = {version = "1.43.0", features = ["full"]}
+draw-display = { path = "../draw-display" }
