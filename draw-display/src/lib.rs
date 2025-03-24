@@ -12,6 +12,8 @@ use embedded_graphics::{
 };
 use heapless::String;
 
+pub mod can_frame;
+
 pub fn draw_display<D, C>(display: &mut D) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = C>,

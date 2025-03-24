@@ -3,6 +3,12 @@ name = "draw-display"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+defmt = ["dep:defmt"]
+
 [dependencies]
 embedded-graphics = "0.8.1"
 heapless = "0.8.0"
+embedded-can = "0.4.1"
+defmt = { version = "0.3", optional = true }
