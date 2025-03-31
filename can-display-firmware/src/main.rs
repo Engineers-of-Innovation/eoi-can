@@ -2,7 +2,6 @@
 #![no_main]
 
 use defmt::{info, warn};
-use draw_display::can_frame::CanFrame;
 use embassy_executor::Spawner;
 use embassy_stm32::can::filter::Mask32;
 use embassy_stm32::can::{
@@ -14,6 +13,7 @@ use embassy_stm32::peripherals::CAN1;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, spi, Peripherals};
 use embassy_time::{Delay, Timer};
+use eoi_can_decoder::can_frame::CanFrame;
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct CanInterrupts {

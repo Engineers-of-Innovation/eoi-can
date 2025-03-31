@@ -1,5 +1,5 @@
 [workspace]
 resolver = "3"
 
-members = [ "can-display-sim", "draw-display"]
+members = [ "can-display-sim", "draw-display", "eoi-can-decoder"]
 exclude = [ "can-display-firmware" ]
