@@ -14,4 +14,3 @@ defmt = { version = "0.3", optional = true }
 
 [dev-dependencies]
 assert2 = "0.3"
-float-cmp = "0.10"

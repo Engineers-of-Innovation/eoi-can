@@ -151,11 +151,6 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
     u32::from_le_bytes(arr)
 }
 
-fn bytes_to_i16(bytes: &[u8]) -> i16 {
-    let arr: [u8; 2] = bytes.try_into().expect("Slice length must be 2");
-    i16::from_le_bytes(arr)
-}
-
 fn bytes_to_f32(bytes: &[u8]) -> f32 {
     let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
     f32::from_le_bytes(arr)
@@ -166,13 +161,20 @@ mod tests {
     use super::*;
     use assert2::assert;
     use embedded_can::StandardId;
-    use float_cmp::approx_eq;
+
+    const PERRI_CURRENT: f32 = -0.2421;
+    const DISCHARGE_CURRENT: f32 = 9.9765;
+    const CHARGE_CURRENT: f32 = 17.5270;
+
+    // This sum seems a bit odd, but it is the result of the test data
+    // TODO: investigate if this is a bug in the test data / battery
+    const PACK_CURRENT: f32 = CHARGE_CURRENT + DISCHARGE_CURRENT + PERRI_CURRENT;
 
     #[test]
     fn pack_and_perri_current() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x100).unwrap()),
-            &0x95788B3FD56452_u64.to_be_bytes(),
+            &0x5817DA41EBF577BE_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -181,15 +183,15 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(approx_eq!(f32, data.pack_current, 1.6671, epsilon = 0.0001));
-        assert!(approx_eq!(f32, data.perri_current, 0.0, epsilon = 0.0001));
+        assert!((data.pack_current - PACK_CURRENT).abs() < 0.0001);
+        assert!((data.perri_current - PERRI_CURRENT).abs() < 0.0001);
     }
 
     #[test]
     fn charge_and_discharge_current() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x101).unwrap()),
-            &0x8089913F80DD213E_u64.to_be_bytes(),
+            &0xE89F1F4150378C41_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -199,20 +201,15 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(approx_eq!(
-            f32,
-            data.discharge_current,
-            0.0,
-            epsilon = 0.0001
-        ));
-        assert!(approx_eq!(f32, data.charge_current, 0.0, epsilon = 0.0001));
+        assert!((data.discharge_current - DISCHARGE_CURRENT).abs() < 0.0001);
+        assert!((data.charge_current - CHARGE_CURRENT).abs() < 0.0001);
     }
 
     #[test]
     fn soc_error_flags_and_balancing() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x102).unwrap()),
-            &0x8426000000000000_u64.to_be_bytes(),
+            &0x2526000000000000_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -222,7 +219,7 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.soc == 98.6);
+        assert!(data.soc == 97.65);
         assert!(data.error_flags == 0);
         assert!(data.balancing_status == 0);
     }
@@ -231,7 +228,7 @@ mod tests {
     fn cell_voltages_1_4() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x103).unwrap()),
-            &0x4A10441047104610_u64.to_be_bytes(),
+            &0x36102C102D103710_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -240,17 +237,17 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.cell_voltage[0] == 4.170);
-        assert!(data.cell_voltage[1] == 4.164);
-        assert!(data.cell_voltage[2] == 4.167);
-        assert!(data.cell_voltage[3] == 4.166);
+        assert!(data.cell_voltage[0] == 4.150);
+        assert!(data.cell_voltage[1] == 4.140);
+        assert!(data.cell_voltage[2] == 4.141);
+        assert!(data.cell_voltage[3] == 4.151);
     }
 
     #[test]
     fn cell_voltages_5_8() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x104).unwrap()),
-            &[0; 8],
+            &0x34103A1030103410_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -259,15 +256,17 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.cell_voltage[0] == 0.0);
-        assert!(data.cell_voltage[1] == 0.0);
+        assert!(data.cell_voltage[0] == 4.148);
+        assert!(data.cell_voltage[1] == 4.154);
+        assert!(data.cell_voltage[2] == 4.144);
+        assert!(data.cell_voltage[3] == 4.148);
     }
 
     #[test]
     fn cell_voltages_9_12() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x105).unwrap()),
-            &[0; 8],
+            &0x3810391038103410_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -276,15 +275,17 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.cell_voltage[0] == 0.0);
-        assert!(data.cell_voltage[1] == 0.0);
+        assert!(data.cell_voltage[0] == 4.152);
+        assert!(data.cell_voltage[1] == 4.153);
+        assert!(data.cell_voltage[2] == 4.152);
+        assert!(data.cell_voltage[3] == 4.148);
     }
 
     #[test]
     fn cell_voltages_13_14_pack_and_stack() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x106).unwrap()),
-            &[0; 8],
+            &0x39103110C0DA0EE2_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -294,17 +295,17 @@ mod tests {
             } else {
                 panic!("Unexpected data type");
             };
-        assert!(data.cell_voltage[0] == 0.0);
-        assert!(data.cell_voltage[1] == 0.0);
-        assert!(data.pack_voltage == 0.0);
-        assert!(data.stack_voltage == 0.0);
+        assert!(data.cell_voltage[0] == 4.153);
+        assert!(data.cell_voltage[1] == 4.145);
+        assert!(data.pack_voltage == 56.0);
+        assert!(data.stack_voltage == 57.87);
     }
 
     #[test]
     fn temperatures_and_states() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x107).unwrap()),
-            &[0; 8],
+            &0x2424262836060303_u64.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -313,18 +314,21 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.temperature[0] == 0);
-        assert!(data.ic_temperature == 0);
-        assert!(data.battery_state == 0);
-        assert!(data.charge_state == 0);
-        assert!(data.discharge_state == 0);
+        assert!(data.temperature[0] == 36);
+        assert!(data.temperature[1] == 36);
+        assert!(data.temperature[2] == 38);
+        assert!(data.temperature[3] == 40);
+        assert!(data.ic_temperature == 54);
+        assert!(data.battery_state == 6);
+        assert!(data.charge_state == 3);
+        assert!(data.discharge_state == 3);
     }
 
     #[test]
     fn battery_uptime() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x108).unwrap()),
-            &[0; 8],
+            &0x6CB0223B_u32.to_be_bytes(),
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
@@ -333,6 +337,6 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.uptime_ms == 0);
+        assert!(data.uptime_ms == 992129132);
     }
 }
