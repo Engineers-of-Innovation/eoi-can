@@ -4,6 +4,8 @@ use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, Window};
 use eoi_can_decoder::parse_eoi_can_data;
 use socketcan::{tokio::CanSocket, CanFrame};
+use std::time::Duration;
+use tokio::time::sleep;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -78,19 +80,21 @@ async fn main() -> Result<(), core::convert::Infallible> {
         }
     });
 
+    // Start displaying the data
     let mut display: SimulatorDisplay<BinaryColor> = SimulatorDisplay::new(Size::new(800, 480));
-
-    draw_display::draw_display(&mut display)?;
-
     let output_settings = OutputSettingsBuilder::new().scale(1).max_fps(1).build();
     let mut window = Window::new(
         "Engineers of Innovation CAN Display Simulator",
         &output_settings,
     );
 
-    window.show_static(&display);
-    // window.update(&display);
-    // sleep(Duration::from_secs(1)).await;
+    let mut display_data = draw_display::DisplayData { speed_kmh: 6.66 };
 
-    Ok(())
+    loop {
+        draw_display::draw_display(&mut display, &display_data).unwrap();
+        window.update(&display);
+
+        sleep(Duration::from_secs(1)).await;
+        display_data.speed_kmh += 1.0;
+    }
 }

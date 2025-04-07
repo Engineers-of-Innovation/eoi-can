@@ -12,11 +12,16 @@ use embedded_graphics::{
 };
 use heapless::String;
 
-pub fn draw_display<D, C>(display: &mut D) -> Result<(), D::Error>
+pub struct DisplayData {
+    pub speed_kmh: f32,
+}
+
+pub fn draw_display<D, C>(display: &mut D, data: &DisplayData) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
+    let mut string_helper: String<64> = String::new();
     display.clear(BinaryColor::On.into())?;
 
     let zwarte_doos: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
@@ -67,7 +72,15 @@ where
     )
     .draw(display)?;
 
-    Text::with_alignment("15", Point::new(100, 130), normal, Alignment::Center).draw(display)?;
+    string_helper.clear();
+    write!(&mut string_helper, "{:.1}", data.speed_kmh).unwrap();
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(100, 130),
+        normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
 
     // state of charge
 
