@@ -13,3 +13,9 @@ tinybmp = "0.6.0"
 tinytga = "0.5.0"
 tokio = {version = "1.43.0", features = ["full"]}
 draw-display = { path = "../draw-display" }
+clap = { version = "4.5.35", features = ["derive"] }
+socketcan = { version = "3.5.0", features = ["tokio"] }
+embedded-can = "0.4.1"
+tracing = "0.1.40"
+tracing-subscriber = {version = "0.3.18", features = ["env-filter"]}
+eoi-can-decoder = { path = "../eoi-can-decoder" }

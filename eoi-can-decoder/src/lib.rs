@@ -2,10 +2,12 @@
 
 pub mod can_frame;
 
+#[derive(Debug)]
 pub enum EoICanData {
     EoIBattery(EoIBattery),
 }
 
+#[derive(Debug)]
 pub enum EoIBattery {
     PackAndPerriCurrent(PackAndPerriCurrent),
     ChargeAndDischargeCurrent(ChargeAndDischargeCurrent),
@@ -18,32 +20,38 @@ pub enum EoIBattery {
     BatteryUptime(BatteryUptime),
 }
 
+#[derive(Debug)]
 pub struct PackAndPerriCurrent {
     pub pack_current: f32,
     pub perri_current: f32,
 }
 
+#[derive(Debug)]
 pub struct ChargeAndDischargeCurrent {
     pub discharge_current: f32,
     pub charge_current: f32,
 }
 
+#[derive(Debug)]
 pub struct SocErrorFlagsAndBalancing {
     pub soc: f32,              // u16 on CAN bus with a factor of 100
     pub error_flags: u32,      //TODO: use bitflags?!
     pub balancing_status: u16, //TODO: use bitflags?!
 }
 
+#[derive(Debug)]
 pub struct FourCellVoltages {
     pub cell_voltage: [f32; 4], // u16 on CAN bus with a factor of 1000
 }
 
+#[derive(Debug)]
 pub struct CellVoltages13_14PackAndStack {
     pub cell_voltage: [f32; 2], // u16 on CAN bus with a factor of 1000
     pub pack_voltage: f32,      // u16 on CAN bus with a factor of 1000
     pub stack_voltage: f32,     // u16 on CAN bus with a factor of 1000
 }
 
+#[derive(Debug)]
 pub struct TemperaturesAndStates {
     pub temperature: [i8; 4],
     pub ic_temperature: i8,
@@ -52,6 +60,7 @@ pub struct TemperaturesAndStates {
     pub discharge_state: u8, //TODO: define enum
 }
 
+#[derive(Debug)]
 pub struct BatteryUptime {
     pub uptime_ms: u32,
 }

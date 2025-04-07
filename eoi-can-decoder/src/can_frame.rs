@@ -13,14 +13,10 @@ impl CanFrame {
     const MAX_LEN: usize = 8;
 
     /// Wrap an already encoded CAN frame
-    pub fn from_encoded<const LEN: usize>(id: embedded_can::Id, data: &[u8; LEN]) -> Self {
-        const {
-            assert!(LEN <= Self::MAX_LEN);
-        }
-
+    pub fn from_encoded(id: embedded_can::Id, data: &[u8]) -> Self {
         Self {
             id,
-            data: data.as_slice().try_into().expect("checked by const assert"),
+            data: heapless::Vec::from_slice(data).expect("Data length exceeds MAX_LEN"),
         }
     }
 }
