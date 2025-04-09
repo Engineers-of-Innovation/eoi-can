@@ -1,11 +1,11 @@
 use clap::Parser;
 use embedded_can::{ExtendedId, Frame};
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
-use embedded_graphics_simulator::{OutputSettingsBuilder, SimulatorDisplay, Window};
+use embedded_graphics_simulator::{
+    OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
+};
 use eoi_can_decoder::parse_eoi_can_data;
 use socketcan::{tokio::CanSocket, CanFrame};
-use std::time::Duration;
-use tokio::time::sleep;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -22,7 +22,7 @@ fn register_tracing_subscriber(level_filter: LevelFilter) {
     tracing_subscriber::registry()
         .with(
             EnvFilter::builder()
-                .with_default_directive("info".parse().unwrap())
+                .with_default_directive("debug".parse().unwrap())
                 .from_env_lossy(),
         )
         .with(
@@ -88,13 +88,22 @@ async fn main() -> Result<(), core::convert::Infallible> {
         &output_settings,
     );
 
-    let mut display_data = draw_display::DisplayData { speed_kmh: 6.66 };
+    let mut display_data = draw_display::DisplayData::default();
+    display_data.speed_kmh.update(123.45);
 
-    loop {
+    'running: loop {
         draw_display::draw_display(&mut display, &display_data).unwrap();
         window.update(&display);
 
-        sleep(Duration::from_secs(1)).await;
-        display_data.speed_kmh += 1.0;
+        for event in window.events() {
+            if let SimulatorEvent::Quit = event {
+                warn!("Received quit event, exiting...");
+                break 'running;
+            } else {
+                trace!("Event: {:?}", event);
+            }
+        }
     }
+
+    Ok(())
 }

@@ -1,5 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
+mod time;
+
 use embedded_graphics::{
     mono_font::{
         ascii::{FONT_10X20, FONT_4X6},
@@ -11,9 +13,48 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use heapless::String;
+use time::{Duration, Instant};
 
+const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct DisplayValue<T> {
+    value: Option<T>,
+    last_updated: Instant,
+}
+
+impl<T> DisplayValue<T> {
+    pub fn update(&mut self, value: T) {
+        self.value = Some(value);
+        self.last_updated = Instant::now();
+    }
+
+    pub fn is_valid(&self) -> bool {
+        self.value.is_some() && self.last_updated.elapsed() < DISPLAY_VALUE_TIMEOUT
+    }
+
+    pub fn get(&self) -> Option<&T> {
+        if self.is_valid() {
+            self.value.as_ref()
+        } else {
+            None
+        }
+    }
+}
+
+impl<T> Default for DisplayValue<T> {
+    fn default() -> Self {
+        Self {
+            value: None,
+            last_updated: Instant::now(), // We need to set something as initial value, will be updated when first value is set
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct DisplayData {
-    pub speed_kmh: f32,
+    pub speed_kmh: DisplayValue<f32>,
 }
 
 pub fn draw_display<D, C>(display: &mut D, data: &DisplayData) -> Result<(), D::Error>
@@ -73,7 +114,12 @@ where
     .draw(display)?;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:.1}", data.speed_kmh).unwrap();
+    if let Some(data) = data.speed_kmh.get() {
+        write!(&mut string_helper, "{:.1}", data).unwrap();
+    } else {
+        string_helper.push_str("N/A").unwrap();
+    }
+
     Text::with_alignment(
         string_helper.as_str(),
         Point::new(100, 130),

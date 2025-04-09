@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-draw-display = { path = "../draw-display", features = ["defmt"]}
+draw-display = { path = "../draw-display", features = ["defmt"], default-features = false }
 eoi-can-decoder = { path = "../eoi-can-decoder", features = ["defmt"]}
 
 cortex-m = { version = "0.7.7", features = ["critical-section-single-core"] }

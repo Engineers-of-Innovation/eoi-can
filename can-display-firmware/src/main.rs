@@ -24,7 +24,6 @@ bind_interrupts!(struct CanInterrupts {
 });
 
 use epd_waveshare::{
-    // epd2in9_v2::{Display2in9, Epd2in9},  // board now used to connect 5in7 display
     epd7in5_v2::{Display7in5, Epd7in5},
     prelude::*,
 };
@@ -145,26 +144,29 @@ async fn main(spawner: Spawner) {
 
     spawner.must_spawn(can_receiver(can_rx));
 
-    // Delay.delay_ms(1000);
+    Timer::after_secs(1).await;
 
-    // info!("Init display");
+    info!("Init display");
 
-    // let mut epd = Epd7in5::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000)).unwrap();
+    let mut epd = Epd7in5::new(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000)).unwrap();
 
-    // info!("Init done");
+    info!("Init done");
 
-    // epd.clear_frame(&mut spi_device, &mut Delay).unwrap();
+    epd.clear_frame(&mut spi_device, &mut Delay).unwrap();
 
-    // // currently display colors are inverted, not sure what is going on, changing BWRBIT does not do much
-    // let mut display = Display7in5::default();
+    // currently display colors are inverted, not sure what is going on, changing BWRBIT does not do much
+    let mut display = Display7in5::default();
 
     led_red.set_high();
     led_green.set_low();
 
-    // draw_display::draw_display(&mut display).unwrap();
+    let mut display_data = draw_display::DisplayData::default();
+    display_data.speed_kmh.update(123.45);
 
-    // epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
-    //     .unwrap();
+    draw_display::draw_display(&mut display, &display_data).unwrap();
+
+    epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
+        .unwrap();
 
     loop {
         led_blue.toggle();

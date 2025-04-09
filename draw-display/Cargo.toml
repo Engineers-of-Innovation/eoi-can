@@ -4,10 +4,14 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
+default = ["std"]
 defmt = ["dep:defmt"]
+std = ["tokio"]
+tokio = ["dep:tokio"]
 
 [dependencies]
 embedded-graphics = "0.8.1"
 heapless = "0.8.0"
 defmt = { version = "0.3", optional = true }
+embassy-time = { version = "0.4" }
+tokio = {version = "1.43.0", features = ["full"], optional = true }
