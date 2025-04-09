@@ -55,6 +55,7 @@ impl<T> Default for DisplayValue<T> {
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
+    pub cell_voltage: [DisplayValue<f32>; 14],
 }
 
 pub fn draw_display<D, C>(display: &mut D, data: &DisplayData) -> Result<(), D::Error>
@@ -248,7 +249,18 @@ where
 
     for cell in 0..7 {
         cell_text.clear();
-        write!(&mut cell_text, "Cell {:2}: 3.123 V", cell + 1).unwrap();
+        if let Some(cell_voltage) = data.cell_voltage[cell as usize].get() {
+            write!(
+                &mut cell_text,
+                "Cell {:2}: {:1.3} V",
+                cell + 1,
+                cell_voltage
+            )
+            .unwrap();
+        } else {
+            write!(&mut cell_text, "Cell {:2}: N/A", cell + 1).unwrap();
+        }
+
         Text::new(
             cell_text.as_str(),
             Point::new(650, (cell * 8) + 420),
@@ -259,7 +271,17 @@ where
 
     for cell in 7..14 {
         cell_text.clear();
-        write!(&mut cell_text, "Cell {:2}: 4.123 V", cell + 1).unwrap();
+        if let Some(cell_voltage) = data.cell_voltage[cell as usize].get() {
+            write!(
+                &mut cell_text,
+                "Cell {:2}: {:1.3} V",
+                cell + 1,
+                cell_voltage
+            )
+            .unwrap();
+        } else {
+            write!(&mut cell_text, "Cell {:2}: N/A", cell + 1).unwrap();
+        }
         Text::new(
             cell_text.as_str(),
             Point::new(730, ((cell - 7) * 8) + 420),

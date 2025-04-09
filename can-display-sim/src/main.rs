@@ -82,7 +82,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     // Start displaying the data
     let mut display: SimulatorDisplay<BinaryColor> = SimulatorDisplay::new(Size::new(800, 480));
-    let output_settings = OutputSettingsBuilder::new().scale(1).max_fps(1).build();
+    let output_settings = OutputSettingsBuilder::new().scale(2).max_fps(1).build();
     let mut window = Window::new(
         "Engineers of Innovation CAN Display Simulator",
         &output_settings,
@@ -90,6 +90,12 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     let mut display_data = draw_display::DisplayData::default();
     display_data.speed_kmh.update(123.45);
+    display_data.cell_voltage[0].update(3.7);
+    display_data.cell_voltage[1].update(3.8);
+    display_data.cell_voltage[2].update(3.9);
+    display_data.cell_voltage[3].update(4.0);
+    display_data.cell_voltage[4].update(4.1);
+    display_data.cell_voltage[5].update(4.2);
 
     'running: loop {
         draw_display::draw_display(&mut display, &display_data).unwrap();
