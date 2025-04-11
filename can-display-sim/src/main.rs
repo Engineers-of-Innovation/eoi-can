@@ -100,24 +100,16 @@ async fn main() -> Result<(), core::convert::Infallible> {
             match parsed_data {
                 EoICanData::EoiBattery(eoi_battery) => match eoi_battery {
                     EoiBattery::CellVoltages1_4(data) => {
-                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
-                            display_data.cell_voltage[index].update(*cell_voltage);
-                        }
+                        display_data.update_cell_voltages(0, data.cell_voltage.as_slice());
                     }
                     EoiBattery::CellVoltages5_8(data) => {
-                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
-                            display_data.cell_voltage[index + 4].update(*cell_voltage);
-                        }
+                        display_data.update_cell_voltages(4, data.cell_voltage.as_slice());
                     }
                     EoiBattery::CellVoltages9_12(data) => {
-                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
-                            display_data.cell_voltage[index + 8].update(*cell_voltage);
-                        }
+                        display_data.update_cell_voltages(8, data.cell_voltage.as_slice());
                     }
                     EoiBattery::CellVoltages13_14PackAndStack(data) => {
-                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
-                            display_data.cell_voltage[index + 12].update(*cell_voltage);
-                        }
+                        display_data.update_cell_voltages(12, data.cell_voltage.as_slice());
                     }
                     _ => {
                         warn!("unhandled data")

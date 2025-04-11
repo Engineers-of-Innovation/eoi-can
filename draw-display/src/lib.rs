@@ -58,6 +58,14 @@ pub struct DisplayData {
     pub cell_voltage: [DisplayValue<f32>; 14],
 }
 
+impl DisplayData {
+    pub fn update_cell_voltages(&mut self, offset: usize, values: &[f32]) {
+        for (index, value) in values.iter().enumerate() {
+            self.cell_voltage[offset + index].update(*value);
+        }
+    }
+}
+
 pub fn draw_display<D, C>(display: &mut D, data: &DisplayData) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = C>,
