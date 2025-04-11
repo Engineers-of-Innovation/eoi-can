@@ -15,7 +15,7 @@ use embedded_graphics::{
 use heapless::String;
 use time::{Duration, Instant};
 
-const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
+const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(15);
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]

@@ -4,7 +4,7 @@ use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
-use eoi_can_decoder::parse_eoi_can_data;
+use eoi_can_decoder::{parse_eoi_can_data, EoICanData, EoiBattery};
 use socketcan::{tokio::CanSocket, CanFrame};
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
@@ -48,6 +48,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
         CanSocket::open(args.can_interface.as_str()).expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
+    let (can_to_display_tx, mut can_to_display_rx) = tokio::sync::mpsc::channel::<EoICanData>(100);
+
     // hack to check if the socket is open, not sure how to go about this
     can_sock
         .write_frame(CanFrame::new(ExtendedId::new(0).unwrap(), &[]).unwrap())
@@ -74,6 +76,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
             let parsed_data = parse_eoi_can_data(&embedded_frame);
             if let Some(parsed) = parsed_data {
                 info!("Parsed data: {:?}", parsed);
+                if can_to_display_tx.send(parsed).await.is_err() {
+                    warn!("Failed to send parsed data to display task");
+                }
             } else {
                 warn!("Failed to parse data from CAN frame: {:?}", embedded_frame);
             }
@@ -89,15 +94,38 @@ async fn main() -> Result<(), core::convert::Infallible> {
     );
 
     let mut display_data = draw_display::DisplayData::default();
-    display_data.speed_kmh.update(123.45);
-    display_data.cell_voltage[0].update(3.7);
-    display_data.cell_voltage[1].update(3.8);
-    display_data.cell_voltage[2].update(3.9);
-    display_data.cell_voltage[3].update(4.0);
-    display_data.cell_voltage[4].update(4.1);
-    display_data.cell_voltage[5].update(4.2);
 
     'running: loop {
+        while let Ok(parsed_data) = can_to_display_rx.try_recv() {
+            match parsed_data {
+                EoICanData::EoiBattery(eoi_battery) => match eoi_battery {
+                    EoiBattery::CellVoltages1_4(data) => {
+                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
+                            display_data.cell_voltage[index].update(*cell_voltage);
+                        }
+                    }
+                    EoiBattery::CellVoltages5_8(data) => {
+                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
+                            display_data.cell_voltage[index + 4].update(*cell_voltage);
+                        }
+                    }
+                    EoiBattery::CellVoltages9_12(data) => {
+                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
+                            display_data.cell_voltage[index + 8].update(*cell_voltage);
+                        }
+                    }
+                    EoiBattery::CellVoltages13_14PackAndStack(data) => {
+                        for (index, cell_voltage) in data.cell_voltage.iter().enumerate() {
+                            display_data.cell_voltage[index + 12].update(*cell_voltage);
+                        }
+                    }
+                    _ => {
+                        warn!("unhandled data")
+                    }
+                },
+            }
+        }
+
         draw_display::draw_display(&mut display, &display_data).unwrap();
         window.update(&display);
 

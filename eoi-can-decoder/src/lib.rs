@@ -4,11 +4,11 @@ pub mod can_frame;
 
 #[derive(Debug)]
 pub enum EoICanData {
-    EoIBattery(EoIBattery),
+    EoiBattery(EoiBattery),
 }
 
 #[derive(Debug)]
-pub enum EoIBattery {
+pub enum EoiBattery {
     PackAndPerriCurrent(PackAndPerriCurrent),
     ChargeAndDischargeCurrent(ChargeAndDischargeCurrent),
     SocErrorFlagsAndBalancing(SocErrorFlagsAndBalancing),
@@ -73,26 +73,26 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
     let data = &can_frame.data;
 
     match id {
-        0x100 => Some(EoICanData::EoIBattery(EoIBattery::PackAndPerriCurrent(
+        0x100 => Some(EoICanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_to_f32(&data[0..4]),
                 perri_current: bytes_to_f32(&data[4..8]),
             },
         ))),
-        0x101 => Some(EoICanData::EoIBattery(
-            EoIBattery::ChargeAndDischargeCurrent(ChargeAndDischargeCurrent {
+        0x101 => Some(EoICanData::EoiBattery(
+            EoiBattery::ChargeAndDischargeCurrent(ChargeAndDischargeCurrent {
                 discharge_current: bytes_to_f32(&data[0..4]),
                 charge_current: bytes_to_f32(&data[4..8]),
             }),
         )),
-        0x102 => Some(EoICanData::EoIBattery(
-            EoIBattery::SocErrorFlagsAndBalancing(SocErrorFlagsAndBalancing {
+        0x102 => Some(EoICanData::EoiBattery(
+            EoiBattery::SocErrorFlagsAndBalancing(SocErrorFlagsAndBalancing {
                 soc: bytes_to_u16(&data[0..2]) as f32 / 100.0,
                 error_flags: bytes_to_u32(&data[2..6]),
                 balancing_status: bytes_to_u16(&data[6..8]),
             }),
         )),
-        0x103 => Some(EoICanData::EoIBattery(EoIBattery::CellVoltages1_4(
+        0x103 => Some(EoICanData::EoiBattery(EoiBattery::CellVoltages1_4(
             FourCellVoltages {
                 cell_voltage: [
                     bytes_to_u16(&data[0..2]) as f32 / 1000.0,
@@ -102,7 +102,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
                 ],
             },
         ))),
-        0x104 => Some(EoICanData::EoIBattery(EoIBattery::CellVoltages5_8(
+        0x104 => Some(EoICanData::EoiBattery(EoiBattery::CellVoltages5_8(
             FourCellVoltages {
                 cell_voltage: [
                     bytes_to_u16(&data[0..2]) as f32 / 1000.0,
@@ -112,7 +112,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
                 ],
             },
         ))),
-        0x105 => Some(EoICanData::EoIBattery(EoIBattery::CellVoltages9_12(
+        0x105 => Some(EoICanData::EoiBattery(EoiBattery::CellVoltages9_12(
             FourCellVoltages {
                 cell_voltage: [
                     bytes_to_u16(&data[0..2]) as f32 / 1000.0,
@@ -122,8 +122,8 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
                 ],
             },
         ))),
-        0x106 => Some(EoICanData::EoIBattery(
-            EoIBattery::CellVoltages13_14PackAndStack(CellVoltages13_14PackAndStack {
+        0x106 => Some(EoICanData::EoiBattery(
+            EoiBattery::CellVoltages13_14PackAndStack(CellVoltages13_14PackAndStack {
                 cell_voltage: [
                     bytes_to_u16(&data[0..2]) as f32 / 1000.0,
                     bytes_to_u16(&data[2..4]) as f32 / 1000.0,
@@ -132,7 +132,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
                 stack_voltage: bytes_to_u16(&data[6..8]) as f32 / 1000.0,
             }),
         )),
-        0x107 => Some(EoICanData::EoIBattery(EoIBattery::TemperaturesAndStates(
+        0x107 => Some(EoICanData::EoiBattery(EoiBattery::TemperaturesAndStates(
             TemperaturesAndStates {
                 temperature: [data[0] as i8, data[1] as i8, data[2] as i8, data[3] as i8],
                 ic_temperature: data[4] as i8,
@@ -141,7 +141,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
                 discharge_state: data[7],
             },
         ))),
-        0x108 => Some(EoICanData::EoIBattery(EoIBattery::BatteryUptime(
+        0x108 => Some(EoICanData::EoiBattery(EoiBattery::BatteryUptime(
             BatteryUptime {
                 uptime_ms: bytes_to_u32(&data[0..4]),
             },
@@ -187,7 +187,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::PackAndPerriCurrent(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::PackAndPerriCurrent(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
@@ -204,7 +204,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::ChargeAndDischargeCurrent(data)) = data
+        let data = if let EoICanData::EoiBattery(EoiBattery::ChargeAndDischargeCurrent(data)) = data
         {
             data
         } else {
@@ -222,7 +222,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::SocErrorFlagsAndBalancing(data)) = data
+        let data = if let EoICanData::EoiBattery(EoiBattery::SocErrorFlagsAndBalancing(data)) = data
         {
             data
         } else {
@@ -241,7 +241,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::CellVoltages1_4(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::CellVoltages1_4(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
@@ -260,7 +260,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::CellVoltages5_8(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::CellVoltages5_8(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
@@ -279,7 +279,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::CellVoltages9_12(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::CellVoltages9_12(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
@@ -299,7 +299,7 @@ mod tests {
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
         let data =
-            if let EoICanData::EoIBattery(EoIBattery::CellVoltages13_14PackAndStack(data)) = data {
+            if let EoICanData::EoiBattery(EoiBattery::CellVoltages13_14PackAndStack(data)) = data {
                 data
             } else {
                 panic!("Unexpected data type");
@@ -318,7 +318,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::TemperaturesAndStates(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::TemperaturesAndStates(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
@@ -341,7 +341,7 @@ mod tests {
         );
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let data = if let EoICanData::EoIBattery(EoIBattery::BatteryUptime(data)) = data {
+        let data = if let EoICanData::EoiBattery(EoiBattery::BatteryUptime(data)) = data {
             data
         } else {
             panic!("Unexpected data type");
