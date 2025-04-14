@@ -4,7 +4,7 @@ use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
-use eoi_can_decoder::{parse_eoi_can_data, EoICanData, EoiBattery};
+use eoi_can_decoder::{parse_eoi_can_data, EoICanData};
 use socketcan::{tokio::CanSocket, CanFrame};
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
@@ -97,25 +97,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     'running: loop {
         while let Ok(parsed_data) = can_to_display_rx.try_recv() {
-            match parsed_data {
-                EoICanData::EoiBattery(eoi_battery) => match eoi_battery {
-                    EoiBattery::CellVoltages1_4(data) => {
-                        display_data.update_cell_voltages(0, data.cell_voltage.as_slice());
-                    }
-                    EoiBattery::CellVoltages5_8(data) => {
-                        display_data.update_cell_voltages(4, data.cell_voltage.as_slice());
-                    }
-                    EoiBattery::CellVoltages9_12(data) => {
-                        display_data.update_cell_voltages(8, data.cell_voltage.as_slice());
-                    }
-                    EoiBattery::CellVoltages13_14PackAndStack(data) => {
-                        display_data.update_cell_voltages(12, data.cell_voltage.as_slice());
-                    }
-                    _ => {
-                        warn!("unhandled data")
-                    }
-                },
-            }
+            display_data.ingest_eoi_can_data(parsed_data);
         }
 
         draw_display::draw_display(&mut display, &display_data).unwrap();

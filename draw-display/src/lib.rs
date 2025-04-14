@@ -12,8 +12,9 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
+use eoi_can_decoder::{EoICanData, EoiBattery};
 use heapless::String;
-use time::{Duration, Instant};
+use time::{Duration, Instant}; // Import EoICanData from the appropriate module
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -55,13 +56,67 @@ impl<T> Default for DisplayValue<T> {
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
-    pub cell_voltage: [DisplayValue<f32>; 14],
+    pub battery_state_of_charge: DisplayValue<f32>,
+    pub battery_time_to_empty: DisplayValue<u16>,
+    pub battery_cell_voltages: [DisplayValue<f32>; 14],
+    pub battery_current_pack: DisplayValue<f32>,
+    pub battery_current_in: DisplayValue<f32>,
+    pub battery_current_out_motor: DisplayValue<f32>,
+    pub battery_current_out_peripherals: DisplayValue<f32>,
+    pub battery_voltage: DisplayValue<f32>,
+    pub battery_temperatures: [DisplayValue<i8>; 4],
+    pub battery_uptime_ms: DisplayValue<u32>,
+    pub battery_error_flags: DisplayValue<u32>,
+    pub battery_balancing_status: DisplayValue<u16>,
 }
 
 impl DisplayData {
+    pub fn ingest_eoi_can_data(&mut self, data: EoICanData) {
+        match data {
+            EoICanData::EoiBattery(eoi_battery) => match eoi_battery {
+                EoiBattery::ChargeAndDischargeCurrent(data) => {
+                    self.battery_current_in.update(data.charge_current);
+                    self.battery_current_out_motor
+                        .update(data.discharge_current);
+                }
+                EoiBattery::SocErrorFlagsAndBalancing(data) => {
+                    self.battery_state_of_charge.update(data.state_of_charge);
+                    self.battery_error_flags.update(data.error_flags);
+                    self.battery_balancing_status.update(data.balancing_status);
+                }
+                EoiBattery::PackAndPerriCurrent(data) => {
+                    self.battery_current_out_peripherals
+                        .update(data.perri_current);
+                    self.battery_current_pack.update(data.pack_current);
+                }
+                EoiBattery::CellVoltages1_4(data) => {
+                    self.update_cell_voltages(0, data.cell_voltage.as_slice());
+                }
+                EoiBattery::CellVoltages5_8(data) => {
+                    self.update_cell_voltages(4, data.cell_voltage.as_slice());
+                }
+                EoiBattery::CellVoltages9_12(data) => {
+                    self.update_cell_voltages(8, data.cell_voltage.as_slice());
+                }
+                EoiBattery::CellVoltages13_14PackAndStack(data) => {
+                    self.update_cell_voltages(12, data.cell_voltage.as_slice());
+                    self.battery_voltage.update(data.pack_voltage);
+                }
+                EoiBattery::TemperaturesAndStates(data) => {
+                    for (index, value) in data.temperatures.iter().enumerate() {
+                        self.battery_temperatures[index].update(*value);
+                    }
+                }
+                EoiBattery::BatteryUptime(data) => {
+                    self.battery_uptime_ms.update(data.uptime_ms);
+                }
+            },
+        }
+    }
+
     pub fn update_cell_voltages(&mut self, offset: usize, values: &[f32]) {
         for (index, value) in values.iter().enumerate() {
-            self.cell_voltage[offset + index].update(*value);
+            self.battery_cell_voltages[offset + index].update(*value);
         }
     }
 }
@@ -108,7 +163,32 @@ where
     )
     .draw(display)?;
 
-    Text::with_alignment("1500", Point::new(300, 130), normal, Alignment::Center).draw(display)?;
+    string_helper.clear();
+    if data.battery_voltage.is_valid()
+        && data.battery_current_in.is_valid()
+        && data.battery_current_out_motor.is_valid()
+        && data.battery_current_out_peripherals.is_valid()
+    {
+        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
+        let current = data.battery_current_in.get().unwrap_or(&f32::NAN)
+            + data.battery_current_out_motor.get().unwrap_or(&f32::NAN)
+            + data
+                .battery_current_out_peripherals
+                .get()
+                .unwrap_or(&f32::NAN);
+        let power = voltage * current;
+        write!(&mut string_helper, "{:.1}", power).unwrap();
+    } else {
+        string_helper.push_str("N/A").unwrap();
+    }
+
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(300, 130),
+        normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
 
     Line::new(Point::new(0, 140), Point::new(800, 140))
         .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 2))
@@ -138,7 +218,6 @@ where
     .draw(display)?;
 
     // state of charge
-
     Text::with_alignment(
         "State of Charge (%)",
         Point::new(500, 100),
@@ -147,7 +226,20 @@ where
     )
     .draw(display)?;
 
-    Text::with_alignment("66.6", Point::new(500, 130), normal, Alignment::Center).draw(display)?;
+    string_helper.clear();
+    if let Some(data) = data.battery_state_of_charge.get() {
+        write!(&mut string_helper, "{:.1}", data).unwrap();
+    } else {
+        string_helper.push_str("N/A").unwrap();
+    }
+
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(500, 130),
+        normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
 
     Text::with_alignment(
         "Time to empty (Min)",
@@ -157,7 +249,20 @@ where
     )
     .draw(display)?;
 
-    Text::with_alignment("80", Point::new(700, 130), normal, Alignment::Center).draw(display)?;
+    string_helper.clear();
+    if let Some(data) = data.battery_time_to_empty.get() {
+        write!(&mut string_helper, "{}", data).unwrap();
+    } else {
+        string_helper.push_str("N/A").unwrap();
+    }
+
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(700, 130),
+        normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
 
     // MPPT information
 
@@ -187,77 +292,213 @@ where
 
     Text::new("Battery", Point::new(415, 170), normal).draw(display)?;
 
-    Text::new("Input 500 W", Point::new(415, battery_offset_y), normal).draw(display)?;
+    string_helper.clear();
+    if data.battery_voltage.is_valid() && data.battery_current_in.is_valid() {
+        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
+        let current = data.battery_current_in.get().unwrap_or(&f32::NAN);
+        let power = voltage * current;
+        write!(&mut string_helper, "Input {:.0} W", power).unwrap();
+    } else {
+        string_helper.push_str("Input N/A").unwrap();
+    }
 
-    battery_offset_y += FONT_10X20_SPACE;
     Text::new(
-        "Output motor 1990 W",
+        string_helper.as_str(),
         Point::new(415, battery_offset_y),
         normal,
     )
     .draw(display)?;
 
+    string_helper.clear();
+    if data.battery_voltage.is_valid() && data.battery_current_out_motor.is_valid() {
+        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
+        let current = data.battery_current_out_motor.get().unwrap_or(&f32::NAN);
+        let power = voltage * current;
+        write!(&mut string_helper, "Output motor {:.0} W", power).unwrap();
+    } else {
+        string_helper.push_str("Output motor N/A").unwrap();
+    }
+
     battery_offset_y += FONT_10X20_SPACE;
     Text::new(
-        "Output peripherals 10 W",
+        string_helper.as_str(),
         Point::new(415, battery_offset_y),
         normal,
     )
     .draw(display)?;
 
+    string_helper.clear();
+    if data.battery_voltage.is_valid() && data.battery_current_out_peripherals.is_valid() {
+        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
+        let current = data
+            .battery_current_out_peripherals
+            .get()
+            .unwrap_or(&f32::NAN);
+        let power = voltage * current;
+        write!(&mut string_helper, "Output peripherals {:.0} W", power).unwrap();
+    } else {
+        string_helper.push_str("Output peripherals N/A").unwrap();
+    }
+
     battery_offset_y += FONT_10X20_SPACE;
     Text::new(
-        "Max temperature 25 C",
+        string_helper.as_str(),
         Point::new(415, battery_offset_y),
         normal,
     )
     .draw(display)?;
 
-    battery_offset_y += FONT_10X20_SPACE;
-    Text::new(
-        "Min temperature 20 C",
-        Point::new(415, battery_offset_y),
-        normal,
-    )
-    .draw(display)?;
+    // get array of temperatures
+    let valid_temperatures = data
+        .battery_temperatures
+        .iter()
+        .filter(|temp| temp.is_valid())
+        .map(|temp| temp.get().unwrap_or(&i8::MIN))
+        .collect::<heapless::Vec<&i8, 4>>();
 
-    battery_offset_y += FONT_10X20_SPACE;
-    Text::new(
-        "Avg temperature 22 C",
-        Point::new(415, battery_offset_y),
-        normal,
-    )
-    .draw(display)?;
+    if !valid_temperatures.is_empty() {
+        let max_temp = valid_temperatures.iter().copied().max().unwrap_or(&i8::MIN);
+        let min_temp = valid_temperatures.iter().copied().min().unwrap_or(&i8::MAX);
+        let avg_temp =
+            valid_temperatures.iter().copied().sum::<i8>() as f32 / valid_temperatures.len() as f32;
 
-    battery_offset_y += FONT_10X20_SPACE;
-    Text::new(
-        "Max cell voltage 4.123 V",
-        Point::new(415, battery_offset_y),
-        normal,
-    )
-    .draw(display)?;
+        string_helper.clear();
+        write!(&mut string_helper, "Max temperature {} C", max_temp).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
 
-    battery_offset_y += FONT_10X20_SPACE;
-    Text::new(
-        "Min cell voltage 3.123 V",
-        Point::new(415, battery_offset_y),
-        normal,
-    )
-    .draw(display)?;
+        string_helper.clear();
+        write!(&mut string_helper, "Min temperature {} C", min_temp).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
 
-    battery_offset_y += FONT_10X20_SPACE;
-    Text::new(
-        "Avg cell voltage 3.612 V",
-        Point::new(415, battery_offset_y),
-        normal,
-    )
-    .draw(display)?;
+        string_helper.clear();
+        write!(&mut string_helper, "Avg temperature {:.0} C", avg_temp).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+    } else {
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Max temperature N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Min temperature N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Avg temperature N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+    }
+
+    // get array of voltages
+    let valid_voltages = data
+        .battery_cell_voltages
+        .iter()
+        .filter(|voltage| voltage.is_valid())
+        .map(|voltage| voltage.get().unwrap_or(&f32::NAN))
+        .collect::<heapless::Vec<&f32, 14>>();
+
+    if !valid_voltages.is_empty() {
+        let max_voltage = valid_voltages
+            .iter()
+            .copied()
+            .cloned()
+            .fold(f32::NAN, f32::max);
+        let min_voltage = valid_voltages
+            .iter()
+            .copied()
+            .cloned()
+            .fold(f32::NAN, f32::min);
+        let avg_voltage =
+            valid_voltages.iter().copied().cloned().sum::<f32>() / valid_voltages.len() as f32;
+
+        string_helper.clear();
+        write!(&mut string_helper, "Max cell voltage {:.3} V", max_voltage).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        string_helper.clear();
+        write!(&mut string_helper, "Min cell voltage {:.3} V", min_voltage).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        string_helper.clear();
+        write!(&mut string_helper, "Avg cell voltage {:.3} V", avg_voltage).unwrap();
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            string_helper.as_str(),
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+    } else {
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Max cell voltage N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Min cell voltage N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+
+        battery_offset_y += FONT_10X20_SPACE;
+        Text::new(
+            "Avg cell voltage N/A",
+            Point::new(415, battery_offset_y),
+            normal,
+        )
+        .draw(display)?;
+    }
 
     let mut cell_text: String<64> = String::new();
 
     for cell in 0..7 {
         cell_text.clear();
-        if let Some(cell_voltage) = data.cell_voltage[cell as usize].get() {
+        if let Some(cell_voltage) = data.battery_cell_voltages[cell as usize].get() {
             write!(
                 &mut cell_text,
                 "Cell {:2}: {:1.3} V",
@@ -279,7 +520,7 @@ where
 
     for cell in 7..14 {
         cell_text.clear();
-        if let Some(cell_voltage) = data.cell_voltage[cell as usize].get() {
+        if let Some(cell_voltage) = data.battery_cell_voltages[cell as usize].get() {
             write!(
                 &mut cell_text,
                 "Cell {:2}: {:1.3} V",

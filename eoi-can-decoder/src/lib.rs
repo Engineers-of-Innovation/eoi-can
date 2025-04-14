@@ -34,7 +34,7 @@ pub struct ChargeAndDischargeCurrent {
 
 #[derive(Debug)]
 pub struct SocErrorFlagsAndBalancing {
-    pub soc: f32,              // u16 on CAN bus with a factor of 100
+    pub state_of_charge: f32,  // u16 on CAN bus with a factor of 100
     pub error_flags: u32,      //TODO: use bitflags?!
     pub balancing_status: u16, //TODO: use bitflags?!
 }
@@ -53,7 +53,7 @@ pub struct CellVoltages13_14PackAndStack {
 
 #[derive(Debug)]
 pub struct TemperaturesAndStates {
-    pub temperature: [i8; 4],
+    pub temperatures: [i8; 4],
     pub ic_temperature: i8,
     pub battery_state: u8,   //TODO: define enum
     pub charge_state: u8,    //TODO: define enum
@@ -87,7 +87,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
         )),
         0x102 => Some(EoICanData::EoiBattery(
             EoiBattery::SocErrorFlagsAndBalancing(SocErrorFlagsAndBalancing {
-                soc: bytes_to_u16(&data[0..2]) as f32 / 100.0,
+                state_of_charge: bytes_to_u16(&data[0..2]) as f32 / 100.0,
                 error_flags: bytes_to_u32(&data[2..6]),
                 balancing_status: bytes_to_u16(&data[6..8]),
             }),
@@ -134,7 +134,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoICanData>
         )),
         0x107 => Some(EoICanData::EoiBattery(EoiBattery::TemperaturesAndStates(
             TemperaturesAndStates {
-                temperature: [data[0] as i8, data[1] as i8, data[2] as i8, data[3] as i8],
+                temperatures: [data[0] as i8, data[1] as i8, data[2] as i8, data[3] as i8],
                 ic_temperature: data[4] as i8,
                 battery_state: data[5],
                 charge_state: data[6],
@@ -228,7 +228,7 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.soc == 97.65);
+        assert!(data.state_of_charge == 97.65);
         assert!(data.error_flags == 0);
         assert!(data.balancing_status == 0);
     }
@@ -323,10 +323,10 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!(data.temperature[0] == 36);
-        assert!(data.temperature[1] == 36);
-        assert!(data.temperature[2] == 38);
-        assert!(data.temperature[3] == 40);
+        assert!(data.temperatures[0] == 36);
+        assert!(data.temperatures[1] == 36);
+        assert!(data.temperatures[2] == 38);
+        assert!(data.temperatures[3] == 40);
         assert!(data.ic_temperature == 54);
         assert!(data.battery_state == 6);
         assert!(data.charge_state == 3);
