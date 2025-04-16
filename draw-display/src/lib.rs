@@ -16,7 +16,7 @@ use eoi_can_decoder::{EoICanData, EoiBattery};
 use heapless::String;
 use time::{Duration, Instant}; // Import EoICanData from the appropriate module
 
-const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(15);
+const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -359,8 +359,12 @@ where
     if !valid_temperatures.is_empty() {
         let max_temp = valid_temperatures.iter().copied().max().unwrap_or(&i8::MIN);
         let min_temp = valid_temperatures.iter().copied().min().unwrap_or(&i8::MAX);
-        let avg_temp =
-            valid_temperatures.iter().copied().sum::<i8>() as f32 / valid_temperatures.len() as f32;
+        let avg_temp = valid_temperatures
+            .iter()
+            .copied()
+            .map(|&t| t as f32)
+            .sum::<f32>()
+            / valid_temperatures.len() as f32;
 
         string_helper.clear();
         write!(&mut string_helper, "Max temperature {} C", max_temp).unwrap();

@@ -48,7 +48,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
         CanSocket::open(args.can_interface.as_str()).expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
-    let (can_to_display_tx, mut can_to_display_rx) = tokio::sync::mpsc::channel::<EoICanData>(100);
+    let (can_decoder_tx, mut can_decoder_rx) = tokio::sync::mpsc::channel::<EoICanData>(100);
 
     // hack to check if the socket is open, not sure how to go about this
     can_sock
@@ -76,7 +76,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
             let parsed_data = parse_eoi_can_data(&embedded_frame);
             if let Some(parsed) = parsed_data {
                 info!("Parsed data: {:?}", parsed);
-                if can_to_display_tx.send(parsed).await.is_err() {
+                if can_decoder_tx.send(parsed).await.is_err() {
                     warn!("Failed to send parsed data to display task");
                 }
             } else {
@@ -96,7 +96,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let mut display_data = draw_display::DisplayData::default();
 
     'running: loop {
-        while let Ok(parsed_data) = can_to_display_rx.try_recv() {
+        while let Ok(parsed_data) = can_decoder_rx.try_recv() {
             display_data.ingest_eoi_can_data(parsed_data);
         }
 

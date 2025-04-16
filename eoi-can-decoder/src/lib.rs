@@ -3,11 +3,13 @@
 pub mod can_frame;
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoICanData {
     EoiBattery(EoiBattery),
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiBattery {
     PackAndPerriCurrent(PackAndPerriCurrent),
     ChargeAndDischargeCurrent(ChargeAndDischargeCurrent),
@@ -21,18 +23,21 @@ pub enum EoiBattery {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PackAndPerriCurrent {
     pub pack_current: f32,
     pub perri_current: f32,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChargeAndDischargeCurrent {
     pub discharge_current: f32,
     pub charge_current: f32,
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SocErrorFlagsAndBalancing {
     pub state_of_charge: f32,  // u16 on CAN bus with a factor of 100
     pub error_flags: u32,      //TODO: use bitflags?!
@@ -40,11 +45,13 @@ pub struct SocErrorFlagsAndBalancing {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FourCellVoltages {
     pub cell_voltage: [f32; 4], // u16 on CAN bus with a factor of 1000
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CellVoltages13_14PackAndStack {
     pub cell_voltage: [f32; 2], // u16 on CAN bus with a factor of 1000
     pub pack_voltage: f32,      // u16 on CAN bus with a factor of 1000
@@ -52,6 +59,7 @@ pub struct CellVoltages13_14PackAndStack {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TemperaturesAndStates {
     pub temperatures: [i8; 4],
     pub ic_temperature: i8,
@@ -61,6 +69,7 @@ pub struct TemperaturesAndStates {
 }
 
 #[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryUptime {
     pub uptime_ms: u32,
 }
