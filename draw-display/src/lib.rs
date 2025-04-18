@@ -68,6 +68,16 @@ pub struct DisplayData {
     pub battery_uptime_ms: DisplayValue<u32>,
     pub battery_error_flags: DisplayValue<u32>,
     pub battery_balancing_status: DisplayValue<u16>,
+    pub motor_battery_power_usage: DisplayValue<f32>,
+    pub motor_battery_current: DisplayValue<f32>,
+    pub motor_current: DisplayValue<f32>,
+    pub motor_duty_cycle: DisplayValue<f32>,
+    pub motor_fet_temperature: DisplayValue<i8>,
+    pub motor_temperature: DisplayValue<i8>,
+    pub throttle_armed: DisplayValue<bool>,
+    pub throttle_value: DisplayValue<f32>,
+    pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
+    pub charging_disabled: DisplayValue<bool>,
 }
 
 impl DisplayData {
@@ -129,7 +139,7 @@ where
     let mut string_helper: String<64> = String::new();
     display.clear(BinaryColor::On.into())?;
 
-    let zwarte_doos: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+    let black_box: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
         .text_color(BinaryColor::On.into())
         .background_color(BinaryColor::Off.into())
@@ -147,13 +157,25 @@ where
         .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off.into(), 2))
         .draw(display)?;
 
-    Text::with_alignment(
-        "Charging disabled !!!",
-        Point::new(400, 50),
-        zwarte_doos,
-        Alignment::Center,
-    )
-    .draw(display)?;
+    if let Some(data) = data.charging_disabled.get() {
+        if *data {
+            Text::with_alignment(
+                "Charging enabled",
+                Point::new(400, 50),
+                normal,
+                Alignment::Center,
+            )
+            .draw(display)?;
+        } else {
+            Text::with_alignment(
+                "Charging disabled !!!",
+                Point::new(400, 50),
+                black_box,
+                Alignment::Center,
+            )
+            .draw(display)?;
+        }
+    }
 
     Text::with_alignment(
         "Net Power (W)",
@@ -274,12 +296,24 @@ where
     .draw(display)?;
     let mut panel_text: String<64> = String::new();
     use core::fmt::Write;
-    for panel in 0..11 {
+    for (panel, info) in data.mppt_panel_info.iter().enumerate() {
         panel_text.clear();
-        write!(&mut panel_text, "Panel {:2}   50 W 24 V 2 A", panel + 1).unwrap();
+        if let Some((power, voltage, current)) = info.get() {
+            write!(
+                &mut panel_text,
+                "Panel {:2}: {:.0} W {:.0} V {:.0} A",
+                panel + 1,
+                power,
+                voltage,
+                current
+            )
+            .unwrap();
+        } else {
+            write!(&mut panel_text, "Panel {:2}: N/A", panel + 1).unwrap();
+        }
         Text::new(
             panel_text.as_str(),
-            Point::new(15, (panel * 8) + 390),
+            Point::new(15, (panel as i32 * 8) + 390),
             MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
         )
         .draw(display)?;
@@ -552,78 +586,131 @@ where
 
     Text::new("Motor driver", Point::new(15, 170), normal).draw(display)?;
 
+    string_helper.clear();
+    if let Some(data) = data.motor_battery_power_usage.get() {
+        write!(&mut string_helper, "Battery power usage {:.0} W", data).unwrap();
+    } else {
+        string_helper.push_str("Battery power usage N/A").unwrap();
+    }
     Text::new(
-        "Battery power usage 1990 W",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.motor_battery_current.get() {
+        write!(&mut string_helper, "Battery Current {:.1} A", data).unwrap();
+    } else {
+        string_helper.push_str("Battery Current N/A").unwrap();
+    }
     Text::new(
-        "Battery Current 30 A",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.motor_current.get() {
+        write!(&mut string_helper, "Motor Current {:.1} A", data).unwrap();
+    } else {
+        string_helper.push_str("Motor Current N/A").unwrap();
+    }
     Text::new(
-        "Motor Current 100 A",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.motor_duty_cycle.get() {
+        write!(&mut string_helper, "Duty cycle {:.1}%", data).unwrap();
+    } else {
+        string_helper.push_str("Duty cycle N/A").unwrap();
+    }
     Text::new(
-        "Duty cycle 66.6%",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.motor_fet_temperature.get() {
+        write!(&mut string_helper, "FET temperature {} C", data).unwrap();
+    } else {
+        string_helper.push_str("FET temperature N/A").unwrap();
+    }
     Text::new(
-        "FET temperature 25 C",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.motor_temperature.get() {
+        write!(&mut string_helper, "Motor temperature {} C", data).unwrap();
+    } else {
+        string_helper.push_str("Motor temperature N/A").unwrap();
+    }
     Text::new(
-        "Motor temperature 20 C",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.throttle_armed.get() {
+        write!(
+            &mut string_helper,
+            "Throttle is {}",
+            if *data { "ARMED" } else { "DISARMED" }
+        )
+        .unwrap();
+    } else {
+        string_helper.push_str("Throttle N/A").unwrap();
+    }
     Text::new(
-        "Throttle is ARMED",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
+    if let Some(data) = data.throttle_value.get() {
+        write!(&mut string_helper, "Throttle value {:.1}%", data).unwrap();
+    } else {
+        string_helper.push_str("Throttle value N/A").unwrap();
+    }
     Text::new(
-        "Throttle value -50%",
+        string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
     )
     .draw(display)?;
 
     Text::new(
-        "Last updated: 12:34:56",
+        "Last update: N/A",
         Point::new(300, 470),
         MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
 
     Text::new(
-        "Ip address: 127.0.0.1",
+        "Ip address: N/A",
         Point::new(415, 470),
         MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
