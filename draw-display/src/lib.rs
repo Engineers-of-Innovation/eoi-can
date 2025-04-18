@@ -12,7 +12,7 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
-use eoi_can_decoder::{EoICanData, EoiBattery};
+use eoi_can_decoder::{EoiBattery, EoiCanData, ThrottleData, VescData};
 use heapless::String;
 use time::{Duration, Instant}; // Import EoICanData from the appropriate module
 
@@ -72,8 +72,8 @@ pub struct DisplayData {
     pub motor_battery_current: DisplayValue<f32>,
     pub motor_current: DisplayValue<f32>,
     pub motor_duty_cycle: DisplayValue<f32>,
-    pub motor_fet_temperature: DisplayValue<i8>,
-    pub motor_temperature: DisplayValue<i8>,
+    pub motor_fet_temperature: DisplayValue<f32>,
+    pub motor_temperature: DisplayValue<f32>,
     pub throttle_armed: DisplayValue<bool>,
     pub throttle_value: DisplayValue<f32>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
@@ -81,9 +81,9 @@ pub struct DisplayData {
 }
 
 impl DisplayData {
-    pub fn ingest_eoi_can_data(&mut self, data: EoICanData) {
+    pub fn ingest_eoi_can_data(&mut self, data: EoiCanData) {
         match data {
-            EoICanData::EoiBattery(eoi_battery) => match eoi_battery {
+            EoiCanData::EoiBattery(eoi_battery) => match eoi_battery {
                 EoiBattery::ChargeAndDischargeCurrent(data) => {
                     self.battery_current_in.update(data.charge_current);
                     self.battery_current_out_motor
@@ -120,6 +120,32 @@ impl DisplayData {
                 EoiBattery::BatteryUptime(data) => {
                     self.battery_uptime_ms.update(data.uptime_ms);
                 }
+            },
+
+            EoiCanData::Throttle(throttle) => {
+                if let ThrottleData::Status(data) = throttle {
+                    self.throttle_armed.update(!data.error_deadman_missing);
+                    self.throttle_value.update(data.value);
+                }
+            }
+
+            EoiCanData::Vesc(vesc) => match vesc {
+                VescData::StatusMessage1 {
+                    rpm: _,
+                    total_current,
+                    duty_cycle: _,
+                } => self.motor_current.update(total_current),
+                VescData::StatusMessage4 {
+                    fet_temp,
+                    motor_temp,
+                    total_input_current,
+                    current_pid_position: _,
+                } => {
+                    self.motor_battery_current.update(total_input_current);
+                    self.motor_fet_temperature.update(fet_temp);
+                    self.motor_temperature.update(motor_temp);
+                }
+                _ => {}
             },
         }
     }

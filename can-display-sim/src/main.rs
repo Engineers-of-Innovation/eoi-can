@@ -4,7 +4,7 @@ use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
-use eoi_can_decoder::{parse_eoi_can_data, EoICanData};
+use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
 use socketcan::{tokio::CanSocket, CanFrame};
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
@@ -48,7 +48,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
         CanSocket::open(args.can_interface.as_str()).expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
-    let (can_decoder_tx, mut can_decoder_rx) = tokio::sync::mpsc::channel::<EoICanData>(100);
+    let (can_decoder_tx, mut can_decoder_rx) = tokio::sync::mpsc::channel::<EoiCanData>(100);
 
     // hack to check if the socket is open, not sure how to go about this
     can_sock
