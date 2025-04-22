@@ -68,13 +68,13 @@ pub struct DisplayData {
     pub battery_uptime_ms: DisplayValue<u32>,
     pub battery_error_flags: DisplayValue<u32>,
     pub battery_balancing_status: DisplayValue<u16>,
-    pub motor_battery_power_usage: DisplayValue<f32>,
+    pub motor_battery_voltage: DisplayValue<f32>,
     pub motor_battery_current: DisplayValue<f32>,
     pub motor_current: DisplayValue<f32>,
     pub motor_duty_cycle: DisplayValue<f32>,
+    pub motor_rpm: DisplayValue<i32>,
     pub motor_fet_temperature: DisplayValue<f32>,
     pub motor_temperature: DisplayValue<f32>,
-    pub throttle_armed: DisplayValue<bool>,
     pub throttle_value: DisplayValue<f32>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
     pub charging_disabled: DisplayValue<bool>,
@@ -124,17 +124,20 @@ impl DisplayData {
 
             EoiCanData::Throttle(throttle) => {
                 if let ThrottleData::Status(data) = throttle {
-                    self.throttle_armed.update(!data.error_deadman_missing);
                     self.throttle_value.update(data.value);
                 }
             }
 
             EoiCanData::Vesc(vesc) => match vesc {
                 VescData::StatusMessage1 {
-                    rpm: _,
+                    rpm,
                     total_current,
-                    duty_cycle: _,
-                } => self.motor_current.update(total_current),
+                    duty_cycle,
+                } => {
+                    self.motor_rpm.update(rpm);
+                    self.motor_current.update(total_current);
+                    self.motor_duty_cycle.update(duty_cycle);
+                }
                 VescData::StatusMessage4 {
                     fet_temp,
                     motor_temp,
@@ -144,6 +147,12 @@ impl DisplayData {
                     self.motor_battery_current.update(total_input_current);
                     self.motor_fet_temperature.update(fet_temp);
                     self.motor_temperature.update(motor_temp);
+                }
+                VescData::StatusMessage5 {
+                    input_voltage,
+                    tachometer: _,
+                } => {
+                    self.motor_battery_voltage.update(input_voltage);
                 }
                 _ => {}
             },
@@ -613,8 +622,10 @@ where
     Text::new("Motor driver", Point::new(15, 170), normal).draw(display)?;
 
     string_helper.clear();
-    if let Some(data) = data.motor_battery_power_usage.get() {
-        write!(&mut string_helper, "Battery power usage {:.0} W", data).unwrap();
+    if data.motor_battery_voltage.is_valid() && data.motor_battery_current.is_valid() {
+        let voltage = data.motor_battery_voltage.get().unwrap_or(&f32::NAN);
+        let current = data.motor_battery_current.get().unwrap_or(&f32::NAN);
+        write!(&mut string_helper, "Power {:.0} W", voltage * current).unwrap();
     } else {
         string_helper.push_str("Battery power usage N/A").unwrap();
     }
@@ -669,6 +680,20 @@ where
 
     motordriver_offset_y += FONT_10X20_SPACE;
     string_helper.clear();
+    if let Some(data) = data.motor_rpm.get() {
+        write!(&mut string_helper, "RPM {}", data).unwrap();
+    } else {
+        string_helper.push_str("RPM N/A").unwrap();
+    }
+    Text::new(
+        string_helper.as_str(),
+        Point::new(15, motordriver_offset_y),
+        normal,
+    )
+    .draw(display)?;
+
+    motordriver_offset_y += FONT_10X20_SPACE;
+    string_helper.clear();
     if let Some(data) = data.motor_fet_temperature.get() {
         write!(&mut string_helper, "FET temperature {} C", data).unwrap();
     } else {
@@ -687,25 +712,6 @@ where
         write!(&mut string_helper, "Motor temperature {} C", data).unwrap();
     } else {
         string_helper.push_str("Motor temperature N/A").unwrap();
-    }
-    Text::new(
-        string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
-    )
-    .draw(display)?;
-
-    motordriver_offset_y += FONT_10X20_SPACE;
-    string_helper.clear();
-    if let Some(data) = data.throttle_armed.get() {
-        write!(
-            &mut string_helper,
-            "Throttle is {}",
-            if *data { "ARMED" } else { "DISARMED" }
-        )
-        .unwrap();
-    } else {
-        string_helper.push_str("Throttle N/A").unwrap();
     }
     Text::new(
         string_helper.as_str(),

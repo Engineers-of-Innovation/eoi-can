@@ -211,9 +211,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             },
         ))),
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {
-            rpm: i32::from_le_bytes(data[0..4].try_into().unwrap()),
-            total_current: i16::from_le_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
-            duty_cycle: i16::from_le_bytes(data[6..8].try_into().unwrap()) as f32 / 10.0,
+            rpm: i32::from_be_bytes(data[0..4].try_into().unwrap()),
+            total_current: i16::from_be_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
+            duty_cycle: i16::from_be_bytes(data[6..8].try_into().unwrap()) as f32 / 10.0,
         })),
         0x0E09 => Some(EoiCanData::Vesc(VescData::StatusMessage2 {
             amp_hours_used: i32::from_le_bytes(data[0..4].try_into().unwrap()) as f32 / 10000.0,
@@ -226,29 +226,28 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 / 10000.0,
         })),
         0x1009 => Some(EoiCanData::Vesc(VescData::StatusMessage4 {
-            fet_temp: i16::from_le_bytes(data[0..2].try_into().unwrap()) as f32 / 10.0,
-            motor_temp: i16::from_le_bytes(data[2..4].try_into().unwrap()) as f32 / 10.0,
-            total_input_current: i16::from_le_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
-            current_pid_position: i16::from_le_bytes(data[6..8].try_into().unwrap()) as f32 / 50.0,
+            fet_temp: i16::from_be_bytes(data[0..2].try_into().unwrap()) as f32 / 10.0,
+            motor_temp: i16::from_be_bytes(data[2..4].try_into().unwrap()) as f32 / 10.0,
+            total_input_current: i16::from_be_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
+            current_pid_position: i16::from_be_bytes(data[6..8].try_into().unwrap()) as f32 / 50.0,
         })),
         0x1B09 => Some(EoiCanData::Vesc(VescData::StatusMessage5 {
-            input_voltage: i16::from_le_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
-            tachometer: i32::from_le_bytes(data[0..4].try_into().unwrap()),
+            input_voltage: i16::from_be_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
+            tachometer: i32::from_be_bytes(data[0..4].try_into().unwrap()),
         })),
         0x0009 => Some(EoiCanData::Throttle(ThrottleData::ToVescDutyCycle(
-            i32::from_le_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
+            i32::from_be_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
         ))),
         0x0109 => Some(EoiCanData::Throttle(ThrottleData::ToVescCurrent(
-            i32::from_le_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
+            i32::from_be_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
         ))),
         0x0309 => Some(EoiCanData::Throttle(ThrottleData::ToVescRpm(
-            i32::from_le_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
+            i32::from_be_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
         ))),
         0x1337 | 0x0337 => Some(EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
-            value: (i16::from_le_bytes(data[0..2].try_into().unwrap()) as f32 / i16::MAX as f32)
-                * 100.0,
-            raw_angle: i16::from_le_bytes(data[2..4].try_into().unwrap()),
-            raw_deadmen: i16::from_le_bytes(data[4..6].try_into().unwrap()),
+            value: (i16::from_be_bytes(data[0..2].try_into().unwrap()) as f32 / 512.0) * 100.0,
+            raw_angle: i16::from_be_bytes(data[2..4].try_into().unwrap()),
+            raw_deadmen: i16::from_be_bytes(data[4..6].try_into().unwrap()),
             gain: data[6],
             error_any: data[7] != 0,
             error_twi: data[7] & 0b111,
