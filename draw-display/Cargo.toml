@@ -10,7 +10,7 @@ std = ["tokio"]
 tokio = ["dep:tokio"]
 
 [dependencies]
-embedded-graphics = "0.8.1"
+embedded-graphics = { workspace = true }
 heapless = "0.8.0"
 defmt = { version = "0.3", optional = true }
 embassy-time = { version = "0.4" }

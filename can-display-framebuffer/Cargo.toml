@@ -1,11 +1,12 @@
 [package]
-name = "can-display-sim"
+name = "can-display-framebuffer"
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-embedded-graphics = "0.8.1"
-embedded-graphics-simulator = "0.7.0"
+embedded-graphics = { workspace = true }
+embedded_graphics_framebuffer = {git = "https://github.com/vji2i0/embedded_graphics_framebuffer", rev = "3e8a1e8813041af485cc03ef2b2ef33f761fbc03"}
+
 tokio = {version = "1.44.2", features = ["full"]}
 draw-display = { path = "../draw-display", features = ["std"] }
 clap = { version = "4.5.35", features = ["derive"] }

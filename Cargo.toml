@@ -1,5 +1,8 @@
 [workspace]
 resolver = "3"
 
-members = [ "can-display-sim", "draw-display", "eoi-can-decoder"]
+members = [ "can-display-sim", "can-display-framebuffer", "draw-display", "eoi-can-decoder" ]
 exclude = [ "can-display-firmware" ]
+
+[workspace.dependencies]
+embedded-graphics = "0.8.1"
