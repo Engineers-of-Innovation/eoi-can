@@ -75,7 +75,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
             let parsed_data = parse_eoi_can_data(&embedded_frame);
             if let Some(parsed) = parsed_data {
-                info!("Parsed data: {:?}", parsed);
+                trace!("Parsed data: {:?}", parsed);
                 if can_decoder_tx.send(parsed).await.is_err() {
                     warn!("Failed to send parsed data to display task");
                 }

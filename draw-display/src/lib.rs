@@ -12,7 +12,7 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
-use eoi_can_decoder::{EoiBattery, EoiCanData, ThrottleData, VescData};
+use eoi_can_decoder::{EoiBattery, EoiCanData, MpptChannelPower, MpptInfo, ThrottleData, VescData};
 use heapless::String;
 use time::{Duration, Instant}; // Import EoICanData from the appropriate module
 
@@ -156,6 +156,38 @@ impl DisplayData {
                 }
                 _ => {}
             },
+            EoiCanData::Mppt(mppt_data) => {
+                if let MpptInfo::MpptChannelPower(MpptChannelPower {
+                    mppt_channel,
+                    voltage_in,
+                    current_in,
+                }) = mppt_data.info
+                {
+                    // we map the mppt channel to the index of the (solar) array
+                    // mppt id is what it is, but channel and panel id are indexed from 0
+                    if let Some(panel_id) = match (mppt_data.mppt_id, mppt_channel) {
+                        (7, 0) => Some(0),
+                        (7, 1) => Some(1),
+                        (7, 2) => Some(2),
+                        (5, 0) => Some(3),
+                        (5, 1) => Some(4),
+                        (5, 2) => Some(5),
+                        (4, 0) => Some(6),
+                        (4, 2) => Some(7),
+                        (2, 0) => Some(8),
+                        (2, 1) => Some(9),
+                        (2, 2) => Some(10),
+                        _ => None,
+                    } {
+                        // update the panel info
+                        self.mppt_panel_info[panel_id as usize].update((
+                            voltage_in * current_in,
+                            voltage_in,
+                            current_in,
+                        ));
+                    }
+                }
+            }
         }
     }
 

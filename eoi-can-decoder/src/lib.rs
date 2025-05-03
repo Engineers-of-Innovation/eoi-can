@@ -29,10 +29,61 @@ pub struct ThrottleStatus {
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MpptData {
+    pub mppt_id: u8,
+    pub info: MpptInfo,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MpptInfo {
+    MpptChannelPower(MpptChannelPower),
+    MpptChannelState(MpptChannelState),
+    MpptPower(MpptPower),
+    MpptStatus(MpptStatus),
+}
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MpptChannelPower {
+    pub mppt_channel: u8,
+    pub voltage_in: f32,
+    pub current_in: f32,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MpptChannelState {
+    pub mppt_channel: u8,
+    pub duty_cycle: u16,
+    pub algorithm: u8,
+    pub algorithm_state: u8,
+    pub channel_active: bool,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MpptPower {
+    pub voltage_out: f32,
+    pub current_out: f32,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MpptStatus {
+    pub voltage_out_switch: f32,
+    pub temperature: i16,
+    pub state: u8,
+    pub pwm_enabled: bool,
+    pub switch_on: bool,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiCanData {
     EoiBattery(EoiBattery),
     Vesc(VescData),
     Throttle(ThrottleData),
+    Mppt(MpptData),
 }
 
 #[derive(Debug)]
@@ -136,6 +187,11 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
     };
     let data = &can_frame.data;
 
+    const MPPT_MAX_DEVICES: u32 = 8;
+    const MPPT_BASE_ADDRESS: u32 = 0x700;
+    const MPPT_INFO_FIELDS: u32 = 16;
+    const MPPT_STOP_ADDRESS: u32 = MPPT_BASE_ADDRESS + (MPPT_MAX_DEVICES * MPPT_INFO_FIELDS) - 1;
+
     match id {
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
@@ -210,6 +266,66 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 uptime_ms: bytes_to_u32(&data[0..4]),
             },
         ))),
+
+        MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
+            let mppt_id = ((id >> 4) & 0x7) as u8;
+            let info_field = id as u8 & 0xF;
+            let channel = info_field >> 1;
+            match info_field {
+                0 | 2 | 4 | 6 => {
+                    let mppt_data = MpptData {
+                        mppt_id,
+                        info: MpptInfo::MpptChannelPower(MpptChannelPower {
+                            mppt_channel: channel,
+                            voltage_in: bytes_to_f32(&data[0..4]),
+                            current_in: bytes_to_f32(&data[4..8]),
+                        }),
+                    };
+                    Some(EoiCanData::Mppt(mppt_data))
+                }
+                1 | 3 | 5 | 7 => {
+                    let mppt_data = MpptData {
+                        mppt_id,
+                        info: MpptInfo::MpptChannelState(MpptChannelState {
+                            mppt_channel: channel,
+                            duty_cycle: bytes_to_u16(&data[0..2]),
+                            algorithm: data[2],
+                            algorithm_state: data[3],
+                            channel_active: data[4] != 0,
+                        }),
+                    };
+                    Some(EoiCanData::Mppt(mppt_data))
+                }
+                8 => {
+                    let mppt_data = MpptData {
+                        mppt_id,
+                        info: MpptInfo::MpptPower(MpptPower {
+                            voltage_out: bytes_to_f32(&data[0..4]),
+                            current_out: bytes_to_f32(&data[4..8]),
+                        }),
+                    };
+                    Some(EoiCanData::Mppt(mppt_data))
+                }
+                9 => {
+                    let mppt_data = MpptData {
+                        mppt_id,
+                        info: MpptInfo::MpptStatus(MpptStatus {
+                            voltage_out_switch: bytes_to_f32(&data[0..4]),
+                            temperature: bytes_to_i16(&data[4..6]),
+                            state: data[6],
+                            pwm_enabled: data[7] & 0b1 != 0,
+                            switch_on: data[7] & 0b10 != 0,
+                        }),
+                    };
+                    Some(EoiCanData::Mppt(mppt_data))
+                }
+                _ => {
+                    // Ignore other info fields
+                    None
+                }
+            }
+        }
+
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {
             rpm: i32::from_be_bytes(data[0..4].try_into().unwrap()),
             total_current: i16::from_be_bytes(data[4..6].try_into().unwrap()) as f32 / 10.0,
@@ -274,6 +390,11 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
 fn bytes_to_f32(bytes: &[u8]) -> f32 {
     let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
     f32::from_le_bytes(arr)
+}
+
+fn bytes_to_i16(bytes: &[u8]) -> i16 {
+    let arr: [u8; 2] = bytes.try_into().expect("Slice length must be 2");
+    i16::from_le_bytes(arr)
 }
 
 #[cfg(test)]
