@@ -4,14 +4,15 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-embedded-graphics = { workspace = true }
-embedded_graphics_framebuffer = {git = "https://github.com/vji2i0/embedded_graphics_framebuffer", rev = "3e8a1e8813041af485cc03ef2b2ef33f761fbc03"}
+embedded_graphics_framebuffer = { git = "https://github.com/vji2i0/embedded_graphics_framebuffer", rev = "3e8a1e8813041af485cc03ef2b2ef33f761fbc03" }
 
-tokio = {version = "1.44.2", features = ["full"]}
-draw-display = { path = "../draw-display", features = ["std"] }
-clap = { version = "4.5.35", features = ["derive"] }
-socketcan = { version = "3.5.0", features = ["tokio"] }
-embedded-can = "0.4.1"
-tracing = "0.1.40"
-tracing-subscriber = {version = "0.3.18", features = ["env-filter"]}
+draw-display = { path = "../draw-display", features = [ "std" ] }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
+
+embedded-graphics.workspace = true
+clap.workspace = true
+socketcan.workspace = true
+embedded-can.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true

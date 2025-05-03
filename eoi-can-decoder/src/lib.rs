@@ -4,6 +4,45 @@ pub mod can_frame;
 
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum EoiCanData {
+    EoiBattery(EoiBattery),
+    Vesc(VescData),
+    Throttle(ThrottleData),
+    Mppt(MpptData),
+    Gnss(GnssData),
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GnssData {
+    GnssStatus(GnssStatus),
+    GnssSpeedAndHeading(f32, f32),
+    GnssLatitude(f64),
+    GnssLongitude(f64),
+    GnssDateTime(GnssDateTime),
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GnssStatus {
+    pub fix: u8,
+    pub sats: u8,
+    pub sats_used: u8,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GnssDateTime {
+    pub year: u16,
+    pub month: u8,
+    pub day: u8,
+    pub hours: u8,
+    pub minutes: u8,
+    pub seconds: u8,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleData {
     ToVescDutyCycle(f32),
     ToVescCurrent(f32),
@@ -75,15 +114,6 @@ pub struct MpptStatus {
     pub state: u8,
     pub pwm_enabled: bool,
     pub switch_on: bool,
-}
-
-#[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum EoiCanData {
-    EoiBattery(EoiBattery),
-    Vesc(VescData),
-    Throttle(ThrottleData),
-    Mppt(MpptData),
 }
 
 #[derive(Debug)]
@@ -267,6 +297,30 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             },
         ))),
 
+        0x200 => Some(EoiCanData::Gnss(GnssData::GnssStatus(GnssStatus {
+            fix: data[0],
+            sats: data[1],
+            sats_used: data[2],
+        }))),
+        0x201 => Some(EoiCanData::Gnss(GnssData::GnssSpeedAndHeading(
+            bytes_to_f32(&data[0..4]),
+            bytes_to_f32(&data[4..8]),
+        ))),
+        0x202 => Some(EoiCanData::Gnss(GnssData::GnssLatitude(bytes_to_f64(
+            &data[0..8],
+        )))),
+        0x203 => Some(EoiCanData::Gnss(GnssData::GnssLongitude(bytes_to_f64(
+            &data[0..8],
+        )))),
+        0x204 => Some(EoiCanData::Gnss(GnssData::GnssDateTime(GnssDateTime {
+            year: bytes_to_u16(&data[0..2]),
+            month: data[2],
+            day: data[3],
+            hours: data[4],
+            minutes: data[5],
+            seconds: data[6],
+        }))),
+
         MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
             let mppt_id = ((id >> 4) & 0x7) as u8;
             let info_field = id as u8 & 0xF;
@@ -390,6 +444,11 @@ fn bytes_to_u32(bytes: &[u8]) -> u32 {
 fn bytes_to_f32(bytes: &[u8]) -> f32 {
     let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
     f32::from_le_bytes(arr)
+}
+
+fn bytes_to_f64(bytes: &[u8]) -> f64 {
+    let arr: [u8; 8] = bytes.try_into().expect("Slice length must be 8");
+    f64::from_le_bytes(arr)
 }
 
 fn bytes_to_i16(bytes: &[u8]) -> i16 {

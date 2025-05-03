@@ -1,0 +1,15 @@
+[package]
+name = "eoi-gnss-to-can"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+gpsd_client = "0.1.5"
+chrono = "0.4.41"
+
+clap.workspace = true
+socketcan.workspace = true
+embedded-can.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true

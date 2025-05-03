@@ -19,7 +19,7 @@ use embassy_sync::channel::{Channel, Sender};
 use embassy_time::{Delay, Duration, Instant, Timer};
 use embedded_can::StandardId;
 use eoi_can_decoder::can_frame::CanFrame;
-use eoi_can_decoder::{parse_eoi_can_data, EoICanData};
+use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct CanInterrupts {
@@ -95,7 +95,7 @@ pub fn embassy_init() -> Peripherals {
 #[embassy_executor::task]
 pub async fn can_receiver_and_decoder(
     mut can_rx: embassy_stm32::can::CanRx<'static>,
-    decoder_tx: Sender<'static, ThreadModeRawMutex, EoICanData, 100>,
+    decoder_tx: Sender<'static, ThreadModeRawMutex, EoiCanData, 100>,
 ) {
     loop {
         let envelope = can_rx.read().await;
@@ -154,7 +154,7 @@ async fn main(spawner: Spawner) {
     can.enable().await;
     let (mut can_tx, can_rx) = can.split();
 
-    static CAN_DECODER_CHANNEL: Channel<ThreadModeRawMutex, EoICanData, 100> = Channel::new();
+    static CAN_DECODER_CHANNEL: Channel<ThreadModeRawMutex, EoiCanData, 100> = Channel::new();
 
     spawner.must_spawn(can_receiver_and_decoder(
         can_rx,

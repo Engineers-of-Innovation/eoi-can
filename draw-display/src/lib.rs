@@ -12,7 +12,10 @@ use embedded_graphics::{
     primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
-use eoi_can_decoder::{EoiBattery, EoiCanData, MpptChannelPower, MpptInfo, ThrottleData, VescData};
+use eoi_can_decoder::{
+    EoiBattery, EoiCanData, GnssData, GnssDateTime, MpptChannelPower, MpptInfo, ThrottleData,
+    VescData,
+};
 use heapless::String;
 use time::{Duration, Instant}; // Import EoICanData from the appropriate module
 
@@ -78,6 +81,7 @@ pub struct DisplayData {
     pub throttle_value: DisplayValue<f32>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
     pub charging_disabled: DisplayValue<bool>,
+    pub time: DisplayValue<GnssDateTime>,
 }
 
 impl DisplayData {
@@ -188,6 +192,13 @@ impl DisplayData {
                     }
                 }
             }
+            EoiCanData::Gnss(gnss) => match gnss {
+                GnssData::GnssSpeedAndHeading(speed_kmh, _) => {
+                    self.speed_kmh.update(speed_kmh);
+                }
+                GnssData::GnssDateTime(data) => self.time.update(data),
+                _ => {}
+            },
         }
     }
 
@@ -766,8 +777,20 @@ where
     )
     .draw(display)?;
 
+    string_helper.clear();
+    if let Some(data) = data.time.get() {
+        string_helper.clear();
+        write!(
+            &mut string_helper,
+            "Time: {:02}:{:02}:{:02}",
+            data.hours, data.minutes, data.seconds
+        )
+        .unwrap();
+    } else {
+        string_helper.push_str("Time: N/A").unwrap();
+    }
     Text::new(
-        "Last update: N/A",
+        string_helper.as_str(),
         Point::new(300, 470),
         MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
