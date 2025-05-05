@@ -1,11 +1,11 @@
 [package]
-name = "can-display-framebuffer"
+name = "eoi-can-display-simulator"
+description = "Simulator for the EOI CAN display, which can run on any computer to simulate the display."
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
-embedded_graphics_framebuffer = { git = "https://github.com/vji2i0/embedded_graphics_framebuffer", rev = "3e8a1e8813041af485cc03ef2b2ef33f761fbc03" }
-
+embedded-graphics-simulator = "0.7.0"
 draw-display = { path = "../draw-display", features = [ "std" ] }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
 

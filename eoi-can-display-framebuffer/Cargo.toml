@@ -1,10 +1,12 @@
 [package]
-name = "can-display-sim"
+name = "eoi-can-display-framebuffer"
+description = "Firmware for the EOI CAN display, which can run on the datalogger and use the framebuffer to display the data (on the LCD)."
 version = "0.1.0"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-embedded-graphics-simulator = "0.7.0"
+embedded_graphics_framebuffer = { git = "https://github.com/vji2i0/embedded_graphics_framebuffer", rev = "3e8a1e8813041af485cc03ef2b2ef33f761fbc03" }
+
 draw-display = { path = "../draw-display", features = [ "std" ] }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
 
