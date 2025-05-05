@@ -59,6 +59,7 @@ impl<T> Default for DisplayValue<T> {
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
+    pub gnss_fix: DisplayValue<bool>,
     pub battery_state_of_charge: DisplayValue<f32>,
     pub battery_time_to_empty: DisplayValue<u16>,
     pub battery_cell_voltages: [DisplayValue<f32>; 14],
@@ -197,7 +198,11 @@ impl DisplayData {
                     self.speed_kmh.update(speed_kmh);
                 }
                 GnssData::GnssDateTime(data) => self.time.update(data),
-                _ => {}
+                GnssData::GnssStatus(data) => {
+                    self.gnss_fix.update(data.fix != 0);
+                }
+                GnssData::GnssLatitude(_) => {}
+                GnssData::GnssLongitude(_) => {}
             },
         }
     }
@@ -303,10 +308,13 @@ where
     .draw(display)?;
 
     string_helper.clear();
-    if let Some(data) = data.speed_kmh.get() {
-        write!(&mut string_helper, "{:.1}", data).unwrap();
-    } else {
-        string_helper.push_str("N/A").unwrap();
+
+    if let Some(speed_kmh) = data.speed_kmh.get() {
+        if *data.gnss_fix.get().unwrap_or(&false) {
+            write!(&mut string_helper, "{:.1}", speed_kmh).unwrap();
+        } else {
+            string_helper.push_str("No fix").unwrap();
+        }
     }
 
     Text::with_alignment(
