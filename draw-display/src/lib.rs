@@ -3,6 +3,7 @@
 mod time;
 
 use embedded_graphics::{
+    image::Image,
     mono_font::{
         ascii::{FONT_10X20, FONT_4X6},
         MonoTextStyle, MonoTextStyleBuilder,
@@ -17,7 +18,8 @@ use eoi_can_decoder::{
     VescData,
 };
 use heapless::String;
-use time::{Duration, Instant}; // Import EoICanData from the appropriate module
+use time::{Duration, Instant};
+use tinybmp::Bmp; // Import EoICanData from the appropriate module
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -219,8 +221,15 @@ where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
-    let mut string_helper: String<64> = String::new();
     display.clear(BinaryColor::On.into())?;
+    let mut string_helper: String<64> = String::new();
+
+    let bmp: Bmp<BinaryColor> =
+        Bmp::from_slice(include_bytes!("../eoi-logo-mark--monochrome-black.bmp")).unwrap();
+    let image_l = Image::new(&bmp, Point::new(0, 0));
+    let image_r = Image::new(&bmp, Point::new(800 - 100, 0));
+    image_l.draw(&mut display.color_converted())?;
+    image_r.draw(&mut display.color_converted())?;
 
     let black_box: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
