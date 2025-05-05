@@ -126,8 +126,8 @@ async fn main() {
             data.track
         );
         info!("Latitude, Longitude: {},{}", data.lat, data.lon);
-        info!("Time: {}:{}:{}", hour, minute, second);
-        info!("Date: {}-{}-{}", year, month, day);
+        info!("Time: {:02}:{:02}:{:02}", hour, minute, second);
+        info!("Date: {:04}-{:02}-{:02}", year, month, day);
 
         thread::sleep(Duration::from_millis(1000));
     }
