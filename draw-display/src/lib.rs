@@ -243,6 +243,20 @@ where
         .background_color(BinaryColor::On.into())
         .build();
 
+    string_helper.clear();
+    if let Some(data) = data.time.get() {
+        string_helper.clear();
+        write!(
+            &mut string_helper,
+            "{:02}:{:02}:{:02}",
+            data.hours, data.minutes, data.seconds
+        )
+        .unwrap();
+    } else {
+        string_helper.push_str("Time:N/A").unwrap();
+    }
+    Text::new(string_helper.as_str(), Point::new(362, 18), normal).draw(display)?;
+
     // power meter
 
     Line::new(Point::new(0, 70), Point::new(800, 70))
@@ -791,25 +805,6 @@ where
         string_helper.as_str(),
         Point::new(15, motordriver_offset_y),
         normal,
-    )
-    .draw(display)?;
-
-    string_helper.clear();
-    if let Some(data) = data.time.get() {
-        string_helper.clear();
-        write!(
-            &mut string_helper,
-            "Time: {:02}:{:02}:{:02}",
-            data.hours, data.minutes, data.seconds
-        )
-        .unwrap();
-    } else {
-        string_helper.push_str("Time: N/A").unwrap();
-    }
-    Text::new(
-        string_helper.as_str(),
-        Point::new(300, 470),
-        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
 
