@@ -91,6 +91,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let mut display_data = draw_display::DisplayData::default();
 
     loop {
+        // await for new data, otherwise we don't need to update the display
+        let parsed_data = can_decoder_rx.recv().await.unwrap();
+        display_data.ingest_eoi_can_data(parsed_data);
+        // check if there are any other messages in the queue and process them right away
         while let Ok(parsed_data) = can_decoder_rx.try_recv() {
             display_data.ingest_eoi_can_data(parsed_data);
         }
