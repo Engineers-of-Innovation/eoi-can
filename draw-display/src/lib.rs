@@ -338,6 +338,8 @@ where
         } else {
             string_helper.push_str("No fix").unwrap();
         }
+    } else {
+        string_helper.push_str("N/A").unwrap();
     }
 
     Text::with_alignment(
