@@ -99,6 +99,9 @@ impl defmt::Format for CanFrame {
 }
 
 #[cfg(test)]
+extern crate std;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use embedded_can::{ExtendedId, StandardId};

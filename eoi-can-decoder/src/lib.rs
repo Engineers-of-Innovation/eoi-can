@@ -245,100 +245,105 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
     match id {
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
-                pack_current: bytes_le_to_f32(&data[0..4]),
-                perri_current: bytes_le_to_f32(&data[4..8]),
+                pack_current: bytes_le_to_f32(data.get(0..4)?)?,
+                perri_current: bytes_le_to_f32(data.get(4..8)?)?,
             },
         ))),
         0x101 => Some(EoiCanData::EoiBattery(
             EoiBattery::ChargeAndDischargeCurrent(ChargeAndDischargeCurrent {
-                charge_current: bytes_le_to_f32(&data[0..4]),
-                discharge_current: -1.0 * bytes_le_to_f32(&data[4..8]),
+                charge_current: bytes_le_to_f32(data.get(0..4)?)?,
+                discharge_current: -1.0 * bytes_le_to_f32(data.get(4..8)?)?,
             }),
         )),
         0x102 => Some(EoiCanData::EoiBattery(
             EoiBattery::SocErrorFlagsAndBalancing(SocErrorFlagsAndBalancing {
-                state_of_charge: bytes_le_to_u16(&data[0..2]) as f32 / 100.0,
-                error_flags: bytes_le_to_u32(&data[2..6]),
-                balancing_status: bytes_le_to_u16(&data[6..8]),
+                state_of_charge: bytes_le_to_u16(data.get(0..2)?)? as f32 / 100.0,
+                error_flags: bytes_le_to_u32(data.get(2..6)?)?,
+                balancing_status: bytes_le_to_u16(data.get(6..8)?)?,
             }),
         )),
         0x103 => Some(EoiCanData::EoiBattery(EoiBattery::CellVoltages1_4(
             FourCellVoltages {
                 cell_voltage: [
-                    bytes_le_to_u16(&data[0..2]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[2..4]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[4..6]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[6..8]) as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(0..2)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(2..4)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(4..6)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(6..8)?)? as f32 / 1000.0,
                 ],
             },
         ))),
         0x104 => Some(EoiCanData::EoiBattery(EoiBattery::CellVoltages5_8(
             FourCellVoltages {
                 cell_voltage: [
-                    bytes_le_to_u16(&data[0..2]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[2..4]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[4..6]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[6..8]) as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(0..2)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(2..4)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(4..6)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(6..8)?)? as f32 / 1000.0,
                 ],
             },
         ))),
         0x105 => Some(EoiCanData::EoiBattery(EoiBattery::CellVoltages9_12(
             FourCellVoltages {
                 cell_voltage: [
-                    bytes_le_to_u16(&data[0..2]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[2..4]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[4..6]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[6..8]) as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(0..2)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(2..4)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(4..6)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(6..8)?)? as f32 / 1000.0,
                 ],
             },
         ))),
         0x106 => Some(EoiCanData::EoiBattery(
             EoiBattery::CellVoltages13_14PackAndStack(CellVoltages13_14PackAndStack {
                 cell_voltage: [
-                    bytes_le_to_u16(&data[0..2]) as f32 / 1000.0,
-                    bytes_le_to_u16(&data[2..4]) as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(0..2)?)? as f32 / 1000.0,
+                    bytes_le_to_u16(data.get(2..4)?)? as f32 / 1000.0,
                 ],
-                pack_voltage: bytes_le_to_u16(&data[4..6]) as f32 / 1000.0,
-                stack_voltage: bytes_le_to_u16(&data[6..8]) as f32 / 1000.0,
+                pack_voltage: bytes_le_to_u16(data.get(4..6)?)? as f32 / 1000.0,
+                stack_voltage: bytes_le_to_u16(data.get(6..8)?)? as f32 / 1000.0,
             }),
         )),
         0x107 => Some(EoiCanData::EoiBattery(EoiBattery::TemperaturesAndStates(
             TemperaturesAndStates {
-                temperatures: [data[0] as i8, data[1] as i8, data[2] as i8, data[3] as i8],
-                ic_temperature: data[4] as i8,
-                battery_state: data[5],
-                charge_state: data[6],
-                discharge_state: data[7],
+                temperatures: [
+                    *data.first()? as i8,
+                    *data.get(1)? as i8,
+                    *data.get(2)? as i8,
+                    *data.get(3)? as i8,
+                ],
+                ic_temperature: *data.get(4)? as i8,
+                battery_state: *data.get(5)?,
+                charge_state: *data.get(6)?,
+                discharge_state: *data.get(7)?,
             },
         ))),
         0x108 => Some(EoiCanData::EoiBattery(EoiBattery::BatteryUptime(
             BatteryUptime {
-                uptime_ms: bytes_le_to_u32(&data[0..4]),
+                uptime_ms: bytes_le_to_u32(data.get(0..4)?)?,
             },
         ))),
 
         0x200 => Some(EoiCanData::Gnss(GnssData::GnssStatus(GnssStatus {
-            fix: data[0],
-            sats: data[1],
-            sats_used: data[2],
+            fix: *data.first()?,
+            sats: *data.get(1)?,
+            sats_used: *data.get(2)?,
         }))),
         0x201 => Some(EoiCanData::Gnss(GnssData::GnssSpeedAndHeading(
-            bytes_le_to_f32(&data[0..4]),
-            bytes_le_to_f32(&data[4..8]),
+            bytes_le_to_f32(data.get(0..4)?)?,
+            bytes_le_to_f32(data.get(4..8)?)?,
         ))),
         0x202 => Some(EoiCanData::Gnss(GnssData::GnssLatitude(bytes_le_to_f64(
-            &data[0..8],
-        )))),
+            data.get(0..8)?,
+        )?))),
         0x203 => Some(EoiCanData::Gnss(GnssData::GnssLongitude(bytes_le_to_f64(
-            &data[0..8],
-        )))),
+            data.get(0..8)?,
+        )?))),
         0x204 => Some(EoiCanData::Gnss(GnssData::GnssDateTime(GnssDateTime {
-            year: bytes_le_to_u16(&data[0..2]),
-            month: data[2],
-            day: data[3],
-            hours: data[4],
-            minutes: data[5],
-            seconds: data[6],
+            year: bytes_le_to_u16(data.get(0..2)?)?,
+            month: *data.get(2)?,
+            day: *data.get(3)?,
+            hours: *data.get(4)?,
+            minutes: *data.get(5)?,
+            seconds: *data.get(6)?,
         }))),
 
         MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
@@ -351,8 +356,8 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                         mppt_id,
                         info: MpptInfo::MpptChannelPower(MpptChannelPower {
                             mppt_channel: channel,
-                            voltage_in: bytes_le_to_f32(&data[0..4]),
-                            current_in: bytes_le_to_f32(&data[4..8]),
+                            voltage_in: bytes_le_to_f32(data.get(0..4)?)?,
+                            current_in: bytes_le_to_f32(data.get(4..8)?)?,
                         }),
                     };
                     Some(EoiCanData::Mppt(mppt_data))
@@ -362,10 +367,10 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                         mppt_id,
                         info: MpptInfo::MpptChannelState(MpptChannelState {
                             mppt_channel: channel,
-                            duty_cycle: bytes_le_to_u16(&data[0..2]),
-                            algorithm: data[2],
-                            algorithm_state: data[3],
-                            channel_active: data[4] != 0,
+                            duty_cycle: bytes_le_to_u16(data.get(0..2)?)?,
+                            algorithm: *data.get(2)?,
+                            algorithm_state: *data.get(3)?,
+                            channel_active: *data.get(4)? != 0,
                         }),
                     };
                     Some(EoiCanData::Mppt(mppt_data))
@@ -374,8 +379,8 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     let mppt_data = MpptData {
                         mppt_id,
                         info: MpptInfo::MpptPower(MpptPower {
-                            voltage_out: bytes_le_to_f32(&data[0..4]),
-                            current_out: bytes_le_to_f32(&data[4..8]),
+                            voltage_out: bytes_le_to_f32(data.get(0..4)?)?,
+                            current_out: bytes_le_to_f32(data.get(4..8)?)?,
                         }),
                     };
                     Some(EoiCanData::Mppt(mppt_data))
@@ -384,11 +389,11 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     let mppt_data = MpptData {
                         mppt_id,
                         info: MpptInfo::MpptStatus(MpptStatus {
-                            voltage_out_switch: bytes_le_to_f32(&data[0..4]),
-                            temperature: bytes_le_to_i16(&data[4..6]),
-                            state: data[6],
-                            pwm_enabled: data[7] & 0b1 != 0,
-                            switch_on: data[7] & 0b10 != 0,
+                            voltage_out_switch: bytes_le_to_f32(data.get(0..4)?)?,
+                            temperature: bytes_le_to_i16(data.get(4..6)?)?,
+                            state: *data.get(6)?,
+                            pwm_enabled: *data.get(7)? & 0b1 != 0,
+                            switch_on: *data.get(7)? & 0b10 != 0,
                         }),
                     };
                     Some(EoiCanData::Mppt(mppt_data))
@@ -401,61 +406,61 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         }
 
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {
-            rpm: bytes_be_to_i32(&data[0..4]),
-            total_current: bytes_be_to_i16(&data[4..6]) as f32 / 10.0,
-            duty_cycle: bytes_be_to_i16(&data[6..8]) as f32 / 10.0,
+            rpm: bytes_be_to_i32(data.get(0..4)?)?,
+            total_current: bytes_be_to_i16(data.get(4..6)?)? as f32 / 10.0,
+            duty_cycle: bytes_be_to_i16(data.get(6..8)?)? as f32 / 10.0,
         })),
         0x0E09 => Some(EoiCanData::Vesc(VescData::StatusMessage2 {
-            amp_hours_used: bytes_be_to_u32(&data[0..4]) as f32 / 10000.0,
-            amp_hours_generated: bytes_be_to_u32(&data[4..8]) as f32 / 10000.0,
+            amp_hours_used: bytes_be_to_u32(data.get(0..4)?)? as f32 / 10000.0,
+            amp_hours_generated: bytes_be_to_u32(data.get(4..8)?)? as f32 / 10000.0,
         })),
         0x0F09 => Some(EoiCanData::Vesc(VescData::StatusMessage3 {
-            watt_hours_used: bytes_be_to_u32(&data[0..4]) as f32 / 10000.0,
-            watt_hours_generated: bytes_be_to_u32(&data[4..8]) as f32 / 10000.0,
+            watt_hours_used: bytes_be_to_u32(data.get(0..4)?)? as f32 / 10000.0,
+            watt_hours_generated: bytes_be_to_u32(data.get(4..8)?)? as f32 / 10000.0,
         })),
         0x1009 => Some(EoiCanData::Vesc(VescData::StatusMessage4 {
-            fet_temp: bytes_be_to_i16(&data[0..2]) as f32 / 10.0,
-            motor_temp: bytes_be_to_i16(&data[2..4]) as f32 / 10.0,
-            total_input_current: bytes_be_to_i16(&data[4..6]) as f32 / 10.0,
-            current_pid_position: bytes_be_to_i16(&data[6..8]) as f32 / 50.0,
+            fet_temp: bytes_be_to_i16(data.get(0..2)?)? as f32 / 10.0,
+            motor_temp: bytes_be_to_i16(data.get(2..4)?)? as f32 / 10.0,
+            total_input_current: bytes_be_to_i16(data.get(4..6)?)? as f32 / 10.0,
+            current_pid_position: bytes_be_to_i16(data.get(6..8)?)? as f32 / 50.0,
         })),
         0x1B09 => Some(EoiCanData::Vesc(VescData::StatusMessage5 {
-            input_voltage: bytes_be_to_i16(&data[4..6]) as f32 / 10.0,
-            tachometer: bytes_be_to_i32(&data[0..4]),
+            input_voltage: bytes_be_to_i16(data.get(4..6)?)? as f32 / 10.0,
+            tachometer: bytes_be_to_i32(data.get(0..4)?)?,
         })),
         0x0009 => Some(EoiCanData::Throttle(ThrottleData::ToVescDutyCycle(
-            bytes_be_to_i32(&data[0..4]) as f32 / 1000.0,
+            bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
         0x0109 => Some(EoiCanData::Throttle(ThrottleData::ToVescCurrent(
-            bytes_be_to_i32(&data[0..4]) as f32 / 1000.0,
+            bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
         0x0309 => Some(EoiCanData::Throttle(ThrottleData::ToVescRpm(
-            bytes_be_to_i32(&data[0..4]) as f32 / 1000.0,
+            bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
         0x1337 | 0x0337 => match data.len() {
             8 => Some(EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
-                value: (bytes_be_to_i16(&data[0..2]) as f32 / 512.0) * 100.0,
-                raw_angle: bytes_be_to_i16(&data[2..4]),
-                raw_deadmen: bytes_be_to_i16(&data[4..6]),
-                gain: data[6],
-                error_any: data[7] != 0,
-                error_twi: data[7] & 0b111,
-                error_no_eeprom: data[7] & (1 << 3) != 0,
-                error_gain_clipping: data[7] & (1 << 4) != 0,
-                error_gain_invalid: data[7] & (1 << 5) != 0,
-                error_deadman_missing: data[7] & (1 << 6) != 0,
-                error_impedance_high: data[7] & (1 << 7) != 0,
+                value: (bytes_be_to_i16(data.get(0..2)?)? as f32 / 512.0) * 100.0,
+                raw_angle: bytes_be_to_i16(data.get(2..4)?)?,
+                raw_deadmen: bytes_be_to_i16(data.get(4..6)?)?,
+                gain: *data.get(6)?,
+                error_any: *data.get(7)? != 0,
+                error_twi: *data.get(7)? & 0b111,
+                error_no_eeprom: *data.get(7)? & (1 << 3) != 0,
+                error_gain_clipping: *data.get(7)? & (1 << 4) != 0,
+                error_gain_invalid: *data.get(7)? & (1 << 5) != 0,
+                error_deadman_missing: *data.get(7)? & (1 << 6) != 0,
+                error_impedance_high: *data.get(7)? & (1 << 7) != 0,
             }))),
             6 => Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {
-                control_type: match data[0] {
+                control_type: match *data.first()? {
                     0 => ThrottleControlType::DutyCycle,
                     1 => ThrottleControlType::FilteredDutyCycle,
                     2 => ThrottleControlType::Current,
                     3 => ThrottleControlType::Rpm,
                     _ => ThrottleControlType::Unknown,
                 },
-                lever_forward: bytes_be_to_i16(&data[2..4]),
-                lever_backward: bytes_be_to_i16(&data[4..6]),
+                lever_forward: bytes_be_to_i16(data.get(2..4)?)?,
+                lever_backward: bytes_be_to_i16(data.get(4..6)?)?,
             }))),
             _ => None,
         },
@@ -463,44 +468,46 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
     }
 }
 
-fn bytes_le_to_u16(bytes: &[u8]) -> u16 {
-    let arr: [u8; 2] = bytes.try_into().expect("Slice length must be 2");
-    u16::from_le_bytes(arr)
+// Helper functions now return Option<T> instead of panicking
+
+fn bytes_le_to_u16(bytes: &[u8]) -> Option<u16> {
+    let arr: [u8; 2] = bytes.try_into().ok()?;
+    Some(u16::from_le_bytes(arr))
 }
 
-fn bytes_be_to_i16(bytes: &[u8]) -> i16 {
-    let arr: [u8; 2] = bytes.try_into().expect("Slice length must be 2");
-    i16::from_be_bytes(arr)
+fn bytes_be_to_i16(bytes: &[u8]) -> Option<i16> {
+    let arr: [u8; 2] = bytes.try_into().ok()?;
+    Some(i16::from_be_bytes(arr))
 }
 
-fn bytes_le_to_u32(bytes: &[u8]) -> u32 {
-    let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
-    u32::from_le_bytes(arr)
+fn bytes_le_to_u32(bytes: &[u8]) -> Option<u32> {
+    let arr: [u8; 4] = bytes.try_into().ok()?;
+    Some(u32::from_le_bytes(arr))
 }
 
-fn bytes_be_to_u32(bytes: &[u8]) -> u32 {
-    let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
-    u32::from_be_bytes(arr)
+fn bytes_be_to_u32(bytes: &[u8]) -> Option<u32> {
+    let arr: [u8; 4] = bytes.try_into().ok()?;
+    Some(u32::from_be_bytes(arr))
 }
 
-fn bytes_le_to_f32(bytes: &[u8]) -> f32 {
-    let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
-    f32::from_le_bytes(arr)
+fn bytes_le_to_f32(bytes: &[u8]) -> Option<f32> {
+    let arr: [u8; 4] = bytes.try_into().ok()?;
+    Some(f32::from_le_bytes(arr))
 }
 
-fn bytes_le_to_f64(bytes: &[u8]) -> f64 {
-    let arr: [u8; 8] = bytes.try_into().expect("Slice length must be 8");
-    f64::from_le_bytes(arr)
+fn bytes_le_to_f64(bytes: &[u8]) -> Option<f64> {
+    let arr: [u8; 8] = bytes.try_into().ok()?;
+    Some(f64::from_le_bytes(arr))
 }
 
-fn bytes_le_to_i16(bytes: &[u8]) -> i16 {
-    let arr: [u8; 2] = bytes.try_into().expect("Slice length must be 2");
-    i16::from_le_bytes(arr)
+fn bytes_le_to_i16(bytes: &[u8]) -> Option<i16> {
+    let arr: [u8; 2] = bytes.try_into().ok()?;
+    Some(i16::from_le_bytes(arr))
 }
 
-fn bytes_be_to_i32(bytes: &[u8]) -> i32 {
-    let arr: [u8; 4] = bytes.try_into().expect("Slice length must be 4");
-    i32::from_be_bytes(arr)
+fn bytes_be_to_i32(bytes: &[u8]) -> Option<i32> {
+    let arr: [u8; 4] = bytes.try_into().ok()?;
+    Some(i32::from_be_bytes(arr))
 }
 
 #[cfg(test)]
@@ -510,8 +517,8 @@ mod tests {
     use embedded_can::StandardId;
 
     const PERRI_CURRENT: f32 = -0.2421;
-    const DISCHARGE_CURRENT: f32 = 9.9765;
-    const CHARGE_CURRENT: f32 = 17.5270;
+    const CHARGE_CURRENT: f32 = 9.9765;
+    const DISCHARGE_CURRENT: f32 = -17.5270;
 
     // This sum seems a bit odd, but it is the result of the test data
     // TODO: investigate if this is a bug in the test data / battery
