@@ -1,4 +1,4 @@
-#![cfg_attr(not(test), no_std)]
+#![cfg_attr(feature = "defmt", no_std)]
 
 pub mod can_frame;
 

@@ -9,6 +9,27 @@ pub struct CanFrame {
     pub data: heapless::Vec<u8, { Self::MAX_LEN }>,
 }
 
+#[cfg(feature = "arbitrary")]
+use embedded_can::{ExtendedId, StandardId};
+#[cfg(feature = "arbitrary")]
+impl arbitrary::Arbitrary<'_> for CanFrame {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        let id: u32 = u.int_in_range(0..=0x1FFFFFFF)?;
+        let id = if id <= 0x7FF {
+            embedded_can::Id::Standard(StandardId::new(id as u16).unwrap())
+        } else {
+            embedded_can::Id::Extended(ExtendedId::new(id).unwrap())
+        };
+        let data_len = u.int_in_range(0..=Self::MAX_LEN as u8)?;
+        let mut data = heapless::Vec::new();
+        for _ in 0..data_len {
+            data.push(u.int_in_range(0..=255)?)
+                .expect("Data length exceeds MAX_LEN");
+        }
+        Ok(Self { id, data })
+    }
+}
+
 impl CanFrame {
     const MAX_LEN: usize = 8;
 

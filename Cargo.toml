@@ -2,7 +2,7 @@
 resolver = "3"
 
 members = [ "eoi-can-display-simulator", "eoi-can-display-framebuffer", "draw-display", "eoi-can-decoder", "eoi-gnss-to-can" ]
-exclude = [ "eoi-can-display-firmware" ]
+exclude = [ "eoi-can-display-firmware", "fuzz" ]
 
 [workspace.dependencies]
 embedded-graphics = "0.8.1"
