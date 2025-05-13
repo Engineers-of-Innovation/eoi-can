@@ -48,6 +48,7 @@ pub enum ThrottleData {
     ToVescCurrent(f32),
     ToVescRpm(f32),
     Status(ThrottleStatus),
+    Config(ThrottleConfig),
 }
 
 #[derive(Debug)]
@@ -64,6 +65,25 @@ pub struct ThrottleStatus {
     pub error_gain_invalid: bool,
     pub error_deadman_missing: bool,
     pub error_impedance_high: bool,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ThrottleConfig {
+    pub control_type: ThrottleControlType,
+    pub lever_forward: i16,
+    pub lever_backward: i16,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum ThrottleControlType {
+    DutyCycle = 0,
+    FilteredDutyCycle = 1,
+    Current = 2,
+    Rpm = 3,
+    Unknown = 4,
 }
 
 #[derive(Debug)]
@@ -231,8 +251,8 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         ))),
         0x101 => Some(EoiCanData::EoiBattery(
             EoiBattery::ChargeAndDischargeCurrent(ChargeAndDischargeCurrent {
-                discharge_current: bytes_to_f32(&data[0..4]),
-                charge_current: bytes_to_f32(&data[4..8]),
+                charge_current: bytes_to_f32(&data[0..4]),
+                discharge_current: -1.0 * bytes_to_f32(&data[4..8]),
             }),
         )),
         0x102 => Some(EoiCanData::EoiBattery(
@@ -414,19 +434,33 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x0309 => Some(EoiCanData::Throttle(ThrottleData::ToVescRpm(
             i32::from_be_bytes(data[0..4].try_into().unwrap()) as f32 / 1000.0,
         ))),
-        0x1337 | 0x0337 => Some(EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
-            value: (i16::from_be_bytes(data[0..2].try_into().unwrap()) as f32 / 512.0) * 100.0,
-            raw_angle: i16::from_be_bytes(data[2..4].try_into().unwrap()),
-            raw_deadmen: i16::from_be_bytes(data[4..6].try_into().unwrap()),
-            gain: data[6],
-            error_any: data[7] != 0,
-            error_twi: data[7] & 0b111,
-            error_no_eeprom: data[7] & (1 << 3) != 0,
-            error_gain_clipping: data[7] & (1 << 4) != 0,
-            error_gain_invalid: data[7] & (1 << 5) != 0,
-            error_deadman_missing: data[7] & (1 << 6) != 0,
-            error_impedance_high: data[7] & (1 << 7) != 0,
-        }))),
+        0x1337 | 0x0337 => match data.len() {
+            8 => Some(EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
+                value: (i16::from_be_bytes(data[0..2].try_into().unwrap()) as f32 / 512.0) * 100.0,
+                raw_angle: i16::from_be_bytes(data[2..4].try_into().unwrap()),
+                raw_deadmen: i16::from_be_bytes(data[4..6].try_into().unwrap()),
+                gain: data[6],
+                error_any: data[7] != 0,
+                error_twi: data[7] & 0b111,
+                error_no_eeprom: data[7] & (1 << 3) != 0,
+                error_gain_clipping: data[7] & (1 << 4) != 0,
+                error_gain_invalid: data[7] & (1 << 5) != 0,
+                error_deadman_missing: data[7] & (1 << 6) != 0,
+                error_impedance_high: data[7] & (1 << 7) != 0,
+            }))),
+            6 => Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {
+                control_type: match data[0] {
+                    0 => ThrottleControlType::DutyCycle,
+                    1 => ThrottleControlType::FilteredDutyCycle,
+                    2 => ThrottleControlType::Current,
+                    3 => ThrottleControlType::Rpm,
+                    _ => ThrottleControlType::Unknown,
+                },
+                lever_forward: i16::from_be_bytes(data[2..4].try_into().unwrap()),
+                lever_backward: i16::from_be_bytes(data[4..6].try_into().unwrap()),
+            }))),
+            _ => None,
+        },
         _ => None,
     }
 }
