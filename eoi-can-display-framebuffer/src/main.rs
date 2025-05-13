@@ -1,7 +1,7 @@
 use core::time;
 
 use clap::Parser;
-use embedded_can::{ExtendedId, Frame};
+use embedded_can::Frame;
 use embedded_graphics_framebuffer::FrameBufferDisplay;
 use eoi_can_decoder::{EoiCanData, parse_eoi_can_data};
 use socketcan::{CanFrame, tokio::CanSocket};
@@ -49,12 +49,6 @@ async fn main() -> Result<(), core::convert::Infallible> {
     info!("Connected to CAN interface: {}", args.can_interface);
 
     let (can_decoder_tx, mut can_decoder_rx) = tokio::sync::mpsc::channel::<EoiCanData>(100);
-
-    // hack to check if the socket is open, not sure how to go about this
-    can_sock
-        .write_frame(CanFrame::new(ExtendedId::new(0).unwrap(), &[]).unwrap())
-        .await
-        .expect("Unable to write to CAN socket");
 
     // Spawn a task to read CAN frames
     tokio::spawn(async move {
