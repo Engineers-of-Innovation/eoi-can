@@ -2,6 +2,10 @@
 name = "draw-display"
 version = "0.1.0"
 edition = "2021"
+build = "build.rs"
+
+[build-dependencies]
+built = { version = "0.8", features = [ "git2" ] }
 
 [features]
 default = [ "std" ]

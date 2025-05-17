@@ -23,6 +23,11 @@ use tinybmp::Bmp; // Import EoICanData from the appropriate module
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
 
+mod built_info {
+    // The file has been placed there by the build script.
+    include!(concat!(env!("OUT_DIR"), "/built.rs"));
+}
+
 #[derive(Debug)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct DisplayValue<T> {
@@ -813,6 +818,28 @@ where
     Text::new(
         "Ip address: N/A",
         Point::new(415, 470),
+        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
+    )
+    .draw(display)?;
+
+    string_helper.clear();
+
+    write!(
+        &mut string_helper,
+        "Version: {}, Git: {:.8}{}",
+        built_info::PKG_VERSION,
+        built_info::GIT_COMMIT_HASH.unwrap_or("unknown"),
+        if built_info::GIT_DIRTY.unwrap_or(false) {
+            "-dirty"
+        } else {
+            ""
+        }
+    )
+    .unwrap();
+
+    Text::new(
+        string_helper.as_str(),
+        Point::new(250, 470),
         MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
     .draw(display)?;
