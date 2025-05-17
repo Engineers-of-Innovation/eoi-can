@@ -75,7 +75,7 @@ pub struct ThrottleConfig {
     pub lever_backward: i16,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ThrottleControlType {
@@ -83,7 +83,9 @@ pub enum ThrottleControlType {
     FilteredDutyCycle = 1,
     Current = 2,
     Rpm = 3,
-    Unknown = 4,
+    CurrentRelative = 4,
+    #[default]
+    Unknown = 255,
 }
 
 #[derive(Debug)]
@@ -457,6 +459,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     1 => ThrottleControlType::FilteredDutyCycle,
                     2 => ThrottleControlType::Current,
                     3 => ThrottleControlType::Rpm,
+                    4 => ThrottleControlType::CurrentRelative,
                     _ => ThrottleControlType::Unknown,
                 },
                 lever_forward: bytes_be_to_i16(data.get(2..4)?)?,
