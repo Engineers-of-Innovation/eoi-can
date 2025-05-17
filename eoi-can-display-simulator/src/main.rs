@@ -5,11 +5,13 @@ use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
 use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
+use get_wifi_ip::get_wifi_ip;
 use socketcan::{tokio::CanSocket, CanFrame};
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
@@ -98,6 +100,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
     'running: loop {
         while let Ok(parsed_data) = can_decoder_rx.try_recv() {
             display_data.ingest_eoi_can_data(parsed_data);
+        }
+
+        if let Some(ip) = get_wifi_ip() {
+            display_data.ip_address.update(ip);
         }
 
         draw_display::draw_display(&mut display, &display_data).unwrap();

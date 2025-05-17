@@ -9,6 +9,7 @@ embedded_graphics_framebuffer = { git = "https://github.com/vji2i0/embedded_grap
 
 draw-display = { path = "../draw-display", features = [ "std" ] }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
+get-wifi-ip = { path = "../get-wifi-ip" }
 
 embedded-graphics.workspace = true
 clap.workspace = true

@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 
-members = [ "eoi-can-display-simulator", "eoi-can-display-framebuffer", "draw-display", "eoi-can-decoder", "eoi-gnss-to-can" ]
+members = [ "eoi-can-display-simulator", "eoi-can-display-framebuffer", "draw-display", "eoi-can-decoder", "eoi-gnss-to-can" , "get-wifi-ip"]
 exclude = [ "eoi-can-display-firmware", "fuzz" ]
 
 [workspace.dependencies]

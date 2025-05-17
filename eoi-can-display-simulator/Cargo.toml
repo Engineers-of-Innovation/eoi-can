@@ -8,6 +8,7 @@ edition = "2021"
 embedded-graphics-simulator = "0.7.0"
 draw-display = { path = "../draw-display", features = [ "std" ] }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
+get-wifi-ip = { path = "../get-wifi-ip" }
 
 embedded-graphics.workspace = true
 clap.workspace = true

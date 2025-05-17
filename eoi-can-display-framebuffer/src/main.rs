@@ -98,6 +98,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
             display_data.ingest_eoi_can_data(parsed_data);
         }
 
+        if let Some(ip) = get_wifi_ip() {
+            display_data.ip_address.update(ip);
+        }
+
         draw_display::draw_display(&mut display, &display_data).unwrap();
         display.flush().unwrap();
 

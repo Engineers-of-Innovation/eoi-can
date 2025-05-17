@@ -2,6 +2,8 @@
 
 mod time;
 
+use core::net::Ipv4Addr;
+
 use embedded_graphics::{
     image::Image,
     mono_font::{
@@ -90,6 +92,7 @@ pub struct DisplayData {
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
+    pub ip_address: DisplayValue<Ipv4Addr>,
 }
 
 impl DisplayData {
@@ -815,8 +818,15 @@ where
     )
     .draw(display)?;
 
+    string_helper.clear();
+    if let Some(data) = data.ip_address.get() {
+        write!(&mut string_helper, "Ip address: {}", data).unwrap();
+    } else {
+        string_helper.push_str("Ip address: N/A").unwrap();
+    }
+
     Text::new(
-        "Ip address: N/A",
+        string_helper.as_str(),
         Point::new(415, 470),
         MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
     )
