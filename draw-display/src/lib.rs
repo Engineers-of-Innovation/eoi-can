@@ -420,7 +420,7 @@ where
         if let Some((power, voltage, current)) = info.get() {
             write!(
                 &mut panel_text,
-                "Panel {:2}: {:.0} W {:.0} V {:.0} A",
+                "Panel {:2}: {:.0} W {:.0} V {:.1} A",
                 panel + 1,
                 power,
                 voltage,
