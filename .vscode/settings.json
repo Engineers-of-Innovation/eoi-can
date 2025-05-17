@@ -1,6 +1,7 @@
 {
     "rust-analyzer.linkedProjects": [
         "Cargo.toml",
-        "can-display-firmware/Cargo.toml",
+        "eoi-can-display-firmware/Cargo.toml",
+        "fuzz/Cargo.toml",
     ],
 }

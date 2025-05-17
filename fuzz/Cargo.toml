@@ -1,0 +1,19 @@
+[package]
+name = "eoi-can-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+eoi-can-decoder = { path = "../eoi-can-decoder", features = [ "arbitrary" ] }
+
+[[bin]]
+name = "can_decoder"
+path = "fuzz_targets/can_decoder.rs"
+test = false
+doc = false
+bench = false

@@ -1,0 +1,19 @@
+[package]
+name = "eoi-can-display-simulator"
+description = "Simulator for the EOI CAN display, which can run on any computer to simulate the display."
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+embedded-graphics-simulator = "0.7.0"
+draw-display = { path = "../draw-display", features = [ "std" ] }
+eoi-can-decoder = { path = "../eoi-can-decoder" }
+get-wifi-ip = { path = "../get-wifi-ip" }
+
+embedded-graphics.workspace = true
+clap.workspace = true
+socketcan.workspace = true
+embedded-can.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
