@@ -4,6 +4,7 @@ use clap::Parser;
 use embedded_can::Frame;
 use embedded_graphics_framebuffer::FrameBufferDisplay;
 use eoi_can_decoder::{EoiCanData, parse_eoi_can_data};
+use get_wifi_ip::get_wifi_ip;
 use socketcan::{CanFrame, tokio::CanSocket};
 use tokio::time::sleep;
 #[allow(unused_imports)]
