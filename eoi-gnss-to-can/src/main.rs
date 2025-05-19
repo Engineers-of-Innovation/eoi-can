@@ -110,10 +110,10 @@ async fn main() {
         for frame in can_block.iter() {
             trace!("CAN frame: {:?}", frame);
 
-            can_sock
-                .write_frame(*frame)
-                .await
-                .expect("Unable to write to CAN socket");
+            match can_sock.write_frame(*frame).await {
+                Ok(_) => trace!("Sent CAN frame: {:?}", frame),
+                Err(e) => error!("Failed to send CAN frame: {e}"),
+            }
         }
 
         info!(
