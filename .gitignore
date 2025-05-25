@@ -2,3 +2,5 @@ target/
 Cargo.lock
 screenshot.png
 *.log
+flamegraph.svg
+perf.data*
