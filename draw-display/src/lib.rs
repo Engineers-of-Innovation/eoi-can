@@ -779,7 +779,7 @@ where
     motordriver_offset_y += FONT_10X20_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_fet_temperature.get() {
-        write!(&mut string_helper, "FET temperature {} C", data).unwrap();
+        write!(&mut string_helper, "FET temperature {:.1} C", data).unwrap();
     } else {
         string_helper.push_str("FET temperature N/A").unwrap();
     }
@@ -793,7 +793,7 @@ where
     motordriver_offset_y += FONT_10X20_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_temperature.get() {
-        write!(&mut string_helper, "Motor temperature {} C", data).unwrap();
+        write!(&mut string_helper, "Motor temperature {:.1} C", data).unwrap();
     } else {
         string_helper.push_str("Motor temperature N/A").unwrap();
     }
