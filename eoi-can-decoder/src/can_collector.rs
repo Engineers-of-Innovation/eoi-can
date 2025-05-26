@@ -2,22 +2,23 @@ use crate::can_frame::CanFrame;
 #[cfg(feature = "defmt")]
 use defmt::error;
 use embedded_can::Id;
+use heapless::FnvIndexMap;
 
 pub struct CanCollector {
-    latest_can_frames: heapless::Vec<CanFrame, 100>,
+    latest_can_frames: FnvIndexMap<Id, CanFrame, 64>,
     dropped_frames: usize,
 }
 
 impl CanCollector {
     pub fn new() -> Self {
         Self {
-            latest_can_frames: heapless::Vec::new(),
+            latest_can_frames: FnvIndexMap::new(),
             dropped_frames: usize::default(),
         }
     }
 
     pub fn iter(&self) -> impl Iterator<Item = &CanFrame> {
-        self.latest_can_frames.iter()
+        self.latest_can_frames.values()
     }
 
     pub fn clear(&mut self) {
@@ -26,35 +27,18 @@ impl CanCollector {
     }
 
     pub fn insert(&mut self, frame: CanFrame) {
-        if self.is_can_id_in_set(frame.id) {
-            // If the CAN ID is already in the set, remove it first
-            self.dropped_frames = self.dropped_frames.saturating_add(1);
-            self.latest_can_frames.retain(|f| f.id != frame.id);
-            let _ = self.latest_can_frames.push(frame).map_err(|_e| {
-                #[cfg(feature = "defmt")]
-                error!("Failed to push CAN frame: {:?}", _e)
-            });
-        } else {
-            if self.latest_can_frames.is_full() {
-                // If the set is full, remove the oldest frame
+        let id = frame.id;
+        match self.latest_can_frames.insert(id, frame) {
+            Ok(None) => {}
+            Ok(Some(_)) => {
                 self.dropped_frames = self.dropped_frames.saturating_add(1);
-                self.latest_can_frames.remove(0);
             }
-            let _ = self.latest_can_frames.push(frame).map_err(|_e| {
-                #[cfg(feature = "defmt")]
-                error!("Failed to push CAN frame: {:?}", _e)
-            });
+            Err(_) => self.dropped_frames = self.dropped_frames.saturating_add(1),
         }
     }
 
     pub fn get_dropped_frames(&self) -> usize {
         self.dropped_frames
-    }
-
-    fn is_can_id_in_set(&self, can_id: Id) -> bool {
-        self.latest_can_frames
-            .iter()
-            .any(|frame| frame.id == can_id)
     }
 }
 
@@ -99,8 +83,6 @@ mod tests {
         collector.insert(frame2.clone());
 
         assert!(collector.iter().count() == 2);
-        assert!(collector.is_can_id_in_set(frame1.id));
-        assert!(collector.is_can_id_in_set(frame2.id));
         assert!(collector.get_dropped_frames() == 0);
 
         collector.clear();
