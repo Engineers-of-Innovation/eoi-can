@@ -17,3 +17,6 @@ embedded-can.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 tokio.workspace = true
+
+[profile.release]
+debug = true

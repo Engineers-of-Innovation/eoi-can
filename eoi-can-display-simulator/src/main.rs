@@ -1,12 +1,16 @@
+use std::time::Duration;
+
 use clap::Parser;
-use embedded_can::{ExtendedId, Frame};
+use embedded_can::Frame;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
 use embedded_graphics_simulator::{
     OutputSettingsBuilder, SimulatorDisplay, SimulatorEvent, Window,
 };
-use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
+use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
-use socketcan::{tokio::CanSocket, CanFrame};
+use std::sync::{Arc, Mutex};
+
+use tokio::time::Instant;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -47,23 +51,20 @@ async fn main() -> Result<(), core::convert::Infallible> {
     info!("CAN interface: {}", args.can_interface);
 
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
-        CanSocket::open(args.can_interface.as_str()).expect("Unable to open CAN socket");
+        socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
+            .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
-    let (can_decoder_tx, mut can_decoder_rx) = tokio::sync::mpsc::channel::<EoiCanData>(100);
+    let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
 
-    // hack to check if the socket is open, not sure how to go about this
-    can_sock
-        .write_frame(CanFrame::new(ExtendedId::new(0).unwrap(), &[]).unwrap())
-        .await
-        .expect("Unable to write to CAN socket");
+    let can_collector_receiver = shared_can_collector.clone();
 
     // Spawn a task to read CAN frames
     tokio::spawn(async move {
         loop {
             let frame = can_sock.read_frame().await.unwrap();
 
-            let embedded_frame = if let CanFrame::Data(frame) = frame {
+            let embedded_frame = if let socketcan::CanFrame::Data(frame) = frame {
                 trace!(
                     "Received CAN frame: ID: {:?}, Data: {:?}",
                     frame.id(),
@@ -72,24 +73,19 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
                 eoi_can_decoder::can_frame::CanFrame::from_encoded(frame.id(), frame.data())
             } else {
+                debug!("Received non-data CAN frame: {:?}", frame);
                 continue;
             };
 
-            let parsed_data = parse_eoi_can_data(&embedded_frame);
-            if let Some(parsed) = parsed_data {
-                trace!("Parsed data: {:?}", parsed);
-                if can_decoder_tx.send(parsed).await.is_err() {
-                    warn!("Failed to send parsed data to display task");
-                }
-            } else {
-                warn!("Failed to parse data from CAN frame: {:?}", embedded_frame);
+            if let Ok(mut collector) = can_collector_receiver.lock() {
+                collector.insert(embedded_frame);
             }
         }
     });
 
     // Start displaying the data
     let mut display: SimulatorDisplay<BinaryColor> = SimulatorDisplay::new(Size::new(800, 480));
-    let output_settings = OutputSettingsBuilder::new().scale(2).max_fps(1).build();
+    let output_settings = OutputSettingsBuilder::new().scale(2).max_fps(10).build();
     let mut window = Window::new(
         "Engineers of Innovation CAN Display Simulator",
         &output_settings,
@@ -97,17 +93,40 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     let mut display_data = draw_display::DisplayData::default();
 
+    draw_display::draw_display(&mut display, &display_data).unwrap();
+    window.update(&display);
+
+    let mut last_time_updated_display = Instant::now();
+
     'running: loop {
-        while let Ok(parsed_data) = can_decoder_rx.try_recv() {
-            display_data.ingest_eoi_can_data(parsed_data);
-        }
+        // Check if we have new CAN frames to process
 
-        if let Some(ip) = get_wifi_ip() {
-            display_data.ip_address.update(ip);
-        }
+        if last_time_updated_display.elapsed() > Duration::from_millis(100) {
+            last_time_updated_display = Instant::now();
+            if let Ok(mut can_collector) = shared_can_collector.lock() {
+                if can_collector.get_dropped_frames() > 0 {
+                    debug!("Dropped frames: {}", can_collector.get_dropped_frames());
+                }
+                let mut parsed_frames = 0_u32;
+                can_collector.iter().for_each(|frame| {
+                    if let Some(parsed_data) = parse_eoi_can_data(frame) {
+                        display_data.ingest_eoi_can_data(parsed_data);
+                        parsed_frames = parsed_frames.saturating_add(1);
+                    } else {
+                        warn!("Failed to parse data from CAN frame: {:?}", frame);
+                    }
+                });
+                debug!("Parsed frames: {}", parsed_frames);
+                can_collector.clear();
+            }
 
-        draw_display::draw_display(&mut display, &display_data).unwrap();
-        window.update(&display);
+            if let Some(ip) = get_wifi_ip() {
+                display_data.ip_address.update(ip);
+            }
+
+            draw_display::draw_display(&mut display, &display_data).unwrap();
+            window.update(&display);
+        }
 
         for event in window.events() {
             if let SimulatorEvent::Quit = event {

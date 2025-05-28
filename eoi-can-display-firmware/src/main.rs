@@ -4,22 +4,21 @@
 #[allow(unused_imports)]
 use defmt::{debug, error, info, trace, warn};
 use embassy_executor::Spawner;
+use embassy_stm32::can::enums::BusError;
 use embassy_stm32::can::filter::Mask32;
-use embassy_stm32::can::frame::Header;
 use embassy_stm32::can::{
-    Can, Fifo, Frame, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler,
-    TxInterruptHandler,
+    Can, Fifo, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler,
 };
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
 use embassy_stm32::peripherals::CAN1;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, spi, Peripherals};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
-use embassy_sync::channel::{Channel, Sender};
+use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Duration, Instant, Timer};
-use embedded_can::StandardId;
+use eoi_can_decoder::can_collector::CanCollector;
 use eoi_can_decoder::can_frame::CanFrame;
-use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
+// use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct CanInterrupts {
@@ -33,6 +32,9 @@ use epd_waveshare::{
     epd7in5_v2::{Display7in5, Epd7in5},
     prelude::*,
 };
+
+static SHARED_CAN_COLLECTOR: Mutex<ThreadModeRawMutex, CanCollector> =
+    Mutex::new(CanCollector::new());
 
 pub fn embassy_init() -> Peripherals {
     use embassy_stm32::rcc::{Pll, PllMul, PllPreDiv, PllRDiv, PllSource};
@@ -93,13 +95,15 @@ pub fn embassy_init() -> Peripherals {
 }
 
 #[embassy_executor::task]
-pub async fn can_receiver_and_decoder(
+pub async fn can_receiver(
     mut can_rx: embassy_stm32::can::CanRx<'static>,
-    decoder_tx: Sender<'static, ThreadModeRawMutex, EoiCanData, 100>,
+    mut output_led: Output<'static>,
 ) {
+    let mut last_bus_error: Option<BusError> = None;
     loop {
         let envelope = can_rx.read().await;
         if let Ok(envelope) = envelope {
+            last_bus_error = None;
             let data_len = envelope.frame.header().len() as usize;
             let data_slice = &envelope.frame.data()[..data_len];
             let data_vec: heapless::Vec<u8, 8> = heapless::Vec::from_slice(data_slice)
@@ -109,12 +113,19 @@ pub async fn can_receiver_and_decoder(
                 data: data_vec,
             };
             trace!("CAN frame: {}", frame);
-            if let Some(decoded) = parse_eoi_can_data(&frame) {
-                trace!("Decoded CAN frame: {}", decoded);
-                decoder_tx.send(decoded).await;
+            SHARED_CAN_COLLECTOR.lock().await.insert(frame);
+            output_led.toggle();
+        } else if let Err(bus_error) = envelope {
+            // Compare the discriminant to avoid needing PartialEq
+            let is_same_error = match last_bus_error {
+                Some(ref last) => {
+                    core::mem::discriminant(last) == core::mem::discriminant(&bus_error)
+                }
+                None => false,
+            };
+            if is_same_error {
+                error!("CAN frame try read error: {}", bus_error);
             }
-        } else if let Err(try_read) = envelope {
-            error!("CAN frame try read error: {}", try_read);
         }
     }
 }
@@ -127,7 +138,7 @@ async fn main(spawner: Spawner) {
     // leds are low active
     let mut led_green = Output::new(p.PC1, Level::High, Speed::Low);
     let mut led_red = Output::new(p.PC2, Level::High, Speed::Low);
-    let mut led_blue = Output::new(p.PC3, Level::High, Speed::Low);
+    let led_blue = Output::new(p.PC3, Level::High, Speed::Low);
 
     led_red.set_low();
 
@@ -152,14 +163,9 @@ async fn main(spawner: Spawner) {
     can.set_bitrate(1_000_000);
     can.set_tx_fifo_scheduling(true);
     can.enable().await;
-    let (mut can_tx, can_rx) = can.split();
+    let (_, can_rx) = can.split();
 
-    static CAN_DECODER_CHANNEL: Channel<ThreadModeRawMutex, EoiCanData, 100> = Channel::new();
-
-    spawner.must_spawn(can_receiver_and_decoder(
-        can_rx,
-        CAN_DECODER_CHANNEL.sender(),
-    ));
+    spawner.must_spawn(can_receiver(can_rx, led_blue));
 
     Timer::after_secs(1).await;
 
@@ -170,7 +176,6 @@ async fn main(spawner: Spawner) {
     info!("Init done");
 
     led_red.set_high();
-    led_green.set_low();
 
     let mut display = Display7in5::default();
     let mut display_data = draw_display::DisplayData::default();
@@ -183,33 +188,34 @@ async fn main(spawner: Spawner) {
     info!("Starting main loop");
 
     loop {
-        led_blue.toggle();
-
-        while let Ok(parsed_data) = CAN_DECODER_CHANNEL.try_receive() {
-            display_data.ingest_eoi_can_data(parsed_data);
-        }
-
         if last_update_screen.elapsed() > Duration::from_secs(30) {
+            led_green.set_low();
+            info!("Decoding CAN data");
+            let mut can_collector = SHARED_CAN_COLLECTOR.lock().await;
+            if can_collector.get_dropped_frames() > 0 {
+                debug!("Dropped frames: {}", can_collector.get_dropped_frames());
+            }
+            let mut parsed_frames = 0_u32;
+            can_collector.iter().for_each(|frame| {
+                trace!("Paring CAN frame: {:?}", frame);
+                if let Some(parsed_data) = eoi_can_decoder::parse_eoi_can_data(frame) {
+                    display_data.ingest_eoi_can_data(parsed_data);
+                    parsed_frames = parsed_frames.saturating_add(1);
+                } else {
+                    warn!("Failed to parse data from CAN frame: {:?}", frame);
+                }
+            });
+            debug!("Parsed frames: {}", parsed_frames);
+            can_collector.clear();
             info!("Updating display");
             draw_display::draw_display(&mut display, &display_data).unwrap();
             epd.update_and_display_frame(&mut spi_device, display.buffer(), &mut Delay)
                 .unwrap();
             last_update_screen = Instant::now();
+            info!("Display updated");
+            led_green.set_high();
         }
 
-        can_tx
-            .try_write(
-                &Frame::new(
-                    Header::new(
-                        embedded_can::Id::Standard(StandardId::new(0x123).unwrap()),
-                        8,
-                        false,
-                    ),
-                    &[0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08],
-                )
-                .unwrap(),
-            )
-            .unwrap();
         Timer::after_secs(1).await;
     }
 }

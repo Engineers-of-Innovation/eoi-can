@@ -1,5 +1,6 @@
 #![cfg_attr(feature = "defmt", no_std)]
 
+pub mod can_collector;
 pub mod can_frame;
 
 #[derive(Debug)]

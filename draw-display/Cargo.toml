@@ -9,7 +9,7 @@ built = { version = "0.8", features = [ "git2" ] }
 
 [features]
 default = [ "std" ]
-defmt = [ "dep:defmt" ]
+defmt = [ "dep:defmt", "eoi-can-decoder/defmt" ]
 std = [ "tokio" ]
 tokio = [ "dep:tokio" ]
 
@@ -20,4 +20,4 @@ heapless = "0.8.0"
 defmt = { version = "0.3", optional = true }
 embassy-time = { version = "0.4" }
 tokio = { version = "1.43.0", features = [ "full" ], optional = true }
-eoi-can-decoder = { path = "../eoi-can-decoder", features = [ "defmt" ] }
+eoi-can-decoder = { path = "../eoi-can-decoder" }
