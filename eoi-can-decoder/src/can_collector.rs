@@ -1,19 +1,17 @@
 use crate::can_frame::CanFrame;
-#[cfg(feature = "defmt")]
-use defmt::error;
 use embedded_can::Id;
 use heapless::FnvIndexMap;
 
 pub struct CanCollector {
-    latest_can_frames: FnvIndexMap<Id, CanFrame, 64>,
+    latest_can_frames: FnvIndexMap<Id, CanFrame, 128>,
     dropped_frames: usize,
 }
 
 impl CanCollector {
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
             latest_can_frames: FnvIndexMap::new(),
-            dropped_frames: usize::default(),
+            dropped_frames: 0,
         }
     }
 

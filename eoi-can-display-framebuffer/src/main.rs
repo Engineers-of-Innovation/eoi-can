@@ -1,9 +1,9 @@
 use clap::Parser;
 use embedded_can::Frame;
 use embedded_graphics_framebuffer::FrameBufferDisplay;
-use eoi_can_decoder::can_frame::CanFrame;
 use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::time::Instant;
 #[allow(unused_imports)]
@@ -44,12 +44,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
 
+    let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
+
+    let can_collector_receiver = shared_can_collector.clone();
+
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
             .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
-
-    let (can_buffer_tx, mut can_buffer_rx) = tokio::sync::mpsc::channel::<CanFrame>(100);
 
     // Spawn a task to read CAN frames
     tokio::spawn(async move {
@@ -69,8 +71,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 continue;
             };
 
-            if can_buffer_tx.send(embedded_frame).await.is_err() {
-                warn!("Failed to send CAN frame to buffer");
+            if let Ok(mut collector) = can_collector_receiver.lock() {
+                collector.insert(embedded_frame);
             }
         }
     });
@@ -82,31 +84,27 @@ async fn main() -> Result<(), core::convert::Infallible> {
     draw_display::draw_display(&mut display, &display_data).unwrap();
     display.flush().unwrap();
 
-    let mut can_collector = can_collector::CanCollector::new();
-
     let last_time_updated_display = Instant::now();
 
     loop {
-        // await for new data, otherwise we don't need to update the display
-        if let Ok(Some(can_frame)) =
-            tokio::time::timeout(Duration::from_secs(1), can_buffer_rx.recv()).await
-        {
-            can_collector.insert(can_frame);
-        }
-
         if last_time_updated_display.elapsed() > Duration::from_millis(100) {
-            if can_collector.get_dropped_frames() > 0 {
-                debug!("Dropped frames: {}", can_collector.get_dropped_frames());
-            }
-            can_collector.iter().for_each(|frame| {
-                trace!("Paring CAN frame: {:?}", frame);
-                if let Some(parsed_data) = parse_eoi_can_data(frame) {
-                    display_data.ingest_eoi_can_data(parsed_data);
-                } else {
-                    warn!("Failed to parse data from CAN frame: {:?}", frame);
+            if let Ok(mut can_collector) = shared_can_collector.lock() {
+                if can_collector.get_dropped_frames() > 0 {
+                    debug!("Dropped frames: {}", can_collector.get_dropped_frames());
                 }
-            });
-            can_collector.clear();
+                let mut parsed_frames = 0_u32;
+                can_collector.iter().for_each(|frame| {
+                    trace!("Paring CAN frame: {:?}", frame);
+                    if let Some(parsed_data) = parse_eoi_can_data(frame) {
+                        display_data.ingest_eoi_can_data(parsed_data);
+                        parsed_frames = parsed_frames.saturating_add(1);
+                    } else {
+                        warn!("Failed to parse data from CAN frame: {:?}", frame);
+                    }
+                });
+                debug!("Parsed frames: {}", parsed_frames);
+                can_collector.clear();
+            }
 
             if let Some(ip) = get_wifi_ip() {
                 display_data.ip_address.update(ip);

@@ -55,7 +55,6 @@ async fn main() -> Result<(), core::convert::Infallible> {
             .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
-    // crate a shared CAN collector (Arc<Mutex<CanCollector>>)
     let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
 
     let can_collector_receiver = shared_can_collector.clone();
@@ -78,9 +77,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 continue;
             };
 
-            let mut can_collector = can_collector_receiver.lock().unwrap();
-            can_collector.insert(embedded_frame.clone());
-            trace!("Inserted CAN frame into collector: {:?}", embedded_frame);
+            if let Ok(mut collector) = can_collector_receiver.lock() {
+                collector.insert(embedded_frame);
+            }
         }
     });
 
@@ -103,19 +102,21 @@ async fn main() -> Result<(), core::convert::Infallible> {
         // Check if we have new CAN frames to process
 
         if last_time_updated_display.elapsed() > Duration::from_millis(100) {
-            {
-                last_time_updated_display = Instant::now();
-                let mut can_collector = shared_can_collector.lock().unwrap();
+            last_time_updated_display = Instant::now();
+            if let Ok(mut can_collector) = shared_can_collector.lock() {
                 if can_collector.get_dropped_frames() > 0 {
                     debug!("Dropped frames: {}", can_collector.get_dropped_frames());
                 }
+                let mut parsed_frames = 0_u32;
                 can_collector.iter().for_each(|frame| {
                     if let Some(parsed_data) = parse_eoi_can_data(frame) {
                         display_data.ingest_eoi_can_data(parsed_data);
+                        parsed_frames = parsed_frames.saturating_add(1);
                     } else {
                         warn!("Failed to parse data from CAN frame: {:?}", frame);
                     }
                 });
+                debug!("Parsed frames: {}", parsed_frames);
                 can_collector.clear();
             }
 
