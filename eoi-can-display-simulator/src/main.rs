@@ -94,13 +94,12 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let mut display_data = draw_display::DisplayData::default();
 
     draw_display::draw_display(&mut display, &display_data).unwrap();
-    window.update(&display);
 
-    let mut last_time_updated_display = Instant::now();
+    tokio::time::sleep(Duration::from_millis(1000)).await; // load CAN data
+    let mut last_time_updated_display = Instant::now() - Duration::from_secs(100);
 
     'running: loop {
         // Check if we have new CAN frames to process
-
         if last_time_updated_display.elapsed() > Duration::from_millis(100) {
             last_time_updated_display = Instant::now();
             if let Ok(mut can_collector) = shared_can_collector.lock() {
@@ -136,6 +135,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 trace!("Event: {:?}", event);
             }
         }
+
+        tokio::time::sleep(Duration::from_millis(10)).await; // prevent hot loop
     }
 
     Ok(())
