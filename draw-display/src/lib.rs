@@ -309,7 +309,7 @@ where
     }
 
     Text::with_alignment(
-        "Net Power (W)",
+        "Net Power",
         Point::new(300, 100),
         font_normal,
         Alignment::Center,
@@ -317,23 +317,15 @@ where
     .draw(display)?;
 
     string_helper.clear();
-    if data.battery_voltage.is_valid()
-        && data.battery_current_in.is_valid()
-        && data.battery_current_out_motor.is_valid()
-        && data.battery_current_out_peripherals.is_valid()
-    {
-        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
-        let current = data.battery_current_in.get().unwrap_or(&f32::NAN)
-            + data.battery_current_out_motor.get().unwrap_or(&f32::NAN)
-            + data
-                .battery_current_out_peripherals
-                .get()
-                .unwrap_or(&f32::NAN);
-        let power = voltage * current;
-        write!(&mut string_helper, "{:.1}", power).unwrap();
-    } else {
-        string_helper.push_str("N/A").unwrap();
-    }
+    let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
+    let current = data.battery_current_in.get().unwrap_or(&f32::NAN)
+        + data.battery_current_out_motor.get().unwrap_or(&f32::NAN)
+        + data
+            .battery_current_out_peripherals
+            .get()
+            .unwrap_or(&f32::NAN);
+    let power = voltage * current;
+    write!(&mut string_helper, "{:.1} W", power).unwrap();
 
     Text::with_alignment(
         string_helper.as_str(),
@@ -348,7 +340,7 @@ where
         .draw(display)?;
 
     Text::with_alignment(
-        "Speed (km/h)",
+        "Speed",
         Point::new(100, 100),
         font_normal,
         Alignment::Center,
@@ -357,14 +349,15 @@ where
 
     string_helper.clear();
 
-    if let Some(speed_kmh) = data.speed_kmh.get() {
-        if *data.gnss_fix.get().unwrap_or(&false) {
-            write!(&mut string_helper, "{:.1}", speed_kmh).unwrap();
-        } else {
-            string_helper.push_str("No fix").unwrap();
-        }
+    if *data.gnss_fix.get().unwrap_or(&true) {
+        write!(
+            &mut string_helper,
+            "{:2.1} km/h",
+            data.speed_kmh.get().unwrap_or(&f32::NAN)
+        )
+        .unwrap();
     } else {
-        string_helper.push_str("N/A").unwrap();
+        string_helper.push_str("No fix").unwrap();
     }
 
     Text::with_alignment(
@@ -377,7 +370,7 @@ where
 
     // state of charge
     Text::with_alignment(
-        "State of Charge (%)",
+        "State of Charge",
         Point::new(500, 100),
         font_normal,
         Alignment::Center,
@@ -385,11 +378,12 @@ where
     .draw(display)?;
 
     string_helper.clear();
-    if let Some(data) = data.battery_state_of_charge.get() {
-        write!(&mut string_helper, "{:.1}", data).unwrap();
-    } else {
-        string_helper.push_str("N/A").unwrap();
-    }
+    write!(
+        &mut string_helper,
+        "{:3.1} %",
+        data.battery_state_of_charge.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
 
     Text::with_alignment(
         string_helper.as_str(),
@@ -400,7 +394,7 @@ where
     .draw(display)?;
 
     Text::with_alignment(
-        "Time to empty (Min)",
+        "Time to empty",
         Point::new(700, 100),
         font_normal,
         Alignment::Center,
@@ -408,11 +402,15 @@ where
     .draw(display)?;
 
     string_helper.clear();
-    if let Some(data) = data.battery_time_to_empty.get() {
-        write!(&mut string_helper, "{}", data).unwrap();
-    } else {
-        string_helper.push_str("N/A").unwrap();
-    }
+
+    write!(
+        &mut string_helper,
+        "{:3} Min",
+        data.battery_time_to_empty
+            .get()
+            .map_or(f32::NAN, |&i| i as f32)
+    )
+    .unwrap();
 
     Text::with_alignment(
         string_helper.as_str(),
@@ -453,65 +451,76 @@ where
     // battery information
 
     let mut battery_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
+    let battery_offset_left = 415;
+    let battery_offset_right = 630;
 
-    Text::new("Battery", Point::new(415, battery_offset_y), font_normal).draw(display)?;
+    Text::new(
+        "Battery",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE + 5;
 
     string_helper.clear();
-    if data.battery_voltage.is_valid() && data.battery_current_in.is_valid() {
-        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
-        let current = data.battery_current_in.get().unwrap_or(&f32::NAN);
-        let power = voltage * current;
-        write!(&mut string_helper, "Input {:.0} W", power).unwrap();
-    } else {
-        string_helper.push_str("Input N/A").unwrap();
-    }
+    let input_power = data.battery_voltage.get().unwrap_or(&f32::NAN)
+        * data.battery_current_in.get().unwrap_or(&f32::NAN);
+    write!(&mut string_helper, "{:6.0} W", input_power).unwrap();
 
     Text::new(
-        string_helper.as_str(),
-        Point::new(415, battery_offset_y),
+        "Input",
+        Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-
-    string_helper.clear();
-    if data.battery_voltage.is_valid() && data.battery_current_out_motor.is_valid() {
-        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
-        let current = data.battery_current_out_motor.get().unwrap_or(&f32::NAN);
-        let power = voltage * current;
-        write!(&mut string_helper, "Output motor {:.0} W", power).unwrap();
-    } else {
-        string_helper.push_str("Output motor N/A").unwrap();
-    }
-
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    let motor_power = data.battery_voltage.get().unwrap_or(&f32::NAN)
+        * data.battery_current_out_motor.get().unwrap_or(&f32::NAN);
+    write!(&mut string_helper, "{:6.0} W", motor_power).unwrap();
+
     Text::new(
-        string_helper.as_str(),
-        Point::new(415, battery_offset_y),
+        "Output motor",
+        Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
     string_helper.clear();
-    if data.battery_voltage.is_valid() && data.battery_current_out_peripherals.is_valid() {
-        let voltage = data.battery_voltage.get().unwrap_or(&f32::NAN);
-        let current = data
+    let peripherals_power = data.battery_voltage.get().unwrap_or(&f32::NAN)
+        * data
             .battery_current_out_peripherals
             .get()
             .unwrap_or(&f32::NAN);
-        let power = voltage * current;
-        write!(&mut string_helper, "Output peripherals {:.0} W", power).unwrap();
-    } else {
-        string_helper.push_str("Output peripherals N/A").unwrap();
-    }
+    write!(&mut string_helper, "{:6.0} W", peripherals_power).unwrap();
 
-    battery_offset_y += FONT_NORMAL_SPACE;
     Text::new(
-        string_helper.as_str(),
-        Point::new(415, battery_offset_y),
+        "Output peripherals",
+        Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
     // get array of temperatures
     let valid_temperatures = data
@@ -521,70 +530,71 @@ where
         .map(|temp| temp.get().unwrap_or(&i8::MIN))
         .collect::<heapless::Vec<&i8, 4>>();
 
-    if !valid_temperatures.is_empty() {
-        let max_temp = valid_temperatures.iter().copied().max().unwrap_or(&i8::MIN);
-        let min_temp = valid_temperatures.iter().copied().min().unwrap_or(&i8::MAX);
-        let avg_temp = valid_temperatures
-            .iter()
-            .copied()
-            .map(|&t| t as f32)
-            .sum::<f32>()
-            / valid_temperatures.len() as f32;
+    let max_temp = valid_temperatures
+        .iter()
+        .copied()
+        .max()
+        .map_or(f32::NAN, |&i| i as f32);
+    let min_temp = valid_temperatures
+        .iter()
+        .copied()
+        .min()
+        .map_or(f32::NAN, |&i| i as f32);
+    let avg_temp = valid_temperatures
+        .iter()
+        .copied()
+        .map(|&t| t as f32)
+        .sum::<f32>()
+        / valid_temperatures.len() as f32;
 
-        string_helper.clear();
-        write!(&mut string_helper, "Max temperature {} C", max_temp).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.0} C", max_temp).unwrap();
 
-        string_helper.clear();
-        write!(&mut string_helper, "Min temperature {} C", min_temp).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
+    Text::new(
+        "Max temperature",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
-        string_helper.clear();
-        write!(&mut string_helper, "Avg temperature {:.0} C", avg_temp).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-    } else {
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Max temperature N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.0} C", min_temp).unwrap();
+    Text::new(
+        "Min temperature",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Min temperature N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Avg temperature N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-    }
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.0} C", avg_temp).unwrap();
+    Text::new(
+        "Avg temperature",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
     // get array of voltages
     let valid_voltages = data
@@ -594,93 +604,80 @@ where
         .map(|voltage| voltage.get().unwrap_or(&f32::NAN))
         .collect::<heapless::Vec<&f32, 14>>();
 
-    if !valid_voltages.is_empty() {
-        let max_voltage = valid_voltages
-            .iter()
-            .copied()
-            .cloned()
-            .fold(f32::NAN, f32::max);
-        let min_voltage = valid_voltages
-            .iter()
-            .copied()
-            .cloned()
-            .fold(f32::NAN, f32::min);
-        let avg_voltage =
-            valid_voltages.iter().copied().cloned().sum::<f32>() / valid_voltages.len() as f32;
+    let max_voltage = valid_voltages
+        .iter()
+        .copied()
+        .cloned()
+        .fold(f32::NAN, f32::max);
+    let min_voltage = valid_voltages
+        .iter()
+        .copied()
+        .cloned()
+        .fold(f32::NAN, f32::min);
+    let avg_voltage =
+        valid_voltages.iter().copied().cloned().sum::<f32>() / valid_voltages.len() as f32;
 
-        string_helper.clear();
-        write!(&mut string_helper, "Max cell voltage {:.3} V", max_voltage).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.3} V", max_voltage).unwrap();
+    Text::new(
+        "Max cell voltage",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
-        string_helper.clear();
-        write!(&mut string_helper, "Min cell voltage {:.3} V", min_voltage).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.3} V", min_voltage).unwrap();
+    Text::new(
+        "Min cell voltage",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
-        string_helper.clear();
-        write!(&mut string_helper, "Avg cell voltage {:.3} V", avg_voltage).unwrap();
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            string_helper.as_str(),
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-    } else {
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Max cell voltage N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Min cell voltage N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-
-        battery_offset_y += FONT_NORMAL_SPACE;
-        Text::new(
-            "Avg cell voltage N/A",
-            Point::new(415, battery_offset_y),
-            font_normal,
-        )
-        .draw(display)?;
-    }
-
-    let mut cell_text: String<64> = String::new();
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.3} V", avg_voltage).unwrap();
+    Text::new(
+        "Avg cell voltage",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
 
     for cell in 0..14 {
-        cell_text.clear();
-        if let Some(cell_voltage) = data.battery_cell_voltages[cell as usize].get() {
-            write!(
-                &mut cell_text,
-                "Cell {:2}: {:1.3} V",
-                cell + 1,
-                cell_voltage
-            )
-            .unwrap();
-        } else {
-            write!(&mut cell_text, "Cell {:2}: N/A", cell + 1).unwrap();
-        }
+        string_helper.clear();
+        write!(
+            &mut string_helper,
+            "Cell {:2}: {:1.3} V",
+            cell + 1,
+            data.battery_cell_voltages[cell as usize]
+                .get()
+                .unwrap_or(&f32::NAN)
+        )
+        .unwrap();
 
         Text::new(
-            cell_text.as_str(),
+            string_helper.as_str(),
             Point::new(
                 730,
                 (cell * FONT_TINY_SPACE) + MOTOR_DRIVER_AND_BATTERY_OFFSET_START,
@@ -696,124 +693,178 @@ where
 
     // Create a new window
     let mut motor_driver_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
+    let motor_driver_offset_left = 15;
+    let motor_driver_offset_right = 250;
 
     Text::new(
         "Motor driver",
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
     motor_driver_offset_y += FONT_NORMAL_SPACE + 5;
 
+    let motor_battery_power = data.motor_battery_voltage.get().unwrap_or(&f32::NAN)
+        * data.motor_battery_current.get().unwrap_or(&f32::NAN);
+
     string_helper.clear();
-    if data.motor_battery_voltage.is_valid() && data.motor_battery_current.is_valid() {
-        let voltage = data.motor_battery_voltage.get().unwrap_or(&f32::NAN);
-        let current = data.motor_battery_current.get().unwrap_or(&f32::NAN);
-        write!(&mut string_helper, "Power {:.0} W", voltage * current).unwrap();
-    } else {
-        string_helper.push_str("Battery power usage N/A").unwrap();
-    }
+    write!(&mut string_helper, "{:6.0} W", motor_battery_power).unwrap();
+    Text::new(
+        "Battery power usage",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
     motor_driver_offset_y += FONT_NORMAL_SPACE;
 
     string_helper.clear();
-    if let Some(data) = data.motor_battery_current.get() {
-        write!(&mut string_helper, "Battery Current {:.1} A", data).unwrap();
-    } else {
-        string_helper.push_str("Battery Current N/A").unwrap();
-    }
+    write!(
+        &mut string_helper,
+        "{:6.1} A",
+        data.motor_battery_current.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
     Text::new(
-        string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        "Battery Current",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
-    motor_driver_offset_y += FONT_NORMAL_SPACE;
-    string_helper.clear();
-    if let Some(data) = data.motor_current.get() {
-        write!(&mut string_helper, "Motor Current {:.1} A", data).unwrap();
-    } else {
-        string_helper.push_str("Motor Current N/A").unwrap();
-    }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
     motor_driver_offset_y += FONT_NORMAL_SPACE;
+
     string_helper.clear();
-    if let Some(data) = data.motor_duty_cycle.get() {
-        write!(&mut string_helper, "Duty cycle {:.1}%", data).unwrap();
-    } else {
-        string_helper.push_str("Duty cycle N/A").unwrap();
-    }
+    write!(
+        &mut string_helper,
+        "{:6.1} A",
+        data.motor_current.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
     Text::new(
-        string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        "Motor Current",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
-    motor_driver_offset_y += FONT_NORMAL_SPACE;
-    string_helper.clear();
-    if let Some(data) = data.motor_rpm.get() {
-        write!(&mut string_helper, "RPM {}", data).unwrap();
-    } else {
-        string_helper.push_str("RPM N/A").unwrap();
-    }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
     motor_driver_offset_y += FONT_NORMAL_SPACE;
+
     string_helper.clear();
-    if let Some(data) = data.motor_fet_temperature.get() {
-        write!(&mut string_helper, "FET temperature {:.1} C", data).unwrap();
-    } else {
-        string_helper.push_str("FET temperature N/A").unwrap();
-    }
+    write!(
+        &mut string_helper,
+        "{:6.1} %",
+        data.motor_current.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
     Text::new(
-        string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        "Duty cycle",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
-    motor_driver_offset_y += FONT_NORMAL_SPACE;
-    string_helper.clear();
-    if let Some(data) = data.motor_temperature.get() {
-        write!(&mut string_helper, "Motor temperature {:.1} C", data).unwrap();
-    } else {
-        string_helper.push_str("Motor temperature N/A").unwrap();
-    }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
-
     motor_driver_offset_y += FONT_NORMAL_SPACE;
+
     string_helper.clear();
-    if let Some(data) = data.throttle_value.get() {
-        write!(&mut string_helper, "Throttle value {:.1}%", data).unwrap();
-    } else {
-        string_helper.push_str("Throttle value N/A").unwrap();
-    }
+    write!(
+        &mut string_helper,
+        "{:6.0}",
+        data.motor_rpm.get().map_or(f32::NAN, |&i| i as f32)
+    )
+    .unwrap();
+    Text::new(
+        "RPM",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motor_driver_offset_y),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    write!(
+        &mut string_helper,
+        "{:6.1} C",
+        data.motor_fet_temperature.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
+    Text::new(
+        "FET temperature",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    write!(
+        &mut string_helper,
+        "{:6.1} C",
+        data.motor_temperature.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
+    Text::new(
+        "Motor temperature",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    write!(
+        &mut string_helper,
+        "{:6.1} %",
+        data.throttle_value.get().unwrap_or(&f32::NAN)
+    )
+    .unwrap();
+    Text::new(
+        "Throttle value",
+        Point::new(motor_driver_offset_left, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(motor_driver_offset_right, motor_driver_offset_y),
         font_normal,
     )
     .draw(display)?;
