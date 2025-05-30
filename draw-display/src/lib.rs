@@ -7,7 +7,7 @@ use core::net::Ipv4Addr;
 use embedded_graphics::{
     image::Image,
     mono_font::{
-        ascii::{FONT_10X20, FONT_4X6},
+        ascii::{FONT_10X20, FONT_4X6, FONT_6X10},
         MonoTextStyle, MonoTextStyleBuilder,
     },
     pixelcolor::BinaryColor,
@@ -239,17 +239,34 @@ where
     image_l.draw(&mut display.color_converted())?;
     image_r.draw(&mut display.color_converted())?;
 
-    let black_box: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+    let font_normal_inverted: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
         .text_color(BinaryColor::On.into())
         .background_color(BinaryColor::Off.into())
         .build();
 
-    let normal: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+    let font_normal: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
         .text_color(BinaryColor::Off.into())
         .background_color(BinaryColor::On.into())
         .build();
+    const FONT_NORMAL_SPACE: i32 = 20;
+
+    let font_small: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::Off.into())
+        .background_color(BinaryColor::On.into())
+        .build();
+    const FONT_SMALL_SPACE: i32 = 10;
+
+    let font_tiny: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+        .font(&FONT_4X6)
+        .text_color(BinaryColor::Off.into())
+        .background_color(BinaryColor::On.into())
+        .build();
+    const FONT_TINY_SPACE: i32 = 8;
+
+    const MOTOR_DRIVER_AND_BATTERY_OFFSET_START: i32 = 160;
 
     string_helper.clear();
     if let Some(data) = data.time.get() {
@@ -263,7 +280,7 @@ where
     } else {
         string_helper.push_str("Time:N/A").unwrap();
     }
-    Text::new(string_helper.as_str(), Point::new(362, 18), normal).draw(display)?;
+    Text::new(string_helper.as_str(), Point::new(362, 18), font_normal).draw(display)?;
 
     // power meter
 
@@ -276,7 +293,7 @@ where
             Text::with_alignment(
                 "Charging enabled",
                 Point::new(400, 50),
-                normal,
+                font_normal,
                 Alignment::Center,
             )
             .draw(display)?;
@@ -284,7 +301,7 @@ where
             Text::with_alignment(
                 "Charging disabled !!!",
                 Point::new(400, 50),
-                black_box,
+                font_normal_inverted,
                 Alignment::Center,
             )
             .draw(display)?;
@@ -294,7 +311,7 @@ where
     Text::with_alignment(
         "Net Power (W)",
         Point::new(300, 100),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -321,7 +338,7 @@ where
     Text::with_alignment(
         string_helper.as_str(),
         Point::new(300, 130),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -333,7 +350,7 @@ where
     Text::with_alignment(
         "Speed (km/h)",
         Point::new(100, 100),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -353,7 +370,7 @@ where
     Text::with_alignment(
         string_helper.as_str(),
         Point::new(100, 130),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -362,7 +379,7 @@ where
     Text::with_alignment(
         "State of Charge (%)",
         Point::new(500, 100),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -377,7 +394,7 @@ where
     Text::with_alignment(
         string_helper.as_str(),
         Point::new(500, 130),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -385,7 +402,7 @@ where
     Text::with_alignment(
         "Time to empty (Min)",
         Point::new(700, 100),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
@@ -400,19 +417,14 @@ where
     Text::with_alignment(
         string_helper.as_str(),
         Point::new(700, 130),
-        normal,
+        font_normal,
         Alignment::Center,
     )
     .draw(display)?;
 
     // MPPT information
 
-    Text::new(
-        "MPPT",
-        Point::new(15, 370),
-        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
-    )
-    .draw(display)?;
+    Text::new("MPPT", Point::new(15, 360), font_small).draw(display)?;
     let mut panel_text: String<64> = String::new();
     use core::fmt::Write;
     for (panel, info) in data.mppt_panel_info.iter().enumerate() {
@@ -420,7 +432,7 @@ where
         if let Some((power, voltage, current)) = info.get() {
             write!(
                 &mut panel_text,
-                "Panel {:2}: {:.0} W {:.0} V {:.1} A",
+                "Panel {:2}: {:4.0} W {:3.0} V {:4.1} A",
                 panel + 1,
                 power,
                 voltage,
@@ -432,18 +444,18 @@ where
         }
         Text::new(
             panel_text.as_str(),
-            Point::new(15, (panel as i32 * 8) + 390),
-            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
+            Point::new(15, (panel as i32 * FONT_SMALL_SPACE) + 375),
+            font_small,
         )
         .draw(display)?;
     }
 
     // battery information
 
-    let mut battery_offset_y = 200;
-    const FONT_10X20_SPACE: i32 = 20;
+    let mut battery_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
 
-    Text::new("Battery", Point::new(415, 170), normal).draw(display)?;
+    Text::new("Battery", Point::new(415, battery_offset_y), font_normal).draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE + 5;
 
     string_helper.clear();
     if data.battery_voltage.is_valid() && data.battery_current_in.is_valid() {
@@ -458,7 +470,7 @@ where
     Text::new(
         string_helper.as_str(),
         Point::new(415, battery_offset_y),
-        normal,
+        font_normal,
     )
     .draw(display)?;
 
@@ -472,11 +484,11 @@ where
         string_helper.push_str("Output motor N/A").unwrap();
     }
 
-    battery_offset_y += FONT_10X20_SPACE;
+    battery_offset_y += FONT_NORMAL_SPACE;
     Text::new(
         string_helper.as_str(),
         Point::new(415, battery_offset_y),
-        normal,
+        font_normal,
     )
     .draw(display)?;
 
@@ -493,11 +505,11 @@ where
         string_helper.push_str("Output peripherals N/A").unwrap();
     }
 
-    battery_offset_y += FONT_10X20_SPACE;
+    battery_offset_y += FONT_NORMAL_SPACE;
     Text::new(
         string_helper.as_str(),
         Point::new(415, battery_offset_y),
-        normal,
+        font_normal,
     )
     .draw(display)?;
 
@@ -521,55 +533,55 @@ where
 
         string_helper.clear();
         write!(&mut string_helper, "Max temperature {} C", max_temp).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
         string_helper.clear();
         write!(&mut string_helper, "Min temperature {} C", min_temp).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
         string_helper.clear();
         write!(&mut string_helper, "Avg temperature {:.0} C", avg_temp).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
     } else {
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Max temperature N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Min temperature N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Avg temperature N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
     }
@@ -598,62 +610,62 @@ where
 
         string_helper.clear();
         write!(&mut string_helper, "Max cell voltage {:.3} V", max_voltage).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
         string_helper.clear();
         write!(&mut string_helper, "Min cell voltage {:.3} V", min_voltage).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
         string_helper.clear();
         write!(&mut string_helper, "Avg cell voltage {:.3} V", avg_voltage).unwrap();
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             string_helper.as_str(),
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
     } else {
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Max cell voltage N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Min cell voltage N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
 
-        battery_offset_y += FONT_10X20_SPACE;
+        battery_offset_y += FONT_NORMAL_SPACE;
         Text::new(
             "Avg cell voltage N/A",
             Point::new(415, battery_offset_y),
-            normal,
+            font_normal,
         )
         .draw(display)?;
     }
 
     let mut cell_text: String<64> = String::new();
 
-    for cell in 0..7 {
+    for cell in 0..14 {
         cell_text.clear();
         if let Some(cell_voltage) = data.battery_cell_voltages[cell as usize].get() {
             write!(
@@ -669,29 +681,11 @@ where
 
         Text::new(
             cell_text.as_str(),
-            Point::new(650, (cell * 8) + 420),
-            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
-        )
-        .draw(display)?;
-    }
-
-    for cell in 7..14 {
-        cell_text.clear();
-        if let Some(cell_voltage) = data.battery_cell_voltages[cell as usize].get() {
-            write!(
-                &mut cell_text,
-                "Cell {:2}: {:1.3} V",
-                cell + 1,
-                cell_voltage
-            )
-            .unwrap();
-        } else {
-            write!(&mut cell_text, "Cell {:2}: N/A", cell + 1).unwrap();
-        }
-        Text::new(
-            cell_text.as_str(),
-            Point::new(730, ((cell - 7) * 8) + 420),
-            MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
+            Point::new(
+                730,
+                (cell * FONT_TINY_SPACE) + MOTOR_DRIVER_AND_BATTERY_OFFSET_START,
+            ),
+            font_tiny,
         )
         .draw(display)?;
     }
@@ -701,9 +695,15 @@ where
         .draw(display)?;
 
     // Create a new window
-    let mut motordriver_offset_y = 200;
+    let mut motor_driver_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
 
-    Text::new("Motor driver", Point::new(15, 170), normal).draw(display)?;
+    Text::new(
+        "Motor driver",
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    motor_driver_offset_y += FONT_NORMAL_SPACE + 5;
 
     string_helper.clear();
     if data.motor_battery_voltage.is_valid() && data.motor_battery_current.is_valid() {
@@ -715,12 +715,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_battery_current.get() {
         write!(&mut string_helper, "Battery Current {:.1} A", data).unwrap();
@@ -729,12 +729,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_current.get() {
         write!(&mut string_helper, "Motor Current {:.1} A", data).unwrap();
@@ -743,12 +743,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_duty_cycle.get() {
         write!(&mut string_helper, "Duty cycle {:.1}%", data).unwrap();
@@ -757,12 +757,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_rpm.get() {
         write!(&mut string_helper, "RPM {}", data).unwrap();
@@ -771,12 +771,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_fet_temperature.get() {
         write!(&mut string_helper, "FET temperature {:.1} C", data).unwrap();
@@ -785,12 +785,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.motor_temperature.get() {
         write!(&mut string_helper, "Motor temperature {:.1} C", data).unwrap();
@@ -799,12 +799,12 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
-    motordriver_offset_y += FONT_10X20_SPACE;
+    motor_driver_offset_y += FONT_NORMAL_SPACE;
     string_helper.clear();
     if let Some(data) = data.throttle_value.get() {
         write!(&mut string_helper, "Throttle value {:.1}%", data).unwrap();
@@ -813,8 +813,8 @@ where
     }
     Text::new(
         string_helper.as_str(),
-        Point::new(15, motordriver_offset_y),
-        normal,
+        Point::new(15, motor_driver_offset_y),
+        font_normal,
     )
     .draw(display)?;
 
@@ -825,12 +825,7 @@ where
         string_helper.push_str("Ip address: N/A").unwrap();
     }
 
-    Text::new(
-        string_helper.as_str(),
-        Point::new(415, 470),
-        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
-    )
-    .draw(display)?;
+    Text::new(string_helper.as_str(), Point::new(415, 470), font_tiny).draw(display)?;
 
     string_helper.clear();
 
@@ -847,12 +842,7 @@ where
     )
     .unwrap();
 
-    Text::new(
-        string_helper.as_str(),
-        Point::new(250, 470),
-        MonoTextStyle::new(&FONT_4X6, C::from(BinaryColor::Off)),
-    )
-    .draw(display)?;
+    Text::new(string_helper.as_str(), Point::new(250, 470), font_tiny).draw(display)?;
 
     Ok(())
 }
