@@ -234,10 +234,7 @@ where
 
     let bmp: Bmp<BinaryColor> =
         Bmp::from_slice(include_bytes!("../eoi-logo-mark--monochrome-black.bmp")).unwrap();
-    let image_l = Image::new(&bmp, Point::new(0, 0));
-    let image_r = Image::new(&bmp, Point::new(800 - 100, 0));
-    image_l.draw(&mut display.color_converted())?;
-    image_r.draw(&mut display.color_converted())?;
+    Image::new(&bmp, Point::new(800 - 70, 0)).draw(&mut display.color_converted())?;
 
     let font_normal_inverted: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
         .font(&FONT_10X20)
