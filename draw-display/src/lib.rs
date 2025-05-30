@@ -12,7 +12,7 @@ use embedded_graphics::{
     },
     pixelcolor::BinaryColor,
     prelude::*,
-    primitives::{Line, PrimitiveStyle},
+    primitives::{Line, PrimitiveStyle, Rectangle},
     text::{Alignment, Text},
 };
 use eoi_can_decoder::{
@@ -261,7 +261,7 @@ where
         .text_color(BinaryColor::Off.into())
         .background_color(BinaryColor::On.into())
         .build();
-    const FONT_TINY_SPACE: i32 = 8;
+    const _FONT_TINY_SPACE: i32 = 8;
 
     const MOTOR_DRIVER_AND_BATTERY_OFFSET_START: i32 = 160;
 
@@ -661,27 +661,34 @@ where
     )
     .draw(display)?;
 
-    for cell in 0..14 {
-        string_helper.clear();
-        write!(
-            &mut string_helper,
-            "Cell {:2}: {:1.3} V",
-            cell + 1,
-            data.battery_cell_voltages[cell as usize]
-                .get()
-                .unwrap_or(&f32::NAN)
-        )
-        .unwrap();
+    // Cell voltages
+    const CELL_VOLTAGES_HEIGTH: i32 = 80;
+    const CELL_VOLTAGES_WIDTH: i32 = 10;
+    const CELL_SPACING: i32 = 28;
 
-        Text::new(
-            string_helper.as_str(),
-            Point::new(
-                730,
-                (cell * FONT_TINY_SPACE) + MOTOR_DRIVER_AND_BATTERY_OFFSET_START,
-            ),
-            font_tiny,
-        )
-        .draw(display)?;
+    for cell in 0..data.battery_cell_voltages.len() {
+        let bottom_left = Point::new(battery_offset_left + cell as i32 * CELL_SPACING, 480 - 10);
+        let cell_box = Point::new(CELL_VOLTAGES_WIDTH, -CELL_VOLTAGES_HEIGTH);
+        let text_top_left = bottom_left + cell_box.y_axis() + Point::new(1, -3);
+        // draw outline of cell voltages boxes
+        Rectangle::with_corners(bottom_left, bottom_left + cell_box)
+            .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 1))
+            .draw(display)?;
+        let cell_level = scale_cell_voltage(
+            *data.battery_cell_voltages[cell as usize]
+                .get()
+                .unwrap_or(&f32::NAN),
+            CELL_VOLTAGES_HEIGTH,
+        );
+        // draw infill for level indication
+        let cell_level = Point::new(CELL_VOLTAGES_WIDTH, -1 * cell_level);
+        Rectangle::with_corners(bottom_left, bottom_left + cell_level)
+            .into_styled(PrimitiveStyle::with_fill(C::from(BinaryColor::Off)))
+            .draw(display)?;
+        // set cell id on top
+        string_helper.clear();
+        write!(&mut string_helper, "{:2}", cell + 1).unwrap();
+        Text::new(string_helper.as_str(), text_top_left, font_tiny).draw(display)?;
     }
 
     Line::new(Point::new(400, 140), Point::new(400, 480))
@@ -873,7 +880,7 @@ where
         string_helper.push_str("Ip address: N/A").unwrap();
     }
 
-    Text::new(string_helper.as_str(), Point::new(415, 470), font_tiny).draw(display)?;
+    Text::new(string_helper.as_str(), Point::new(415, 60), font_tiny).draw(display)?;
 
     string_helper.clear();
 
@@ -893,4 +900,31 @@ where
     Text::new(string_helper.as_str(), Point::new(250, 470), font_tiny).draw(display)?;
 
     Ok(())
+}
+
+fn scale_cell_voltage(cell_voltage: f32, range_to_scale_to: i32) -> i32 {
+    const CELL_VOLTAGE_FULL: f32 = 4.2;
+    const CELL_VOLTAGE_EMPTY: f32 = 2.5;
+    let corrected_cell_voltage = if cell_voltage.is_nan() {
+        CELL_VOLTAGE_EMPTY
+    } else {
+        cell_voltage.clamp(CELL_VOLTAGE_EMPTY, CELL_VOLTAGE_FULL)
+    };
+    (((corrected_cell_voltage - CELL_VOLTAGE_EMPTY) / (CELL_VOLTAGE_FULL - CELL_VOLTAGE_EMPTY))
+        * range_to_scale_to as f32) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use std::f32;
+
+    use super::*;
+    #[test]
+    fn scale_cell_voltages() {
+        let range_to_scale_to = 100;
+        assert_eq!(scale_cell_voltage(4.2, range_to_scale_to), 100);
+        assert_eq!(scale_cell_voltage(2.5, range_to_scale_to), 0);
+        assert_eq!(scale_cell_voltage(3.35, range_to_scale_to), 50);
+        assert_eq!(scale_cell_voltage(f32::NAN, range_to_scale_to), 0);
+    }
 }
