@@ -59,13 +59,44 @@ pub struct ThrottleStatus {
     pub raw_angle: i16,
     pub raw_deadmen: i16,
     pub gain: u8,
-    pub error_any: bool,
-    pub error_twi: u8,
-    pub error_no_eeprom: bool,
-    pub error_gain_clipping: bool,
-    pub error_gain_invalid: bool,
-    pub error_deadman_missing: bool,
-    pub error_impedance_high: bool,
+    pub error: Option<ThrottleErrors>,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ThrottleErrors {
+    pub twi: ThrottleTwiErrors,
+    pub no_eeprom: bool,
+    pub gain_clipping: bool,
+    pub gain_invalid: bool,
+    pub deadman_missing: bool,
+    pub impedance_high: bool,
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ThrottleTwiErrors {
+    NoError,
+    BusFault,
+    BusCaptureTimeout,
+    SlaveResponseTimeout,
+    SlaveNotReady,
+    SlaveNAK,
+    Unknown,
+}
+
+impl From<u8> for ThrottleTwiErrors {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => ThrottleTwiErrors::NoError,
+            1 => ThrottleTwiErrors::BusFault,
+            2 => ThrottleTwiErrors::BusCaptureTimeout,
+            3 => ThrottleTwiErrors::SlaveResponseTimeout,
+            4 => ThrottleTwiErrors::SlaveNotReady,
+            5 => ThrottleTwiErrors::SlaveNAK,
+            _ => ThrottleTwiErrors::Unknown,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -446,13 +477,18 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 raw_angle: bytes_be_to_i16(data.get(2..4)?)?,
                 raw_deadmen: bytes_be_to_i16(data.get(4..6)?)?,
                 gain: *data.get(6)?,
-                error_any: *data.get(7)? != 0,
-                error_twi: *data.get(7)? & 0b111,
-                error_no_eeprom: *data.get(7)? & (1 << 3) != 0,
-                error_gain_clipping: *data.get(7)? & (1 << 4) != 0,
-                error_gain_invalid: *data.get(7)? & (1 << 5) != 0,
-                error_deadman_missing: *data.get(7)? & (1 << 6) != 0,
-                error_impedance_high: *data.get(7)? & (1 << 7) != 0,
+                error: if *data.get(7)? != 0 {
+                    Some(ThrottleErrors {
+                        twi: (*data.get(7)? & 0b111).into(),
+                        no_eeprom: *data.get(7)? & (1 << 3) != 0,
+                        gain_clipping: *data.get(7)? & (1 << 4) != 0,
+                        gain_invalid: *data.get(7)? & (1 << 5) != 0,
+                        deadman_missing: *data.get(7)? & (1 << 6) != 0,
+                        impedance_high: *data.get(7)? & (1 << 7) != 0,
+                    })
+                } else {
+                    None
+                },
             }))),
             6 => Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {
                 control_type: match *data.first()? {
