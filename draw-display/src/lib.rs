@@ -183,17 +183,17 @@ impl DisplayData {
                     // we map the mppt channel to the index of the (solar) array
                     // mppt id is what it is, but channel and panel id are indexed from 0
                     if let Some(panel_id) = match (mppt_data.mppt_id, mppt_channel) {
-                        (3, 0) => Some(0),
-                        (3, 1) => Some(1),
-                        (3, 3) => Some(2),
+                        (2, 0) => Some(0),
+                        (2, 1) => Some(1),
+                        (2, 3) => Some(2),
                         (5, 0) => Some(3),
                         (5, 1) => Some(4),
                         (5, 2) => Some(5),
                         (4, 1) => Some(6),
                         (4, 2) => Some(7),
-                        (2, 0) => Some(8),
-                        (2, 1) => Some(9),
-                        (2, 2) => Some(10),
+                        (3, 0) => Some(8),
+                        (3, 1) => Some(9),
+                        (3, 2) => Some(10),
                         _ => None,
                     } {
                         // update the panel info
