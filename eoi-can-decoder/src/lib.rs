@@ -59,10 +59,10 @@ pub struct ThrottleStatus {
     pub raw_angle: i16,
     pub raw_deadmen: i16,
     pub gain: u8,
-    pub error: Option<ThrottleErrors>,
+    pub error: ThrottleErrors,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleErrors {
     pub twi: ThrottleTwiErrors,
@@ -73,9 +73,52 @@ pub struct ThrottleErrors {
     pub impedance_high: bool,
 }
 
-#[derive(Debug)]
+impl std::fmt::Display for ThrottleErrors {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if matches!(self.twi, ThrottleTwiErrors::NoError)
+            && !self.no_eeprom
+            && !self.gain_invalid
+            && !self.deadman_missing
+            && !self.impedance_high
+        {
+            write!(f, "No Error")
+        } else {
+            let mut add_comma = false;
+            if !matches!(self.twi, ThrottleTwiErrors::NoError) {
+                write!(f, "TWI: {:?}", self.twi)?;
+                add_comma = true;
+            }
+            if self.no_eeprom {
+                write!(f, "{}No EEPROM", if add_comma { ", " } else { "" })?;
+                add_comma = true;
+            };
+
+            if self.gain_clipping {
+                write!(f, "{}Gain Clipping", if add_comma { ", " } else { "" })?;
+                add_comma = true;
+            };
+
+            if self.gain_invalid {
+                write!(f, "{}Gain Invalid", if add_comma { ", " } else { "" })?;
+                add_comma = true;
+            };
+
+            if self.deadman_missing {
+                write!(f, "{}Deadman Missing", if add_comma { ", " } else { "" })?;
+                add_comma = true;
+            };
+            if self.impedance_high {
+                write!(f, "{}Impedance High", if add_comma { ", " } else { "" })?;
+            };
+            Ok(())
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleTwiErrors {
+    #[default]
     NoError,
     BusFault,
     BusCaptureTimeout,
@@ -477,17 +520,13 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 raw_angle: bytes_be_to_i16(data.get(2..4)?)?,
                 raw_deadmen: bytes_be_to_i16(data.get(4..6)?)?,
                 gain: *data.get(6)?,
-                error: if *data.get(7)? != 0 {
-                    Some(ThrottleErrors {
-                        twi: (*data.get(7)? & 0b111).into(),
-                        no_eeprom: *data.get(7)? & (1 << 3) != 0,
-                        gain_clipping: *data.get(7)? & (1 << 4) != 0,
-                        gain_invalid: *data.get(7)? & (1 << 5) != 0,
-                        deadman_missing: *data.get(7)? & (1 << 6) != 0,
-                        impedance_high: *data.get(7)? & (1 << 7) != 0,
-                    })
-                } else {
-                    None
+                error: ThrottleErrors {
+                    twi: (*data.get(7)? & 0b111).into(),
+                    no_eeprom: *data.get(7)? & (1 << 3) != 0,
+                    gain_clipping: *data.get(7)? & (1 << 4) != 0,
+                    gain_invalid: *data.get(7)? & (1 << 5) != 0,
+                    deadman_missing: *data.get(7)? & (1 << 6) != 0,
+                    impedance_high: *data.get(7)? & (1 << 7) != 0,
                 },
             }))),
             6 => Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {

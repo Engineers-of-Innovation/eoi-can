@@ -17,7 +17,7 @@ use embedded_graphics::{
 };
 use eoi_can_decoder::{
     EoiBattery, EoiCanData, GnssData, GnssDateTime, MpptChannelPower, MpptInfo, ThrottleData,
-    VescData,
+    ThrottleErrors, VescData,
 };
 use heapless::String;
 use time::{Duration, Instant};
@@ -89,6 +89,7 @@ pub struct DisplayData {
     pub motor_fet_temperature: DisplayValue<f32>,
     pub motor_temperature: DisplayValue<f32>,
     pub throttle_value: DisplayValue<f32>,
+    pub throttle_errors: DisplayValue<ThrottleErrors>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
@@ -140,6 +141,7 @@ impl DisplayData {
             EoiCanData::Throttle(throttle) => {
                 if let ThrottleData::Status(data) = throttle {
                     self.throttle_value.update(data.value);
+                    self.throttle_errors.update(data.error);
                 }
             }
 
@@ -247,6 +249,13 @@ where
         .text_color(BinaryColor::Off.into())
         .background_color(BinaryColor::On.into())
         .build();
+
+    let font_normal_header: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+        .font(&FONT_10X20)
+        .text_color(BinaryColor::Off.into())
+        .background_color(BinaryColor::On.into())
+        .underline()
+        .build();
     const FONT_NORMAL_SPACE: i32 = 20;
 
     let font_small: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
@@ -270,16 +279,48 @@ where
         string_helper.clear();
         write!(
             &mut string_helper,
-            "{:02}:{:02}:{:02}",
+            "Time: {:02}:{:02}:{:02}",
             data.hours, data.minutes, data.seconds
         )
         .unwrap();
     } else {
-        string_helper.push_str("Time:N/A").unwrap();
+        string_helper.push_str("Time: N/A").unwrap();
     }
-    Text::new(string_helper.as_str(), Point::new(362, 18), font_normal).draw(display)?;
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(400, FONT_NORMAL_SPACE * 2),
+        font_normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
 
-    // power meter
+    // TODO: implement start of race
+    Text::with_alignment(
+        "Since Race Start: N/A",
+        Point::new(400, FONT_NORMAL_SPACE * 3),
+        font_normal,
+        Alignment::Center,
+    )
+    .draw(display)?;
+
+    string_helper.clear();
+    write!(&mut string_helper, "Throttle Errors: ").unwrap();
+    if data.throttle_errors.is_valid() {
+        write!(
+            &mut string_helper,
+            "{}",
+            data.throttle_errors
+                .get()
+                .unwrap_or(&ThrottleErrors::default())
+        )
+        .unwrap();
+    }
+    Text::new(
+        string_helper.as_str(),
+        Point::new(15, FONT_NORMAL_SPACE),
+        font_normal,
+    )
+    .draw(display)?;
 
     Line::new(Point::new(0, 70), Point::new(800, 70))
         .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off.into(), 2))
@@ -417,17 +458,20 @@ where
     )
     .draw(display)?;
 
-    // MPPT information
-
-    Text::new("MPPT", Point::new(15, 360), font_small).draw(display)?;
-    let mut panel_text: String<64> = String::new();
+    // Solar panels information
+    Text::new(
+        "Solar Panels and MPPT",
+        Point::new(15, 360),
+        font_normal_header,
+    )
+    .draw(display)?;
     use core::fmt::Write;
     for (panel, info) in data.mppt_panel_info.iter().enumerate() {
-        panel_text.clear();
+        string_helper.clear();
         if let Some((power, voltage, current)) = info.get() {
             write!(
-                &mut panel_text,
-                "Panel {:2}: {:4.0} W {:3.0} V {:4.1} A",
+                &mut string_helper,
+                "{:2}: {:4.0} W {:3.0} V {:4.1} A",
                 panel + 1,
                 power,
                 voltage,
@@ -435,14 +479,31 @@ where
             )
             .unwrap();
         } else {
-            write!(&mut panel_text, "Panel {:2}: N/A", panel + 1).unwrap();
+            write!(&mut string_helper, "{:2}: N/A", panel + 1).unwrap();
         }
         Text::new(
-            panel_text.as_str(),
+            string_helper.as_str(),
             Point::new(15, (panel as i32 * FONT_SMALL_SPACE) + 375),
             font_small,
         )
         .draw(display)?;
+    }
+
+    for panel in 0..data.mppt_panel_info.len() {
+        let bottom_left = Point::new(220, (panel as i32 * FONT_SMALL_SPACE) + 375 + 2);
+        let panel_box = Point::new(150, -FONT_SMALL_SPACE);
+        // draw outline of cell voltages boxes
+        Rectangle::with_corners(bottom_left, bottom_left + panel_box)
+            .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 1))
+            .draw(display)?;
+        if let Some((power, _, _)) = data.mppt_panel_info[panel].get() {
+            let panel_level =
+                Point::new(scale_to_range(0.0, 150.0, *power, 150), -FONT_SMALL_SPACE);
+            // draw infill for level indication
+            Rectangle::with_corners(bottom_left, bottom_left + panel_level)
+                .into_styled(PrimitiveStyle::with_fill(C::from(BinaryColor::Off)))
+                .draw(display)?;
+        }
     }
 
     // battery information
@@ -454,7 +515,7 @@ where
     Text::new(
         "Battery",
         Point::new(battery_offset_left, battery_offset_y),
-        font_normal,
+        font_normal_header,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE + 5;
@@ -617,7 +678,7 @@ where
     string_helper.clear();
     write!(&mut string_helper, "{:6.3} V", max_voltage).unwrap();
     Text::new(
-        "Max cell voltage",
+        "Max  cell voltage",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
@@ -633,7 +694,7 @@ where
     string_helper.clear();
     write!(&mut string_helper, "{:6.3} V", min_voltage).unwrap();
     Text::new(
-        "Min cell voltage",
+        "Min  cell voltage",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
@@ -649,7 +710,23 @@ where
     string_helper.clear();
     write!(&mut string_helper, "{:6.3} V", avg_voltage).unwrap();
     Text::new(
-        "Avg cell voltage",
+        "Avg  cell voltage",
+        Point::new(battery_offset_left, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    Text::new(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        font_normal,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    write!(&mut string_helper, "{:6.3} V", max_voltage - min_voltage).unwrap();
+    Text::new(
+        "Diff cell voltage",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
@@ -674,14 +751,14 @@ where
         Rectangle::with_corners(bottom_left, bottom_left + cell_box)
             .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 1))
             .draw(display)?;
-        let cell_level = scale_cell_voltage(
-            *data.battery_cell_voltages[cell as usize]
-                .get()
-                .unwrap_or(&f32::NAN),
+        let cell_level = scale_to_range(
+            2.5,
+            4.2,
+            *data.battery_cell_voltages[cell].get().unwrap_or(&f32::NAN),
             CELL_VOLTAGES_HEIGTH,
         );
         // draw infill for level indication
-        let cell_level = Point::new(CELL_VOLTAGES_WIDTH, -1 * cell_level);
+        let cell_level = Point::new(CELL_VOLTAGES_WIDTH, -cell_level);
         Rectangle::with_corners(bottom_left, bottom_left + cell_level)
             .into_styled(PrimitiveStyle::with_fill(C::from(BinaryColor::Off)))
             .draw(display)?;
@@ -703,7 +780,7 @@ where
     Text::new(
         "Motor driver",
         Point::new(motor_driver_offset_left, motor_driver_offset_y),
-        font_normal,
+        font_normal_header,
     )
     .draw(display)?;
     motor_driver_offset_y += FONT_NORMAL_SPACE + 5;
@@ -880,7 +957,13 @@ where
         string_helper.push_str("Ip address: N/A").unwrap();
     }
 
-    Text::new(string_helper.as_str(), Point::new(415, 60), font_tiny).draw(display)?;
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(15, 60),
+        font_small,
+        Alignment::Left,
+    )
+    .draw(display)?;
 
     string_helper.clear();
 
@@ -897,21 +980,24 @@ where
     )
     .unwrap();
 
-    Text::new(string_helper.as_str(), Point::new(250, 470), font_tiny).draw(display)?;
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(800 - 10, 478),
+        font_tiny,
+        Alignment::Right,
+    )
+    .draw(display)?;
 
     Ok(())
 }
 
-fn scale_cell_voltage(cell_voltage: f32, range_to_scale_to: i32) -> i32 {
-    const CELL_VOLTAGE_FULL: f32 = 4.2;
-    const CELL_VOLTAGE_EMPTY: f32 = 2.5;
-    let corrected_cell_voltage = if cell_voltage.is_nan() {
-        CELL_VOLTAGE_EMPTY
+fn scale_to_range(in_min: f32, in_max: f32, input: f32, out_max: i32) -> i32 {
+    let corrected_input = if input.is_nan() {
+        in_min
     } else {
-        cell_voltage.clamp(CELL_VOLTAGE_EMPTY, CELL_VOLTAGE_FULL)
+        input.clamp(in_min, in_max)
     };
-    (((corrected_cell_voltage - CELL_VOLTAGE_EMPTY) / (CELL_VOLTAGE_FULL - CELL_VOLTAGE_EMPTY))
-        * range_to_scale_to as f32) as i32
+    (((corrected_input - in_min) / (in_max - in_min)) * out_max as f32) as i32
 }
 
 #[cfg(test)]
@@ -922,9 +1008,9 @@ mod tests {
     #[test]
     fn scale_cell_voltages() {
         let range_to_scale_to = 100;
-        assert_eq!(scale_cell_voltage(4.2, range_to_scale_to), 100);
-        assert_eq!(scale_cell_voltage(2.5, range_to_scale_to), 0);
-        assert_eq!(scale_cell_voltage(3.35, range_to_scale_to), 50);
-        assert_eq!(scale_cell_voltage(f32::NAN, range_to_scale_to), 0);
+        assert_eq!(scale_to_range(2.5, 4.2, 4.2, range_to_scale_to), 100);
+        assert_eq!(scale_to_range(2.5, 4.2, 2.5, range_to_scale_to), 0);
+        assert_eq!(scale_to_range(2.5, 4.2, 3.35, range_to_scale_to), 50);
+        assert_eq!(scale_to_range(2.5, 4.2, f32::NAN, range_to_scale_to), 0);
     }
 }
