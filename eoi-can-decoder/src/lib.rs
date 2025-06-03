@@ -73,7 +73,7 @@ pub struct ThrottleErrors {
     pub impedance_high: bool,
 }
 
-impl std::fmt::Display for ThrottleErrors {
+impl core::fmt::Display for ThrottleErrors {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if matches!(self.twi, ThrottleTwiErrors::NoError)
             && !self.no_eeprom
