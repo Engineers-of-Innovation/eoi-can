@@ -5,7 +5,6 @@ use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::time::Instant;
 #[allow(unused_imports)]
 use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -84,34 +83,32 @@ async fn main() -> Result<(), core::convert::Infallible> {
     draw_display::draw_display(&mut display, &display_data).unwrap();
     display.flush().unwrap();
 
-    let last_time_updated_display = Instant::now();
-
     loop {
-        if last_time_updated_display.elapsed() > Duration::from_millis(100) {
-            if let Ok(mut can_collector) = shared_can_collector.lock() {
-                if can_collector.get_dropped_frames() > 0 {
-                    debug!("Dropped frames: {}", can_collector.get_dropped_frames());
+        if let Ok(mut can_collector) = shared_can_collector.lock() {
+            if can_collector.get_dropped_frames() > 0 {
+                debug!("Dropped frames: {}", can_collector.get_dropped_frames());
+            }
+            let mut parsed_frames = 0_u32;
+            can_collector.iter().for_each(|frame| {
+                trace!("Paring CAN frame: {:?}", frame);
+                if let Some(parsed_data) = parse_eoi_can_data(frame) {
+                    display_data.ingest_eoi_can_data(parsed_data);
+                    parsed_frames = parsed_frames.saturating_add(1);
+                } else {
+                    warn!("Failed to parse data from CAN frame: {:?}", frame);
                 }
-                let mut parsed_frames = 0_u32;
-                can_collector.iter().for_each(|frame| {
-                    trace!("Paring CAN frame: {:?}", frame);
-                    if let Some(parsed_data) = parse_eoi_can_data(frame) {
-                        display_data.ingest_eoi_can_data(parsed_data);
-                        parsed_frames = parsed_frames.saturating_add(1);
-                    } else {
-                        warn!("Failed to parse data from CAN frame: {:?}", frame);
-                    }
-                });
-                debug!("Parsed frames: {}", parsed_frames);
-                can_collector.clear();
-            }
-
-            if let Some(ip) = get_wifi_ip() {
-                display_data.ip_address.update(ip);
-            }
-
-            draw_display::draw_display(&mut display, &display_data).unwrap();
-            display.flush().unwrap();
+            });
+            debug!("Parsed frames: {}", parsed_frames);
+            can_collector.clear();
         }
+
+        if let Some(ip) = get_wifi_ip() {
+            display_data.ip_address.update(ip);
+        }
+
+        draw_display::draw_display(&mut display, &display_data).unwrap();
+        display.flush().unwrap();
+
+        tokio::time::sleep(Duration::from_millis(100)).await
     }
 }
