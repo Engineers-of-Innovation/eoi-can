@@ -12,16 +12,25 @@ if [[ ! "$1" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+$ ]]; then
     exit 1
 fi
 
+# add second argument to compile for raspberry pi 4, e.g. ./build-and-send.sh engineer@10.12.0.208 rpi
+if [[ $2 ]]; then
+    arch="aarch64-unknown-linux-gnu" #RPI4
+else
+    arch="armv7-unknown-linux-gnueabihf" #old datalogger
+fi
+
+echo ${arch}
+exit 1
 # building
 cd eoi-gnss-to-can
-cross build --target armv7-unknown-linux-gnueabihf --release
+cross build --target ${arch} --release
 cd ..
 
 cd eoi-can-display-framebuffer
-cross build --target armv7-unknown-linux-gnueabihf --release
+cross build --target ${arch} --release
 cd ..
 
 # sending, make sure you have you ssh keys set up in the datalogger, you might need to run ssh-copy-id
 
-scp target/armv7-unknown-linux-gnueabihf/release/eoi-can-display-framebuffer ${1}:~
-scp target/armv7-unknown-linux-gnueabihf/release/eoi-gnss-to-can ${1}:~
+scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~
+scp target/${arch}/release/eoi-gnss-to-can ${1}:~
