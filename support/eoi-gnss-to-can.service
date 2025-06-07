@@ -1,0 +1,15 @@
+[Unit]
+Description=GNSS to CAN application, sends GNSS(GPS) info to CAN
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+ExecStart=/home/engineer/eoi-gnss-to-can
+WorkingDirectory=/home/engineer
+User=engineer
+Group=engineer
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

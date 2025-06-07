@@ -1,0 +1,15 @@
+[Unit]
+Description=CAN display application
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+ExecStart=/home/engineer/eoi-can-display-framebuffer
+WorkingDirectory=/home/engineer
+User=engineer
+Group=engineer
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

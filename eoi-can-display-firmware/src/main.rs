@@ -18,7 +18,6 @@ use embassy_sync::mutex::Mutex;
 use embassy_time::{Delay, Duration, Instant, Timer};
 use eoi_can_decoder::can_collector::CanCollector;
 use eoi_can_decoder::can_frame::CanFrame;
-// use eoi_can_decoder::{parse_eoi_can_data, EoiCanData};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct CanInterrupts {

@@ -14,7 +14,7 @@ use tracing_subscriber::prelude::*;
 #[command(version, about, long_about = None)]
 struct Args {
     /// CAN interface
-    #[arg(short, long, default_value_t = String::from("vcan0"))]
+    #[arg(short, long, default_value_t = String::from("can0"))]
     can_interface: String,
 }
 

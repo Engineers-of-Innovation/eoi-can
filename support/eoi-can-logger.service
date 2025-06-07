@@ -1,0 +1,15 @@
+[Unit]
+Description=Log CAN messages from can0 using candump
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+WorkingDirectory=/home/engineer/logs
+ExecStart=/usr/bin/candump -l can0
+Restart=always
+RestartSec=10
+User=engineer
+Group=engineer
+
+[Install]
+WantedBy=multi-user.target

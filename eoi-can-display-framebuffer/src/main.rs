@@ -13,7 +13,7 @@ use tracing_subscriber::prelude::*;
 #[command(version, about, long_about = None)]
 struct Args {
     /// CAN interface
-    #[arg(short, long, default_value_t = String::from("vcan0"))]
+    #[arg(short, long, default_value_t = String::from("can0"))]
     can_interface: String,
 }
 
@@ -86,7 +86,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
     loop {
         if let Ok(mut can_collector) = shared_can_collector.lock() {
             if can_collector.get_dropped_frames() > 0 {
-                debug!("Dropped frames: {}", can_collector.get_dropped_frames());
+                trace!("Dropped frames: {}", can_collector.get_dropped_frames());
             }
             let mut parsed_frames = 0_u32;
             can_collector.iter().for_each(|frame| {
@@ -98,7 +98,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
                     warn!("Failed to parse data from CAN frame: {:?}", frame);
                 }
             });
-            debug!("Parsed frames: {}", parsed_frames);
+            trace!("Parsed frames: {}", parsed_frames);
             can_collector.clear();
         }
 
