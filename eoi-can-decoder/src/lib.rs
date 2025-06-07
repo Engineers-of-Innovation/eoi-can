@@ -1,9 +1,11 @@
 #![cfg_attr(feature = "defmt", no_std)]
 
+use serde::Serialize;
+
 pub mod can_collector;
 pub mod can_frame;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiCanData {
     EoiBattery(EoiBattery),
@@ -13,7 +15,7 @@ pub enum EoiCanData {
     Gnss(GnssData),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GnssData {
     GnssStatus(GnssStatus),
@@ -23,7 +25,7 @@ pub enum GnssData {
     GnssDateTime(GnssDateTime),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssStatus {
     pub fix: u8,
@@ -31,7 +33,7 @@ pub struct GnssStatus {
     pub sats_used: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssDateTime {
     pub year: u16,
@@ -42,7 +44,7 @@ pub struct GnssDateTime {
     pub seconds: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleData {
     ToVescDutyCycle(f32),
@@ -52,7 +54,7 @@ pub enum ThrottleData {
     Config(ThrottleConfig),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleStatus {
     pub value: f32,
@@ -62,7 +64,7 @@ pub struct ThrottleStatus {
     pub error: ThrottleErrors,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleErrors {
     pub twi: ThrottleTwiErrors,
@@ -115,7 +117,7 @@ impl core::fmt::Display for ThrottleErrors {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleTwiErrors {
     #[default]
@@ -142,7 +144,7 @@ impl From<u8> for ThrottleTwiErrors {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleConfig {
     pub control_type: ThrottleControlType,
@@ -150,7 +152,7 @@ pub struct ThrottleConfig {
     pub lever_backward: i16,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ThrottleControlType {
@@ -163,14 +165,14 @@ pub enum ThrottleControlType {
     Unknown = 255,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptData {
     pub mppt_id: u8,
     pub info: MpptInfo,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MpptInfo {
     MpptChannelPower(MpptChannelPower),
@@ -178,7 +180,7 @@ pub enum MpptInfo {
     MpptPower(MpptPower),
     MpptStatus(MpptStatus),
 }
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelPower {
     pub mppt_channel: u8,
@@ -186,7 +188,7 @@ pub struct MpptChannelPower {
     pub current_in: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelState {
     pub mppt_channel: u8,
@@ -196,14 +198,14 @@ pub struct MpptChannelState {
     pub channel_active: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptPower {
     pub voltage_out: f32,
     pub current_out: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptStatus {
     pub voltage_out_switch: f32,
@@ -213,7 +215,7 @@ pub struct MpptStatus {
     pub switch_on: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiBattery {
     PackAndPerriCurrent(PackAndPerriCurrent),
@@ -227,21 +229,21 @@ pub enum EoiBattery {
     BatteryUptime(BatteryUptime),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PackAndPerriCurrent {
     pub pack_current: f32,
     pub perri_current: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChargeAndDischargeCurrent {
     pub discharge_current: f32,
     pub charge_current: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SocErrorFlagsAndBalancing {
     pub state_of_charge: f32,  // u16 on CAN bus with a factor of 100
@@ -249,13 +251,13 @@ pub struct SocErrorFlagsAndBalancing {
     pub balancing_status: u16, //TODO: use bitflags?!
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FourCellVoltages {
     pub cell_voltage: [f32; 4], // u16 on CAN bus with a factor of 1000
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CellVoltages13_14PackAndStack {
     pub cell_voltage: [f32; 2], // u16 on CAN bus with a factor of 1000
@@ -263,7 +265,7 @@ pub struct CellVoltages13_14PackAndStack {
     pub stack_voltage: f32,     // u16 on CAN bus with a factor of 1000
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TemperaturesAndStates {
     pub temperatures: [i8; 4],
@@ -273,13 +275,13 @@ pub struct TemperaturesAndStates {
     pub discharge_state: u8, //TODO: define enum
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryUptime {
     pub uptime_ms: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VescData {
     StatusMessage1 {

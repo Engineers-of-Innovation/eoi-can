@@ -1,0 +1,19 @@
+[package]
+name = "eoi-can-to-mqtt"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+eoi-can-decoder = { path = "../eoi-can-decoder" }
+get-wifi-ip = { path = "../get-wifi-ip" }
+
+embedded-graphics.workspace = true
+clap.workspace = true
+socketcan.workspace = true
+embedded-can.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+tokio.workspace = true
+serde_json = "1.0"
+paho-mqtt = { version = "0.13", features = [ "vendored-ssl" ] }
+json-patch = "4.0"
