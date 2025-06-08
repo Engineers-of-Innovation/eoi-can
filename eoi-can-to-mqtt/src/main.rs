@@ -1,12 +1,15 @@
 use clap::Parser;
 use embedded_can::Frame;
 use eoi_can_decoder::{can_collector, parse_eoi_can_data};
+use get_wifi_ip::get_wifi_ip;
 use json_patch::merge;
 use paho_mqtt as mqtt;
 use serde_json::json;
 use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use systemstat::{Platform, System};
+use tokio::time::Instant;
 #[allow(unused_imports)]
 use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
@@ -109,6 +112,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
         }
     });
 
+    let process_start = Instant::now();
+    let sys = System::new();
+
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     loop {
@@ -117,7 +123,26 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 trace!("Dropped frames: {}", can_collector.get_dropped_frames());
             }
             let mut parsed_frames = 0_u32;
-            let mut merged_json = json!({});
+            let system_uptime = sys.uptime().unwrap_or_default().as_secs();
+            let process_uptime = process_start.elapsed().as_secs();
+            let cpu_usage_m1 = if let Ok(load) = sys.load_average() {
+                load.one
+            } else {
+                0.0
+            };
+            let memory_percent_used = if let Ok(mem) = sys.memory() {
+                ((mem.total.as_u64() - mem.free.as_u64()) as f32 / mem.total.as_u64() as f32
+                    * 100.0) as u32
+            } else {
+                0
+            };
+            let cpu_temperature = sys.cpu_temp().unwrap_or_default();
+            let wifi_ip = if let Some(ip) = get_wifi_ip() {
+                ip.to_string()
+            } else {
+                "N/A".to_string()
+            };
+            let mut merged_json = json!({ "DataLogger": { "Uptime": { "System": system_uptime, "Process": process_uptime }, "CpuLoad1M": cpu_usage_m1, "CpuTemp": cpu_temperature, "MemoryUsage": memory_percent_used, "WifiIp": wifi_ip } });
 
             can_collector.iter().for_each(|frame| {
                 trace!("Paring CAN frame: {:?}", frame);
@@ -154,10 +179,6 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 debug!("Published message: {:?}", merged_json);
             }
         }
-
-        // if let Some(ip) = get_wifi_ip() {
-        // display_data.ip_address.update(ip);
-        // }
 
         tokio::time::sleep(Duration::from_secs(10)).await;
     }
