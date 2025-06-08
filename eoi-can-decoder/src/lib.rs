@@ -167,23 +167,40 @@ pub enum ThrottleControlType {
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct MpptData {
-    pub mppt_id: u8,
-    pub info: MpptInfo,
+#[repr(u8)]
+pub enum MpptData {
+    Id0(MpptInfo) = 0,
+    Id1(MpptInfo) = 1,
+    Id2(MpptInfo) = 2,
+    Id3(MpptInfo) = 3,
+    Id4(MpptInfo) = 4,
+    Id5(MpptInfo) = 5,
+    Id6(MpptInfo) = 6,
+    Id7(MpptInfo) = 7,
 }
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MpptInfo {
-    MpptChannelPower(MpptChannelPower),
-    MpptChannelState(MpptChannelState),
-    MpptPower(MpptPower),
-    MpptStatus(MpptStatus),
+    Channel0(MpptChannel),
+    Channel1(MpptChannel),
+    Channel2(MpptChannel),
+    Channel3(MpptChannel),
+    ChannelUnknown(MpptChannel),
+    Power(MpptPower),
+    Status(MpptStatus),
 }
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MpptChannel {
+    Power(MpptChannelPower),
+    State(MpptChannelState),
+}
+
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelPower {
-    pub mppt_channel: u8,
     pub voltage_in: f32,
     pub current_in: f32,
 }
@@ -191,7 +208,6 @@ pub struct MpptChannelPower {
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelState {
-    pub mppt_channel: u8,
     pub duty_cycle: u16,
     pub algorithm: u8,
     pub algorithm_state: u8,
@@ -428,60 +444,52 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
             let mppt_id = ((id >> 4) & 0x7) as u8;
             let info_field = id as u8 & 0xF;
-            let channel = info_field >> 1;
-            match info_field {
-                0 | 2 | 4 | 6 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptChannelPower(MpptChannelPower {
-                            mppt_channel: channel,
-                            voltage_in: bytes_le_to_f32(data.get(0..4)?)?,
-                            current_in: bytes_le_to_f32(data.get(4..8)?)?,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                1 | 3 | 5 | 7 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptChannelState(MpptChannelState {
-                            mppt_channel: channel,
-                            duty_cycle: bytes_le_to_u16(data.get(0..2)?)?,
-                            algorithm: *data.get(2)?,
-                            algorithm_state: *data.get(3)?,
-                            channel_active: *data.get(4)? != 0,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                8 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptPower(MpptPower {
-                            voltage_out: bytes_le_to_f32(data.get(0..4)?)?,
-                            current_out: bytes_le_to_f32(data.get(4..8)?)?,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                9 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptStatus(MpptStatus {
-                            voltage_out_switch: bytes_le_to_f32(data.get(0..4)?)?,
-                            temperature: bytes_le_to_i16(data.get(4..6)?)?,
-                            state: *data.get(6)?,
-                            pwm_enabled: *data.get(7)? & 0b1 != 0,
-                            switch_on: *data.get(7)? & 0b10 != 0,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                _ => {
-                    // Ignore other info fields
-                    None
-                }
-            }
+            let channel = match info_field >> 1 {
+                0 => MpptInfo::Channel0,
+                1 => MpptInfo::Channel1,
+                2 => MpptInfo::Channel2,
+                3 => MpptInfo::Channel3,
+                _ => MpptInfo::ChannelUnknown,
+            };
+
+            let mppt_info = match info_field {
+                0 | 2 | 4 | 6 => Some(channel(MpptChannel::Power(MpptChannelPower {
+                    voltage_in: bytes_le_to_f32(data.get(0..4)?)?,
+                    current_in: bytes_le_to_f32(data.get(4..8)?)?,
+                }))),
+                1 | 3 | 5 | 7 => Some(channel(MpptChannel::State(MpptChannelState {
+                    duty_cycle: bytes_le_to_u16(data.get(0..2)?)?,
+                    algorithm: *data.get(2)?,
+                    algorithm_state: *data.get(3)?,
+                    channel_active: *data.get(4)? != 0,
+                }))),
+                8 => Some(MpptInfo::Power(MpptPower {
+                    voltage_out: bytes_le_to_f32(data.get(0..4)?)?,
+                    current_out: bytes_le_to_f32(data.get(4..8)?)?,
+                })),
+                9 => Some(MpptInfo::Status(MpptStatus {
+                    voltage_out_switch: bytes_le_to_f32(data.get(0..4)?)?,
+                    temperature: bytes_le_to_i16(data.get(4..6)?)?,
+                    state: *data.get(6)?,
+                    pwm_enabled: *data.get(7)? & 0b1 != 0,
+                    switch_on: *data.get(7)? & 0b10 != 0,
+                })),
+                _ => None,
+            }?;
+
+            let mppt_data = match mppt_id {
+                0 => MpptData::Id0(mppt_info),
+                1 => MpptData::Id1(mppt_info),
+                2 => MpptData::Id2(mppt_info),
+                3 => MpptData::Id3(mppt_info),
+                4 => MpptData::Id4(mppt_info),
+                5 => MpptData::Id5(mppt_info),
+                6 => MpptData::Id6(mppt_info),
+                7 => MpptData::Id7(mppt_info),
+                _ => return None,
+            };
+
+            Some(EoiCanData::Mppt(mppt_data))
         }
 
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {

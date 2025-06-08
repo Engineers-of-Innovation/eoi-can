@@ -81,7 +81,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
         .password(mqtt_settings::PASSWORD.to_string())
         .finalize();
 
-    if let Err(error) = client.connect(conn_opts) {
+    if let Err(error) = client.connect(conn_opts.clone()) {
         panic!("Unable to connect to MQTT broker: {:?}", error);
     }
 
@@ -145,6 +145,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
             );
             if let Err(e) = client.publish(mqtt_message) {
                 error!("Failed to publish message: {:?}", e);
+                if matches!(e, mqtt::Error::Disconnected) {
+                    client
+                        .connect(conn_opts.clone())
+                        .expect("Unable to reconnect");
+                }
             } else {
                 debug!("Published message: {:?}", merged_json);
             }
