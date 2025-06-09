@@ -1,9 +1,11 @@
 #![cfg_attr(feature = "defmt", no_std)]
 
+use serde::Serialize;
+
 pub mod can_collector;
 pub mod can_frame;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiCanData {
     EoiBattery(EoiBattery),
@@ -13,7 +15,7 @@ pub enum EoiCanData {
     Gnss(GnssData),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum GnssData {
     GnssStatus(GnssStatus),
@@ -23,7 +25,7 @@ pub enum GnssData {
     GnssDateTime(GnssDateTime),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssStatus {
     pub fix: u8,
@@ -31,7 +33,7 @@ pub struct GnssStatus {
     pub sats_used: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct GnssDateTime {
     pub year: u16,
@@ -42,7 +44,7 @@ pub struct GnssDateTime {
     pub seconds: u8,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleData {
     ToVescDutyCycle(f32),
@@ -52,7 +54,7 @@ pub enum ThrottleData {
     Config(ThrottleConfig),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleStatus {
     pub value: f32,
@@ -62,7 +64,7 @@ pub struct ThrottleStatus {
     pub error: ThrottleErrors,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleErrors {
     pub twi: ThrottleTwiErrors,
@@ -115,7 +117,7 @@ impl core::fmt::Display for ThrottleErrors {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ThrottleTwiErrors {
     #[default]
@@ -142,7 +144,7 @@ impl From<u8> for ThrottleTwiErrors {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ThrottleConfig {
     pub control_type: ThrottleControlType,
@@ -150,7 +152,7 @@ pub struct ThrottleConfig {
     pub lever_backward: i16,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ThrottleControlType {
@@ -163,47 +165,63 @@ pub enum ThrottleControlType {
     Unknown = 255,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub struct MpptData {
-    pub mppt_id: u8,
-    pub info: MpptInfo,
+#[repr(u8)]
+pub enum MpptData {
+    Id0(MpptInfo) = 0,
+    Id1(MpptInfo) = 1,
+    Id2(MpptInfo) = 2,
+    Id3(MpptInfo) = 3,
+    Id4(MpptInfo) = 4,
+    Id5(MpptInfo) = 5,
+    Id6(MpptInfo) = 6,
+    Id7(MpptInfo) = 7,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum MpptInfo {
-    MpptChannelPower(MpptChannelPower),
-    MpptChannelState(MpptChannelState),
-    MpptPower(MpptPower),
-    MpptStatus(MpptStatus),
+    Channel0(MpptChannel),
+    Channel1(MpptChannel),
+    Channel2(MpptChannel),
+    Channel3(MpptChannel),
+    ChannelUnknown(MpptChannel),
+    Power(MpptPower),
+    Status(MpptStatus),
 }
-#[derive(Debug)]
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MpptChannel {
+    Power(MpptChannelPower),
+    State(MpptChannelState),
+}
+
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelPower {
-    pub mppt_channel: u8,
     pub voltage_in: f32,
     pub current_in: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptChannelState {
-    pub mppt_channel: u8,
     pub duty_cycle: u16,
     pub algorithm: u8,
     pub algorithm_state: u8,
     pub channel_active: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptPower {
     pub voltage_out: f32,
     pub current_out: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MpptStatus {
     pub voltage_out_switch: f32,
@@ -213,7 +231,7 @@ pub struct MpptStatus {
     pub switch_on: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum EoiBattery {
     PackAndPerriCurrent(PackAndPerriCurrent),
@@ -227,21 +245,21 @@ pub enum EoiBattery {
     BatteryUptime(BatteryUptime),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct PackAndPerriCurrent {
     pub pack_current: f32,
     pub perri_current: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct ChargeAndDischargeCurrent {
     pub discharge_current: f32,
     pub charge_current: f32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SocErrorFlagsAndBalancing {
     pub state_of_charge: f32,  // u16 on CAN bus with a factor of 100
@@ -249,13 +267,13 @@ pub struct SocErrorFlagsAndBalancing {
     pub balancing_status: u16, //TODO: use bitflags?!
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct FourCellVoltages {
     pub cell_voltage: [f32; 4], // u16 on CAN bus with a factor of 1000
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct CellVoltages13_14PackAndStack {
     pub cell_voltage: [f32; 2], // u16 on CAN bus with a factor of 1000
@@ -263,23 +281,103 @@ pub struct CellVoltages13_14PackAndStack {
     pub stack_voltage: f32,     // u16 on CAN bus with a factor of 1000
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct TemperaturesAndStates {
     pub temperatures: [i8; 4],
     pub ic_temperature: i8,
-    pub battery_state: u8,   //TODO: define enum
-    pub charge_state: u8,    //TODO: define enum
-    pub discharge_state: u8, //TODO: define enum
+    pub battery_state: BatteryState,
+    pub charge_state: ChargeState,
+    pub discharge_state: MotorState,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum BatteryState {
+    Init,
+    Sleep,
+    WaitingForStartup,
+    Idle,
+    OnlyDischarge,
+    OnlyCharge,
+    On,
+    Unknown,
+}
+
+impl From<u8> for BatteryState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Sleep,
+            2 => Self::WaitingForStartup,
+            3 => Self::Idle,
+            4 => Self::OnlyCharge,
+            5 => Self::OnlyDischarge,
+            6 => Self::On,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ChargeState {
+    Init,
+    Idle,
+    RelayOn,
+    FetOn,
+    Error,
+    FetOff,
+    Unknown,
+}
+
+impl From<u8> for ChargeState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Idle,
+            2 => Self::RelayOn,
+            3 => Self::FetOn,
+            4 => Self::Error,
+            5 => Self::FetOff,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MotorState {
+    Init,
+    Idle,
+    PreChargeOn,
+    On,
+    PreChargeTimeout,
+    Error,
+    Unknown,
+}
+
+impl From<u8> for MotorState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Idle,
+            2 => Self::PreChargeOn,
+            3 => Self::On,
+            4 => Self::PreChargeTimeout,
+            5 => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct BatteryUptime {
     pub uptime_ms: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum VescData {
     StatusMessage1 {
@@ -388,9 +486,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     *data.get(3)? as i8,
                 ],
                 ic_temperature: *data.get(4)? as i8,
-                battery_state: *data.get(5)?,
-                charge_state: *data.get(6)?,
-                discharge_state: *data.get(7)?,
+                battery_state: (*data.get(5)?).into(),
+                charge_state: (*data.get(6)?).into(),
+                discharge_state: (*data.get(7)?).into(),
             },
         ))),
         0x108 => Some(EoiCanData::EoiBattery(EoiBattery::BatteryUptime(
@@ -426,60 +524,52 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
             let mppt_id = ((id >> 4) & 0x7) as u8;
             let info_field = id as u8 & 0xF;
-            let channel = info_field >> 1;
-            match info_field {
-                0 | 2 | 4 | 6 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptChannelPower(MpptChannelPower {
-                            mppt_channel: channel,
-                            voltage_in: bytes_le_to_f32(data.get(0..4)?)?,
-                            current_in: bytes_le_to_f32(data.get(4..8)?)?,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                1 | 3 | 5 | 7 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptChannelState(MpptChannelState {
-                            mppt_channel: channel,
-                            duty_cycle: bytes_le_to_u16(data.get(0..2)?)?,
-                            algorithm: *data.get(2)?,
-                            algorithm_state: *data.get(3)?,
-                            channel_active: *data.get(4)? != 0,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                8 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptPower(MpptPower {
-                            voltage_out: bytes_le_to_f32(data.get(0..4)?)?,
-                            current_out: bytes_le_to_f32(data.get(4..8)?)?,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                9 => {
-                    let mppt_data = MpptData {
-                        mppt_id,
-                        info: MpptInfo::MpptStatus(MpptStatus {
-                            voltage_out_switch: bytes_le_to_f32(data.get(0..4)?)?,
-                            temperature: bytes_le_to_i16(data.get(4..6)?)?,
-                            state: *data.get(6)?,
-                            pwm_enabled: *data.get(7)? & 0b1 != 0,
-                            switch_on: *data.get(7)? & 0b10 != 0,
-                        }),
-                    };
-                    Some(EoiCanData::Mppt(mppt_data))
-                }
-                _ => {
-                    // Ignore other info fields
-                    None
-                }
-            }
+            let channel = match info_field >> 1 {
+                0 => MpptInfo::Channel0,
+                1 => MpptInfo::Channel1,
+                2 => MpptInfo::Channel2,
+                3 => MpptInfo::Channel3,
+                _ => MpptInfo::ChannelUnknown,
+            };
+
+            let mppt_info = match info_field {
+                0 | 2 | 4 | 6 => Some(channel(MpptChannel::Power(MpptChannelPower {
+                    voltage_in: bytes_le_to_f32(data.get(0..4)?)?,
+                    current_in: bytes_le_to_f32(data.get(4..8)?)?,
+                }))),
+                1 | 3 | 5 | 7 => Some(channel(MpptChannel::State(MpptChannelState {
+                    duty_cycle: bytes_le_to_u16(data.get(0..2)?)?,
+                    algorithm: *data.get(2)?,
+                    algorithm_state: *data.get(3)?,
+                    channel_active: *data.get(4)? != 0,
+                }))),
+                8 => Some(MpptInfo::Power(MpptPower {
+                    voltage_out: bytes_le_to_f32(data.get(0..4)?)?,
+                    current_out: bytes_le_to_f32(data.get(4..8)?)?,
+                })),
+                9 => Some(MpptInfo::Status(MpptStatus {
+                    voltage_out_switch: bytes_le_to_f32(data.get(0..4)?)?,
+                    temperature: bytes_le_to_i16(data.get(4..6)?)?,
+                    state: *data.get(6)?,
+                    pwm_enabled: *data.get(7)? & 0b1 != 0,
+                    switch_on: *data.get(7)? & 0b10 != 0,
+                })),
+                _ => None,
+            }?;
+
+            let mppt_data = match mppt_id {
+                0 => MpptData::Id0(mppt_info),
+                1 => MpptData::Id1(mppt_info),
+                2 => MpptData::Id2(mppt_info),
+                3 => MpptData::Id3(mppt_info),
+                4 => MpptData::Id4(mppt_info),
+                5 => MpptData::Id5(mppt_info),
+                6 => MpptData::Id6(mppt_info),
+                7 => MpptData::Id7(mppt_info),
+                _ => return None,
+            };
+
+            Some(EoiCanData::Mppt(mppt_data))
         }
 
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {

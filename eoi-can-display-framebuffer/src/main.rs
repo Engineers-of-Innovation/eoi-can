@@ -21,7 +21,7 @@ fn register_tracing_subscriber(level_filter: LevelFilter) {
     tracing_subscriber::registry()
         .with(
             EnvFilter::builder()
-                .with_default_directive("debug".parse().unwrap())
+                .with_default_directive(level_filter.into())
                 .from_env_lossy(),
         )
         .with(
@@ -30,11 +30,6 @@ fn register_tracing_subscriber(level_filter: LevelFilter) {
                 .with_line_number(true),
         )
         .init();
-
-    info!(
-        "Environment override for debug level to: {:?}",
-        level_filter
-    );
 }
 
 #[tokio::main]

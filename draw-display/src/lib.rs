@@ -16,7 +16,7 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use eoi_can_decoder::{
-    EoiBattery, EoiCanData, GnssData, GnssDateTime, MpptChannelPower, MpptInfo, ThrottleData,
+    EoiBattery, EoiCanData, GnssData, GnssDateTime, MpptChannel, MpptInfo, ThrottleData,
     ThrottleErrors, VescData,
 };
 use heapless::String;
@@ -174,36 +174,53 @@ impl DisplayData {
                 _ => {}
             },
             EoiCanData::Mppt(mppt_data) => {
-                if let MpptInfo::MpptChannelPower(MpptChannelPower {
-                    mppt_channel,
-                    voltage_in,
-                    current_in,
-                }) = mppt_data.info
-                {
-                    // we map the mppt channel to the index of the (solar) array
-                    // mppt id is what it is, but channel and panel id are indexed from 0
-                    if let Some(panel_id) = match (mppt_data.mppt_id, mppt_channel) {
-                        (2, 0) => Some(0),
-                        (2, 1) => Some(1),
-                        (2, 3) => Some(2),
-                        (5, 0) => Some(3),
-                        (5, 1) => Some(4),
-                        (5, 2) => Some(5),
-                        (4, 1) => Some(6),
-                        (4, 2) => Some(7),
-                        (3, 0) => Some(8),
-                        (3, 1) => Some(9),
-                        (3, 2) => Some(10),
-                        _ => None,
-                    } {
-                        // update the panel info
-                        self.mppt_panel_info[panel_id as usize].update((
-                            voltage_in * current_in,
-                            voltage_in,
-                            current_in,
-                        ));
-                    }
-                }
+                let (panel_id, channel_power) = match mppt_data {
+                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel1(MpptChannel::Power(
+                        power,
+                    ))) => (0, power),
+                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel2(MpptChannel::Power(
+                        power,
+                    ))) => (1, power),
+                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel3(MpptChannel::Power(
+                        power,
+                    ))) => (2, power),
+
+                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel0(MpptChannel::Power(
+                        power,
+                    ))) => (3, power),
+                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel1(MpptChannel::Power(
+                        power,
+                    ))) => (4, power),
+                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel2(MpptChannel::Power(
+                        power,
+                    ))) => (5, power),
+
+                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel1(MpptChannel::Power(
+                        power,
+                    ))) => (6, power),
+                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel2(MpptChannel::Power(
+                        power,
+                    ))) => (7, power),
+
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel0(MpptChannel::Power(
+                        power,
+                    ))) => (8, power),
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel1(MpptChannel::Power(
+                        power,
+                    ))) => (9, power),
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel2(MpptChannel::Power(
+                        power,
+                    ))) => (10, power),
+
+                    _ => return, // not used mppt id or channel
+                };
+
+                // update the panel info
+                self.mppt_panel_info[panel_id].update((
+                    channel_power.voltage_in * channel_power.current_in,
+                    channel_power.voltage_in,
+                    channel_power.current_in,
+                ));
             }
             EoiCanData::Gnss(gnss) => match gnss {
                 GnssData::GnssSpeedAndHeading(speed_kmh, _) => {
