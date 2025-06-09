@@ -286,9 +286,89 @@ pub struct CellVoltages13_14PackAndStack {
 pub struct TemperaturesAndStates {
     pub temperatures: [i8; 4],
     pub ic_temperature: i8,
-    pub battery_state: u8,   //TODO: define enum
-    pub charge_state: u8,    //TODO: define enum
-    pub discharge_state: u8, //TODO: define enum
+    pub battery_state: BatteryState,
+    pub charge_state: ChargeState,
+    pub discharge_state: MotorState,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum BatteryState {
+    Init,
+    Sleep,
+    WaitingForStartup,
+    Idle,
+    OnlyDischarge,
+    OnlyCharge,
+    On,
+    Unknown,
+}
+
+impl From<u8> for BatteryState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Sleep,
+            2 => Self::WaitingForStartup,
+            3 => Self::Idle,
+            4 => Self::OnlyCharge,
+            5 => Self::OnlyDischarge,
+            6 => Self::On,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ChargeState {
+    Init,
+    Idle,
+    RelayOn,
+    FetOn,
+    Error,
+    FetOff,
+    Unknown,
+}
+
+impl From<u8> for ChargeState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Idle,
+            2 => Self::RelayOn,
+            3 => Self::FetOn,
+            4 => Self::Error,
+            5 => Self::FetOff,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum MotorState {
+    Init,
+    Idle,
+    PreChargeOn,
+    On,
+    PreChargeTimeout,
+    Error,
+    Unknown,
+}
+
+impl From<u8> for MotorState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Init,
+            1 => Self::Idle,
+            2 => Self::PreChargeOn,
+            3 => Self::On,
+            4 => Self::PreChargeTimeout,
+            5 => Self::Error,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -406,9 +486,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     *data.get(3)? as i8,
                 ],
                 ic_temperature: *data.get(4)? as i8,
-                battery_state: *data.get(5)?,
-                charge_state: *data.get(6)?,
-                discharge_state: *data.get(7)?,
+                battery_state: (*data.get(5)?).into(),
+                charge_state: (*data.get(6)?).into(),
+                discharge_state: (*data.get(7)?).into(),
             },
         ))),
         0x108 => Some(EoiCanData::EoiBattery(EoiBattery::BatteryUptime(
