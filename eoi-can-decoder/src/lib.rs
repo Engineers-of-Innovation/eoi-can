@@ -75,14 +75,20 @@ pub struct ThrottleErrors {
     pub impedance_high: bool,
 }
 
+impl ThrottleErrors {
+    pub fn has_error(&self) -> bool {
+        !matches!(self.twi, ThrottleTwiErrors::NoError)
+            || self.no_eeprom
+            || self.gain_clipping
+            || self.gain_invalid
+            || self.deadman_missing
+            || self.impedance_high
+    }
+}
+
 impl core::fmt::Display for ThrottleErrors {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if matches!(self.twi, ThrottleTwiErrors::NoError)
-            && !self.no_eeprom
-            && !self.gain_invalid
-            && !self.deadman_missing
-            && !self.impedance_high
-        {
+        if !self.has_error() {
             write!(f, "No Error")
         } else {
             let mut add_comma = false;
@@ -288,10 +294,10 @@ pub struct TemperaturesAndStates {
     pub ic_temperature: i8,
     pub battery_state: BatteryState,
     pub charge_state: ChargeState,
-    pub discharge_state: MotorState,
+    pub discharge_state: DischargeState,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BatteryState {
     Init,
@@ -301,6 +307,7 @@ pub enum BatteryState {
     OnlyDischarge,
     OnlyCharge,
     On,
+    #[default]
     Unknown,
 }
 
@@ -319,7 +326,7 @@ impl From<u8> for BatteryState {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChargeState {
     Init,
@@ -328,6 +335,7 @@ pub enum ChargeState {
     FetOn,
     Error,
     FetOff,
+    #[default]
     Unknown,
 }
 
@@ -345,19 +353,20 @@ impl From<u8> for ChargeState {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Default)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
-pub enum MotorState {
+pub enum DischargeState {
     Init,
     Idle,
     PreChargeOn,
     On,
     PreChargeTimeout,
     Error,
+    #[default]
     Unknown,
 }
 
-impl From<u8> for MotorState {
+impl From<u8> for DischargeState {
     fn from(value: u8) -> Self {
         match value {
             0 => Self::Init,

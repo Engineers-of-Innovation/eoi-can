@@ -16,8 +16,8 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use eoi_can_decoder::{
-    EoiBattery, EoiCanData, GnssData, GnssDateTime, MpptChannel, MpptInfo, ThrottleData,
-    ThrottleErrors, VescData,
+    BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData, GnssData, GnssDateTime,
+    MpptChannel, MpptInfo, ThrottleData, ThrottleErrors, VescData,
 };
 use heapless::String;
 use time::{Duration, Instant};
@@ -81,6 +81,9 @@ pub struct DisplayData {
     pub battery_uptime_ms: DisplayValue<u32>,
     pub battery_error_flags: DisplayValue<u32>,
     pub battery_balancing_status: DisplayValue<u16>,
+    pub battery_state: DisplayValue<BatteryState>,
+    pub battery_charge_state: DisplayValue<ChargeState>,
+    pub battery_discharge_state: DisplayValue<DischargeState>,
     pub motor_battery_voltage: DisplayValue<f32>,
     pub motor_battery_current: DisplayValue<f32>,
     pub motor_current: DisplayValue<f32>,
@@ -132,6 +135,9 @@ impl DisplayData {
                     for (index, value) in data.temperatures.iter().enumerate() {
                         self.battery_temperatures[index].update(*value);
                     }
+                    self.battery_state.update(data.battery_state);
+                    self.battery_charge_state.update(data.charge_state);
+                    self.battery_discharge_state.update(data.discharge_state);
                 }
                 EoiBattery::BatteryUptime(data) => {
                     self.battery_uptime_ms.update(data.uptime_ms);
@@ -322,20 +328,23 @@ where
 
     string_helper.clear();
     write!(&mut string_helper, "Throttle Errors: ").unwrap();
+    let mut throttle_has_error = false;
     if data.throttle_errors.is_valid() {
-        write!(
-            &mut string_helper,
-            "{}",
-            data.throttle_errors
-                .get()
-                .unwrap_or(&ThrottleErrors::default())
-        )
-        .unwrap();
+        let default_error = ThrottleErrors::default();
+        let error = data.throttle_errors.get().unwrap_or(&default_error);
+        if error.has_error() {
+            throttle_has_error = true;
+        }
+        write!(&mut string_helper, "{}", error).unwrap();
     }
     Text::new(
         string_helper.as_str(),
         Point::new(15, FONT_NORMAL_SPACE),
-        font_normal,
+        if throttle_has_error {
+            font_normal_inverted
+        } else {
+            font_normal
+        },
     )
     .draw(display)?;
 
@@ -527,7 +536,7 @@ where
 
     let mut battery_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
     let battery_offset_left = 415;
-    let battery_offset_right = 630;
+    let battery_offset_right = 790;
 
     Text::new(
         "Battery",
@@ -548,10 +557,11 @@ where
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
@@ -567,10 +577,11 @@ where
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
@@ -589,10 +600,11 @@ where
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
@@ -623,50 +635,24 @@ where
         / valid_temperatures.len() as f32;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:6.0} C", max_temp).unwrap();
+    write!(
+        &mut string_helper,
+        "{:2.0}/{:2.0}/{:2.0} C",
+        min_temp, max_temp, avg_temp
+    )
+    .unwrap();
 
     Text::new(
-        "Max temperature",
+        "Temperature min/max/avg",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
-    )
-    .draw(display)?;
-    battery_offset_y += FONT_NORMAL_SPACE;
-
-    string_helper.clear();
-    write!(&mut string_helper, "{:6.0} C", min_temp).unwrap();
-    Text::new(
-        "Min temperature",
-        Point::new(battery_offset_left, battery_offset_y),
-        font_normal,
-    )
-    .draw(display)?;
-    Text::new(
-        string_helper.as_str(),
-        Point::new(battery_offset_right, battery_offset_y),
-        font_normal,
-    )
-    .draw(display)?;
-    battery_offset_y += FONT_NORMAL_SPACE;
-
-    string_helper.clear();
-    write!(&mut string_helper, "{:6.0} C", avg_temp).unwrap();
-    Text::new(
-        "Avg temperature",
-        Point::new(battery_offset_left, battery_offset_y),
-        font_normal,
-    )
-    .draw(display)?;
-    Text::new(
-        string_helper.as_str(),
-        Point::new(battery_offset_right, battery_offset_y),
-        font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
@@ -693,67 +679,150 @@ where
         valid_voltages.iter().copied().cloned().sum::<f32>() / valid_voltages.len() as f32;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:6.3} V", max_voltage).unwrap();
+    write!(
+        &mut string_helper,
+        "{:1.3}/{:1.3} V",
+        min_voltage, max_voltage,
+    )
+    .unwrap();
     Text::new(
-        "Max  cell voltage",
+        "Cell voltage min/max",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:6.3} V", min_voltage).unwrap();
+    write!(
+        &mut string_helper,
+        "{:1.3}/{:1.3} V",
+        avg_voltage,
+        (max_voltage - min_voltage)
+    )
+    .unwrap();
     Text::new(
-        "Min  cell voltage",
+        "Cell voltage avg/diff",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
         font_normal,
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:6.3} V", avg_voltage).unwrap();
+    write!(
+        &mut string_helper,
+        "{:?}  ",
+        *data.battery_state.get().unwrap_or(&BatteryState::Unknown)
+    )
+    .unwrap();
     Text::new(
-        "Avg  cell voltage",
+        "Battery State",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
-        font_normal,
+        if matches!(
+            *data.battery_state.get().unwrap_or(&BatteryState::Unknown),
+            BatteryState::On
+        ) {
+            font_normal
+        } else {
+            font_normal_inverted
+        },
+        Alignment::Right,
     )
     .draw(display)?;
     battery_offset_y += FONT_NORMAL_SPACE;
 
     string_helper.clear();
-    write!(&mut string_helper, "{:6.3} V", max_voltage - min_voltage).unwrap();
+    write!(
+        &mut string_helper,
+        "{:?}  ",
+        *data
+            .battery_charge_state
+            .get()
+            .unwrap_or(&ChargeState::Unknown)
+    )
+    .unwrap();
+
     Text::new(
-        "Diff cell voltage",
+        "Charge State",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
-    Text::new(
+    Text::with_alignment(
         string_helper.as_str(),
         Point::new(battery_offset_right, battery_offset_y),
+        if matches!(
+            *data
+                .battery_charge_state
+                .get()
+                .unwrap_or(&ChargeState::Unknown),
+            ChargeState::FetOn
+        ) {
+            font_normal
+        } else {
+            font_normal_inverted
+        },
+        Alignment::Right,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
+
+    string_helper.clear();
+    write!(
+        &mut string_helper,
+        "{:?}  ",
+        *data
+            .battery_discharge_state
+            .get()
+            .unwrap_or(&DischargeState::Unknown)
+    )
+    .unwrap();
+
+    Text::new(
+        "Discharge State",
+        Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
     .draw(display)?;
+    Text::with_alignment(
+        string_helper.as_str(),
+        Point::new(battery_offset_right, battery_offset_y),
+        if matches!(
+            *data
+                .battery_discharge_state
+                .get()
+                .unwrap_or(&DischargeState::Unknown),
+            DischargeState::On
+        ) {
+            font_normal
+        } else {
+            font_normal_inverted
+        },
+        Alignment::Right,
+    )
+    .draw(display)?;
+    battery_offset_y += FONT_NORMAL_SPACE;
 
     // Cell voltages
     const CELL_VOLTAGES_HEIGTH: i32 = 80;
@@ -867,7 +936,7 @@ where
     write!(
         &mut string_helper,
         "{:6.1} %",
-        data.motor_current.get().unwrap_or(&f32::NAN)
+        data.motor_duty_cycle.get().unwrap_or(&f32::NAN)
     )
     .unwrap();
     Text::new(
