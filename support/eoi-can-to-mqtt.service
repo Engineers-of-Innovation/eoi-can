@@ -1,0 +1,15 @@
+[Unit]
+Description=CAN to MQTT Application, sends decoded CAN data over MQTT to our server
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+ExecStart=/home/engineer/eoi-can-to-mqtt
+WorkingDirectory=/home/engineer
+User=engineer
+Group=engineer
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
