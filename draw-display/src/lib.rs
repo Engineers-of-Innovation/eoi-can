@@ -100,6 +100,8 @@ pub struct DisplayData {
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
     pub ip_address: DisplayValue<Ipv4Addr>,
+    pub display_state_of_charge: DisplayValue<f32>,
+    pub display_is_charging: DisplayValue<bool>,
 }
 
 impl DisplayData {
@@ -288,6 +290,12 @@ where
         .font(&FONT_6X10)
         .text_color(BinaryColor::Off.into())
         .background_color(BinaryColor::On.into())
+        .build();
+
+    let font_small_inverted: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+        .font(&FONT_6X10)
+        .text_color(BinaryColor::On.into())
+        .background_color(BinaryColor::Off.into())
         .build();
     const FONT_SMALL_SPACE: i32 = 10;
 
@@ -1047,11 +1055,37 @@ where
 
     Text::with_alignment(
         string_helper.as_str(),
-        Point::new(15, 60),
+        Point::new(15, 65),
         font_small,
         Alignment::Left,
     )
     .draw(display)?;
+
+    if let Some(charging) = data.display_is_charging.get() {
+        string_helper.clear();
+        write!(
+            &mut string_helper,
+            "Display {:3.0}% {}",
+            data.display_state_of_charge.get().unwrap_or(&f32::NAN),
+            if *charging {
+                "Charging"
+            } else {
+                "Not Charging"
+            },
+        )
+        .unwrap();
+        Text::with_alignment(
+            string_helper.as_str(),
+            Point::new(730, 65),
+            if *charging {
+                font_small
+            } else {
+                font_small_inverted
+            },
+            Alignment::Right,
+        )
+        .draw(display)?;
+    }
 
     string_helper.clear();
 

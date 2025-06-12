@@ -78,6 +78,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
     draw_display::draw_display(&mut display, &display_data).unwrap();
     display.flush().unwrap();
 
+    let mut display_battery_last_update = std::time::Instant::now();
+
     loop {
         if let Ok(mut can_collector) = shared_can_collector.lock() {
             if can_collector.get_dropped_frames() > 0 {
@@ -99,6 +101,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
         if let Some(ip) = get_wifi_ip() {
             display_data.ip_address.update(ip);
+        }
+
+        if display_battery_last_update.elapsed() > Duration::from_secs(1) {
+            display_battery_last_update = std::time::Instant::now();
+            if let Ok((state_of_charge, charging)) = pisugar::battery_info().await {
+                display_data.display_state_of_charge.update(state_of_charge);
+                display_data.display_is_charging.update(charging);
+            }
         }
 
         draw_display::draw_display(&mut display, &display_data).unwrap();
