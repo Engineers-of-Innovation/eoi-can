@@ -1,0 +1,15 @@
+[Unit]
+Description=old CAN to MQTT Application, sends decoded CAN data over MQTT to our server, will be deprecated soon
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+ExecStart=/home/engineer/eoi-can-to-mqtt-old can0
+WorkingDirectory=/home/engineer
+User=engineer
+Group=engineer
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
