@@ -18,3 +18,4 @@ serde_json = "1.0"
 paho-mqtt = { version = "0.13", features = [ "vendored-ssl" ] }
 json-patch = "4.0"
 systemstat = "0.2.4"
+rand = "0.9"

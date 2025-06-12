@@ -4,6 +4,8 @@ use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
 use json_patch::merge;
 use paho_mqtt as mqtt;
+use rand::Rng;
+use rand::distr::Alphanumeric;
 use serde_json::json;
 use std::env;
 use std::sync::{Arc, Mutex};
@@ -64,7 +66,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     let create_opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(mqtt_settings::BROKER.to_string())
-        .client_id(mqtt_settings::CLIENT.to_string())
+        .client_id(format!("eoi-can-to-mqtt-{}", {
+            let rand_string: String = rand::rng()
+                .sample_iter(&Alphanumeric)
+                .take(8)
+                .map(char::from)
+                .collect();
+            rand_string
+        }))
         .finalize();
 
     let client = mqtt::Client::new(create_opts).unwrap_or_else(|err| {
@@ -180,6 +189,6 @@ async fn main() -> Result<(), core::convert::Infallible> {
             }
         }
 
-        tokio::time::sleep(Duration::from_secs(10)).await;
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
