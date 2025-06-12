@@ -1,0 +1,13 @@
+[Unit]
+Description=Powers off device after 1 minute of no input power
+
+[Service]
+ExecStart=/home/engineer/support/auto-poweroff.sh
+WorkingDirectory=/home/engineer
+User=root
+Group=root
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
