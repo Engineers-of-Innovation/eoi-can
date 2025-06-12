@@ -31,7 +31,10 @@ mod built_info {
 }
 
 #[derive(Debug)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
 pub struct DisplayValue<T> {
     value: Option<T>,
     last_updated: Instant,
@@ -822,7 +825,6 @@ where
         Alignment::Right,
     )
     .draw(display)?;
-    battery_offset_y += FONT_NORMAL_SPACE;
 
     // Cell voltages
     const CELL_VOLTAGES_HEIGTH: i32 = 80;

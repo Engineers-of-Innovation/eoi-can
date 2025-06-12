@@ -9,7 +9,6 @@ use embedded_graphics_simulator::{
 use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
 use std::sync::{Arc, Mutex};
-
 use tokio::time::Instant;
 #[allow(unused_imports)]
 use tracing::{debug, error, info, trace, warn, Level};

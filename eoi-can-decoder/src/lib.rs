@@ -297,7 +297,7 @@ pub struct TemperaturesAndStates {
     pub discharge_state: DischargeState,
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum BatteryState {
     Init,
@@ -326,7 +326,7 @@ impl From<u8> for BatteryState {
     }
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum ChargeState {
     Init,
@@ -353,7 +353,7 @@ impl From<u8> for ChargeState {
     }
 }
 
-#[derive(Debug, Serialize, Default)]
+#[derive(Debug, Serialize, Default, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum DischargeState {
     Init,
@@ -700,7 +700,7 @@ mod tests {
 
     // This sum seems a bit odd, but it is the result of the test data
     // TODO: investigate if this is a bug in the test data / battery
-    const PACK_CURRENT: f32 = CHARGE_CURRENT + DISCHARGE_CURRENT + PERRI_CURRENT;
+    const PACK_CURRENT: f32 = CHARGE_CURRENT + (-DISCHARGE_CURRENT) + PERRI_CURRENT;
 
     #[test]
     fn pack_and_perri_current() {
@@ -715,8 +715,8 @@ mod tests {
         } else {
             panic!("Unexpected data type");
         };
-        assert!((data.pack_current - PACK_CURRENT).abs() < 0.0001);
         assert!((data.perri_current - PERRI_CURRENT).abs() < 0.0001);
+        assert!((data.pack_current - PACK_CURRENT).abs() < 0.0001);
     }
 
     #[test]
@@ -851,9 +851,9 @@ mod tests {
         assert!(data.temperatures[2] == 38);
         assert!(data.temperatures[3] == 40);
         assert!(data.ic_temperature == 54);
-        assert!(data.battery_state == 6);
-        assert!(data.charge_state == 3);
-        assert!(data.discharge_state == 3);
+        assert!(data.battery_state == BatteryState::On);
+        assert!(data.charge_state == ChargeState::FetOn);
+        assert!(data.discharge_state == DischargeState::On);
     }
 
     #[test]
