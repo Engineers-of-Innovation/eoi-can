@@ -209,17 +209,17 @@ impl DisplayData {
                     eoi_can_decoder::MpptData::Id4(MpptInfo::Channel1(MpptChannel::Power(
                         power,
                     ))) => (6, power),
-                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel2(MpptChannel::Power(
+                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel3(MpptChannel::Power(
                         power,
                     ))) => (7, power),
 
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel0(MpptChannel::Power(
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel2(MpptChannel::Power(
                         power,
                     ))) => (8, power),
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel1(MpptChannel::Power(
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel3(MpptChannel::Power(
                         power,
                     ))) => (9, power),
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel2(MpptChannel::Power(
+                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel0(MpptChannel::Power(
                         power,
                     ))) => (10, power),
 
