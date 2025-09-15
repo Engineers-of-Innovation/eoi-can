@@ -436,7 +436,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x101 => Some(EoiCanData::EoiBattery(
             EoiBattery::ChargeAndDischargeCurrent(ChargeAndDischargeCurrent {
                 charge_current: bytes_le_to_f32(data.get(0..4)?)?,
-                discharge_current: -1.0 * bytes_le_to_f32(data.get(4..8)?)?,
+                discharge_current: -bytes_le_to_f32(data.get(4..8)?)?,
             }),
         )),
         0x102 => Some(EoiCanData::EoiBattery(
