@@ -1,0 +1,133 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install toolchain with required components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: rustfmt
+
+      - name: Check formatting of Rust code with rustfmt
+        uses: actions-rust-lang/rustfmt@v1
+        with:
+          manifest-path: ./Cargo.toml
+
+      - name: Check formatting of Rust firmware code with rustfmt
+        uses: actions-rust-lang/rustfmt@v1
+        with:
+          manifest-path: eoi-can-display-firmware/Cargo.toml
+
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install toolchain with required components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          components: clippy
+
+      - name: Workspace clippy
+        uses: LoliGothick/clippy-check@v0.3.1
+        with:
+          name: clippy-workspace
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: .
+          options: --all-targets
+          deny: warnings
+
+      - name: Firmware clippy
+        uses: LoliGothick/clippy-check@v0.3.1
+        with:
+          name: clippy-firmware
+          token: ${{ secrets.GITHUB_TOKEN }}
+          working-directory: eoi-can-display-firmware
+          options: --target thumbv7em-none-eabihf
+          deny: warnings
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install toolchain with required components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "nightly, stable"
+          components: llvm-tools
+
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest,cargo-llvm-cov
+
+      - name: Run all tests
+        run: cargo llvm-cov nextest
+        working-directory: .
+
+      - name: Collect coverage
+        run: cargo llvm-cov report --cobertura --output-path=cobertura.xml
+
+      - name: Check code coverage report
+        uses: 5monkeys/cobertura-action@v13
+        with:
+          path: cobertura.xml
+          repo_token: ${{ secrets.GITHUB_TOKEN }}
+          only_changed_files: true
+          skip_covered: false
+          show_missing: true
+          link_missing_lines: true
+          minimum_coverage: 75
+          fail_below_threshold: false # Fail action when coverage is below the minimum
+
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install toolchain with required components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          toolchain: "nightly"
+
+      - uses: cargo-bins/cargo-binstall@main
+
+      - name: Install cargo fuzz
+        run: cargo binstall cargo-fuzz --no-confirm --target x86_64-unknown-linux-gnu # Give target otherwise it install the musl target
+
+      - name: Try run the fuzzers
+        run: |
+          for name in $(cargo fuzz list)
+          do
+            cargo fuzz run $name -- -runs=1000000
+          done
+
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install toolchain with required components
+        uses: actions-rust-lang/setup-rust-toolchain@v1
+
+      - name: Build
+        run: cargo build
+        working-directory: .
+
+      - name: Build firmware
+        run: DEFMT_LOG=trace cargo build
+        working-directory: eoi-can-display-firmware
