@@ -1,12 +1,21 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
-# version that uses log (over USB):
-runner = "picotool load --update --verify --execute -t elf"
-# version that uses defmt (over RTT):
-# runner = "probe-rs run --chip RP2040"
+
+runner = [
+    "probe-rs",
+    "run",
+    "--chip",
+    "stm32g0b1rc",
+    "--connect-under-reset",
+    "--catch-reset",
+    "--catch-hardfault",
+    "--always-print-stacktrace",
+    "--log-format",
+    "{L} {t} {f}:{l} {s}",
+    "--preverify", # Do not flash if up-to-date
+    "--verify", # Verify after flashing also
+]
+
 linker = "flip-link"
 
 [build]
-target = "thumbv6m-none-eabi" # Cortex-M0 and Cortex-M0+
-
-[env]
-DEFMT_LOG = "debug"
+target = "thumbv6m-none-eabi"
