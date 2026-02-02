@@ -3,25 +3,102 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::gpio::{Level, Output, Speed};
-use embassy_time::Timer;
+use embassy_stm32::{
+    bind_interrupts,
+    gpio::{Level, Output, Speed},
+    peripherals,
+    usart::{self, Uart, UartRx},
+};
+use embassy_time::{Duration, Timer};
+use tmc2209::Register;
 use {defmt_rtt as _, panic_probe as _};
 
+bind_interrupts!(struct Irqs {
+    USART3_4_5_6_LPUART1 => usart::InterruptHandler<peripherals::USART4>;
+});
+
+#[embassy_executor::task]
+async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
+    loop {
+        output.toggle();
+        Timer::after_secs(1).await;
+    }
+}
+
+#[embassy_executor::task]
+async fn tcm_rx_task(mut rx: UartRx<'static, embassy_stm32::mode::Async>) {
+    loop {
+        let mut reader = tmc2209::Reader::default();
+        let mut buffer = [0u8; 50];
+        match rx.read_until_idle(&mut buffer).await {
+            Ok(len) => {
+                trace!("Received byte from TMC2209: {:?}", &buffer[..len]);
+                if let (_, Some(response)) = reader.read_response(&buffer[..len])
+                    && response.crc_is_valid()
+                {
+                    debug!("Parsed TMC2209 response: {:?}", response.data());
+                    match response.reg_addr() {
+                        Ok(tmc2209::reg::SG_RESULT::ADDRESS) => {
+                            let sg_result: tmc2209::reg::SG_RESULT = response.data_u32().into();
+                            info!("SG_RESULT: {}", sg_result.get());
+                        }
+                        _ => {
+                            warn!("Received response for unhandled register address");
+                        }
+                    }
+                };
+            }
+            Err(e) => {
+                warn!("Error reading from TMC2209 UART: {:?}", e);
+            }
+        }
+    }
+}
+
 #[embassy_executor::main]
-async fn main(_spawner: Spawner) {
+async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(Default::default());
     info!("Hello World!");
 
-    let mut led = Output::new(p.PD8, Level::High, Speed::Low);
+    let status_led = Output::new(p.PD8, Level::High, Speed::Low);
+    spawner.spawn(unwrap!(heartbeat_task(status_led)));
+
+    // Initialize stepper motor driver, we use X stage output, which has address 0
+    let x_tmc_not_enable = Output::new(p.PB14, Level::Low, Speed::Low);
+    let x_tmc_step = Output::new(p.PB13, Level::Low, Speed::Low);
+    let x_tmc_direction = Output::new(p.PB12, Level::Low, Speed::Low);
+    core::mem::forget(x_tmc_not_enable);
+    core::mem::forget(x_tmc_step);
+    core::mem::forget(x_tmc_direction);
+
+    // we use uart for controlling TMC2209
+    let (mut tx_tmc, rx_tmc) = Uart::new(
+        p.USART4,
+        p.PC11,
+        p.PC10,
+        Irqs,
+        p.DMA1_CH2,
+        p.DMA1_CH3,
+        embassy_stm32::usart::Config::default(),
+    )
+    .unwrap()
+    .split();
+    spawner.spawn(unwrap!(tcm_rx_task(rx_tmc)));
+    Timer::after(Duration::from_millis(100)).await; // wait a bit for uart to settle
+
+    // - Enable UART controlled velocity but in the stopped state.
+    // - Enable the `pdn_disable` field necessary for UART comms.
+    let mut gconf = tmc2209::reg::GCONF::default();
+    let mut vactual = tmc2209::reg::VACTUAL::ENABLED_STOPPED;
+    vactual.set(1000);
+    gconf.set_pdn_disable(true);
+    tmc2209::send_write_request(0, gconf, &mut tx_tmc).unwrap();
+    tmc2209::send_write_request(0, vactual, &mut tx_tmc).unwrap();
 
     loop {
-        info!("high");
-        led.set_high();
-        Timer::after_millis(300).await;
-
-        info!("low");
-        led.set_low();
-        Timer::after_millis(300).await;
+        Timer::after(Duration::from_millis(1000)).await;
+        tmc2209::send_read_request::<tmc2209::reg::SG_RESULT, _>(0, &mut tx_tmc).unwrap();
+        // tmc2209::send_read_request::<tmc2209::reg::DRV_STATUS, _>(0, &mut tx_tmc).unwrap();
     }
 }
 
