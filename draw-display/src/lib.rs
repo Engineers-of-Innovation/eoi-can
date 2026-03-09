@@ -244,6 +244,7 @@ impl DisplayData {
                 GnssData::GnssLatitude(_) => {}
                 GnssData::GnssLongitude(_) => {}
             },
+            EoiCanData::GanMppt(_) => {}
         }
     }
 
