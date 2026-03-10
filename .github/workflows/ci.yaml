@@ -73,33 +73,15 @@ jobs:
 
       - name: Install toolchain with required components
         uses: actions-rust-lang/setup-rust-toolchain@v1
-        with:
-          toolchain: "nightly, stable"
-          components: llvm-tools
 
       - name: Install tools
         uses: taiki-e/install-action@v2
         with:
-          tool: cargo-nextest,cargo-llvm-cov
+          tool: cargo-nextest
 
       - name: Run all tests
-        run: cargo llvm-cov nextest
+        run: cargo nextest run
         working-directory: .
-
-      - name: Collect coverage
-        run: cargo llvm-cov report --cobertura --output-path=cobertura.xml
-
-      - name: Check code coverage report
-        uses: 5monkeys/cobertura-action@v13
-        with:
-          path: cobertura.xml
-          repo_token: ${{ secrets.GITHUB_TOKEN }}
-          only_changed_files: true
-          skip_covered: false
-          show_missing: true
-          link_missing_lines: true
-          minimum_coverage: 75
-          fail_below_threshold: false # Fail action when coverage is below the minimum
 
   fuzz:
     runs-on: ubuntu-latest
