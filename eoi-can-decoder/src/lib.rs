@@ -13,6 +13,8 @@ pub enum EoiCanData {
     Throttle(ThrottleData),
     Mppt(MpptData),
     Gnss(GnssData),
+    RudderController(RudderControllerData),
+    HeightSensors(HeightSensorData),
 }
 
 #[derive(Debug, Serialize)]
@@ -414,6 +416,106 @@ pub enum VescData {
     },
 }
 
+// --- RudderController ---
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum RudderControllerData {
+    Servo(ServoData),
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ServoData {
+    Setpoint(u16),
+    Status(ServoStatus),
+    Command(ServoRudderCommand),
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ServoRudderCommand {
+    Initialize,
+    Unknown,
+}
+
+impl From<u8> for ServoRudderCommand {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Initialize,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct ServoStatus {
+    pub state: ServoState,
+    pub setpoint: u16,
+}
+
+#[derive(Debug, Serialize, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ServoState {
+    #[default]
+    Uninitialized,
+    Operational,
+    Unknown,
+}
+
+impl From<u8> for ServoState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Uninitialized,
+            1 => Self::Operational,
+            0xFF => Self::Unknown,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+// --- HeightSensors ---
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HeightSensorData {
+    FrontLeft(HeightSensorStatus),
+    FrontRight(HeightSensorStatus),
+    // Placement TBD
+    Reserved1(HeightSensorStatus),
+    Reserved2(HeightSensorStatus),
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HeightSensorStatus {
+    pub state: HeightSensorState,
+    pub value: u16,
+}
+
+#[derive(Debug, Serialize, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HeightSensorState {
+    #[default]
+    NotPluggedIn,
+    ModbusError,
+    Operational,
+    Unknown,
+}
+
+impl From<u8> for HeightSensorState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::NotPluggedIn,
+            1 => Self::ModbusError,
+            2 => Self::Operational,
+            0xFF => Self::Unknown,
+            _ => Self::Unknown,
+        }
+    }
+}
+
 pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData> {
     let id = match can_frame.id {
         embedded_can::Id::Standard(id) => id.as_raw() as u32,
@@ -427,6 +529,42 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
     const MPPT_STOP_ADDRESS: u32 = MPPT_BASE_ADDRESS + (MPPT_MAX_DEVICES * MPPT_INFO_FIELDS) - 1;
 
     match id {
+        0x10 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
+            ServoData::Setpoint(bytes_le_to_u16(data.get(0..2)?)?),
+        ))),
+        0x21 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
+            ServoData::Command((*data.get(0)?).into()),
+        ))),
+        0x11 => Some(EoiCanData::HeightSensors(HeightSensorData::FrontLeft(
+            HeightSensorStatus {
+                state: (*data.get(0)?).into(),
+                value: bytes_le_to_u16(data.get(1..3)?)?,
+            },
+        ))),
+        0x12 => Some(EoiCanData::HeightSensors(HeightSensorData::FrontRight(
+            HeightSensorStatus {
+                state: (*data.get(0)?).into(),
+                value: bytes_le_to_u16(data.get(1..3)?)?,
+            },
+        ))),
+        0x13 => Some(EoiCanData::HeightSensors(HeightSensorData::Reserved1(
+            HeightSensorStatus {
+                state: (*data.get(0)?).into(),
+                value: bytes_le_to_u16(data.get(1..3)?)?,
+            },
+        ))),
+        0x14 => Some(EoiCanData::HeightSensors(HeightSensorData::Reserved2(
+            HeightSensorStatus {
+                state: (*data.get(0)?).into(),
+                value: bytes_le_to_u16(data.get(1..3)?)?,
+            },
+        ))),
+        0x20 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
+            ServoData::Status(ServoStatus {
+                state: (*data.get(0)?).into(),
+                setpoint: bytes_le_to_u16(data.get(1..3)?)?,
+            }),
+        ))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -870,5 +1008,82 @@ mod tests {
             panic!("Unexpected data type");
         };
         assert!(data.uptime_ms == 992129132);
+    }
+
+    #[test]
+    fn servo_rudder_setpoint() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x10).unwrap()),
+            &[0xE8, 0x03], // 1000 little-endian
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Setpoint(
+            setpoint,
+        ))) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(setpoint == 1000);
+    }
+
+    #[test]
+    fn servo_rudder_command_initialize() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x21).unwrap()),
+            &[0x00], // Initialize
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Command(
+            command,
+        ))) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(command == ServoRudderCommand::Initialize);
+    }
+
+    #[test]
+    fn servo_rudder_status() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x20).unwrap()),
+            &[0x01, 0xD0, 0x07], // Operational, setpoint=2000 little-endian
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(
+            status,
+        ))) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(status.state == ServoState::Operational);
+        assert!(status.setpoint == 2000);
+    }
+
+    #[test]
+    fn height_sensor_front_left() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x11).unwrap()),
+            &[0x02, 0x2C, 0x01], // Operational, value=300 little-endian
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::HeightSensors(HeightSensorData::FrontLeft(status)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert!(status.state == HeightSensorState::Operational);
+        assert!(status.value == 300);
+    }
+
+    #[test]
+    fn height_sensor_front_right() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x12).unwrap()),
+            &[0x02, 0x2C, 0x01], // Operational, value=300 little-endian
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::HeightSensors(HeightSensorData::FrontRight(status)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert!(status.state == HeightSensorState::Operational);
+        assert!(status.value == 300);
     }
 }

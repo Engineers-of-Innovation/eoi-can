@@ -244,6 +244,8 @@ impl DisplayData {
                 GnssData::GnssLatitude(_) => {}
                 GnssData::GnssLongitude(_) => {}
             },
+            EoiCanData::RudderController(_) => {}
+            EoiCanData::HeightSensors(_) => {}
         }
     }
 
