@@ -246,6 +246,7 @@ impl DisplayData {
             },
             EoiCanData::RudderController(_) => {}
             EoiCanData::HeightSensors(_) => {}
+            EoiCanData::GanMppt(_) => {}
         }
     }
 

@@ -15,6 +15,7 @@ pub enum EoiCanData {
     Gnss(GnssData),
     RudderController(RudderControllerData),
     HeightSensors(HeightSensorData),
+    GanMppt(GanMpptData),
 }
 
 #[derive(Debug, Serialize)]
@@ -173,19 +174,34 @@ pub enum ThrottleControlType {
     Unknown = 255,
 }
 
-#[derive(Debug, Serialize)]
-#[cfg_attr(feature = "defmt", derive(defmt::Format))]
-#[repr(u8)]
-pub enum MpptData {
-    Id0(MpptInfo) = 0,
-    Id1(MpptInfo) = 1,
-    Id2(MpptInfo) = 2,
-    Id3(MpptInfo) = 3,
-    Id4(MpptInfo) = 4,
-    Id5(MpptInfo) = 5,
-    Id6(MpptInfo) = 6,
-    Id7(MpptInfo) = 7,
+/// Generates a node-ID-dispatched enum with a `from_node_id` constructor.
+/// Produces variants `Id0`…`Id{N-1}`, each wrapping the inner type.
+/// This gives clean JSON like `{"Id3": { … }}` for MQTT telemetry.
+///
+/// Usage: `node_enum!(EnumName, InnerType, COUNT);`
+macro_rules! node_enum {
+    ($name:ident, $inner:ty, $count:literal) => {
+        seq_macro::seq!(N in 0..$count {
+            #[derive(Debug, Serialize)]
+            #[cfg_attr(feature = "defmt", derive(defmt::Format))]
+            #[repr(u8)]
+            pub enum $name {
+                #(Id~N($inner) = N,)*
+            }
+
+            impl $name {
+                pub(crate) fn from_node_id(id: u8, inner: $inner) -> Option<Self> {
+                    match id {
+                        #(N => Some(Self::Id~N(inner)),)*
+                        _ => None,
+                    }
+                }
+            }
+        });
+    };
 }
+
+node_enum!(MpptData, MpptInfo, 8);
 
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
@@ -237,6 +253,110 @@ pub struct MpptStatus {
     pub state: u8,
     pub pwm_enabled: bool,
     pub switch_on: bool,
+}
+
+// GaN MPPT decoder
+// CAN ID = (NodeID << 4) | PacketID, default NodeID = 64 (+ hardware offset 0-15)
+
+node_enum!(GanMpptData, GanMpptPacket, 16);
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GanMpptPacket {
+    Power(GanMpptPower),
+    Status(GanMpptStatus),
+    SweepData(GanMpptSweepData),
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GanMpptPower {
+    pub input_voltage: f32,
+    pub input_current: f32,
+    pub output_voltage: f32,
+    pub output_current: f32,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GanMpptStatus {
+    pub mode: GanPhaseMode,
+    pub fault: GanPhaseFault,
+    pub enabled: bool,
+    pub board_temp: i8,
+    pub heat_sink_temp: i8,
+}
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct GanMpptSweepData {
+    pub index: u8,
+    pub current: f32,
+    pub voltage: f32,
+}
+
+#[derive(Debug, Default, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GanPhaseMode {
+    #[default]
+    None = 0,
+    Civ = 1,
+    Cic = 2,
+    MinInputCurrent = 3,
+    Cov = 4,
+    Coc = 5,
+    TemperatureDerating = 6,
+    Fault = 7,
+    Unknown = 255,
+}
+
+impl From<u8> for GanPhaseMode {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::Civ,
+            2 => Self::Cic,
+            3 => Self::MinInputCurrent,
+            4 => Self::Cov,
+            5 => Self::Coc,
+            6 => Self::TemperatureDerating,
+            7 => Self::Fault,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Default, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum GanPhaseFault {
+    #[default]
+    Ok = 0,
+    ConfigError = 1,
+    InputOverVoltage = 2,
+    OutputOverVoltage = 3,
+    OutputOverCurrent = 4,
+    InputOverCurrent = 5,
+    InputUnderCurrent = 6,
+    PhaseOverCurrent = 7,
+    GeneralFault = 8,
+    Unknown = 255,
+}
+
+impl From<u8> for GanPhaseFault {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Ok,
+            1 => Self::ConfigError,
+            2 => Self::InputOverVoltage,
+            3 => Self::OutputOverVoltage,
+            4 => Self::OutputOverCurrent,
+            5 => Self::InputOverCurrent,
+            6 => Self::InputUnderCurrent,
+            7 => Self::PhaseOverCurrent,
+            8 => Self::GeneralFault,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -704,19 +824,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 _ => None,
             }?;
 
-            let mppt_data = match mppt_id {
-                0 => MpptData::Id0(mppt_info),
-                1 => MpptData::Id1(mppt_info),
-                2 => MpptData::Id2(mppt_info),
-                3 => MpptData::Id3(mppt_info),
-                4 => MpptData::Id4(mppt_info),
-                5 => MpptData::Id5(mppt_info),
-                6 => MpptData::Id6(mppt_info),
-                7 => MpptData::Id7(mppt_info),
-                _ => return None,
-            };
-
-            Some(EoiCanData::Mppt(mppt_data))
+            Some(EoiCanData::Mppt(MpptData::from_node_id(
+                mppt_id, mppt_info,
+            )?))
         }
 
         0x0909 => Some(EoiCanData::Vesc(VescData::StatusMessage1 {
@@ -751,6 +861,38 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x0309 => Some(EoiCanData::Throttle(ThrottleData::ToVescRpm(
             bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
+        0x400..=0x4FF => {
+            const GAN_MPPT_DEFAULT_NODE_ID: u8 = 64;
+            let node_id = (id >> 4) as u8 - GAN_MPPT_DEFAULT_NODE_ID;
+            let packet_id = (id & 0xF) as u8;
+
+            let packet = match packet_id {
+                0x00 => Some(GanMpptPacket::Power(GanMpptPower {
+                    input_voltage: bytes_be_to_i16(data.get(0..2)?)? as f32 / 100.0,
+                    input_current: bytes_be_to_i16(data.get(2..4)?)? as f32 / 2000.0,
+                    output_voltage: bytes_be_to_i16(data.get(4..6)?)? as f32 / 100.0,
+                    output_current: bytes_be_to_i16(data.get(6..8)?)? as f32 / 2000.0,
+                })),
+                0x01 => Some(GanMpptPacket::Status(GanMpptStatus {
+                    mode: (*data.first()?).into(),
+                    fault: (*data.get(1)?).into(),
+                    enabled: *data.get(2)? != 0,
+                    board_temp: *data.get(3)? as i8,
+                    heat_sink_temp: *data.get(4)? as i8,
+                })),
+                0x02 => Some(GanMpptPacket::SweepData(GanMpptSweepData {
+                    index: *data.first()?,
+                    current: bytes_be_to_i16(data.get(1..3)?)? as f32 / 2000.0,
+                    voltage: bytes_be_to_i16(data.get(3..5)?)? as f32 / 100.0,
+                })),
+                _ => None,
+            }?;
+
+            Some(EoiCanData::GanMppt(GanMpptData::from_node_id(
+                node_id, packet,
+            )?))
+        }
+
         0x1337 | 0x0337 => match data.len() {
             8 => Some(EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
                 value: (bytes_be_to_i16(data.get(0..2)?)? as f32 / 512.0) * 100.0,
@@ -1085,5 +1227,88 @@ mod tests {
         };
         assert!(status.state == HeightSensorState::Operational);
         assert!(status.value == 300);
+    // GaN MPPT tests
+    // Default node ID = 64 (0x40), CAN ID = (NodeID << 4) | PacketID
+    // Node 0 (hardware offset 0): base CAN ID = 0x400
+
+    #[test]
+    fn gan_mppt_power() {
+        // Input voltage: 18.00 V -> raw = 1800 = 0x0708
+        // Input current: 3.5 A  -> raw = 7000 = 0x1B58
+        // Output voltage: 48.00 V -> raw = 4800 = 0x12C0
+        // Output current: 1.5 A  -> raw = 3000 = 0x0BB8
+        let raw: u64 = 0x07081B5812C00BB8;
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x400).unwrap()),
+            &raw.to_be_bytes(),
+        );
+
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let data = if let EoiCanData::GanMppt(GanMpptData::Id0(GanMpptPacket::Power(data))) = data {
+            data
+        } else {
+            panic!("Unexpected data type");
+        };
+        assert!((data.input_voltage - 18.00).abs() < 0.01);
+        assert!((data.input_current - 3.5).abs() < 0.001);
+        assert!((data.output_voltage - 48.00).abs() < 0.01);
+        assert!((data.output_current - 1.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn gan_mppt_status() {
+        // Mode=1 (CIV), Fault=0 (OK), Enabled=1, BoardTemp=25, HeatSinkTemp=40
+        let raw: [u8; 5] = [0x01, 0x00, 0x01, 25, 40];
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x401).unwrap()),
+            &raw,
+        );
+
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let data = if let EoiCanData::GanMppt(GanMpptData::Id0(GanMpptPacket::Status(data))) = data
+        {
+            data
+        } else {
+            panic!("Unexpected data type");
+        };
+        assert!(matches!(data.mode, GanPhaseMode::Civ));
+        assert!(matches!(data.fault, GanPhaseFault::Ok));
+        assert!(data.enabled);
+        assert!(data.board_temp == 25);
+        assert!(data.heat_sink_temp == 40);
+    }
+
+    #[test]
+    fn gan_mppt_sweep_data() {
+        // Index=5, Current=2.0 A -> raw=4000=0x0FA0, Voltage=20.00 V -> raw=2000=0x07D0
+        let raw: [u8; 5] = [0x05, 0x0F, 0xA0, 0x07, 0xD0];
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x402).unwrap()),
+            &raw,
+        );
+
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let data =
+            if let EoiCanData::GanMppt(GanMpptData::Id0(GanMpptPacket::SweepData(data))) = data {
+                data
+            } else {
+                panic!("Unexpected data type");
+            };
+        assert!(data.index == 5);
+        assert!((data.current - 2.0).abs() < 0.001);
+        assert!((data.voltage - 20.00).abs() < 0.01);
+    }
+
+    #[test]
+    fn gan_mppt_node_id_offset() {
+        // Hardware offset 3: node_id = 64+3 = 67, CAN ID = (67 << 4) | 0 = 0x430
+        let raw: u64 = 0x07081B5812C00BB8;
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x430).unwrap()),
+            &raw.to_be_bytes(),
+        );
+
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        assert!(matches!(data, EoiCanData::GanMppt(GanMpptData::Id3(_))));
     }
 }
