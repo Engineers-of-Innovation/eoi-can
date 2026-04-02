@@ -15,13 +15,15 @@ use embassy_stm32::{
         Can, CanRx, CanTx, Fifo, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler,
         TxInterruptHandler, filter::Mask32,
     },
-    gpio::{Level, Output, Speed},
+    gpio::{Input, Level, Output, Pull, Speed},
     i2c::{self, Master},
     mode::Async,
-    peripherals::{CAN1, I2C2},
+    peripherals::{CAN1, I2C2, USART2},
+    usart,
 };
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer, with_timeout};
+use rmodbus::{client::ModbusRequest, ModbusProto};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -61,6 +63,7 @@ bind_interrupts!(struct Irqs {
     CAN1_SCE => SceInterruptHandler<CAN1>;
     I2C2_EV  => i2c::EventInterruptHandler<I2C2>;
     I2C2_ER  => i2c::ErrorInterruptHandler<I2C2>;
+    USART2   => usart::InterruptHandler<USART2>;
 });
 
 static CAN_TX: StaticCell<Mutex<NoopRawMutex, CanTx<'static>>> = StaticCell::new();
@@ -147,6 +150,99 @@ async fn temperature_task(
     }
 }
 
+#[repr(u8)]
+enum HeightSensorState {
+    NotPluggedIn = 0x00,
+    ModbusError = 0x01,
+    Operational = 0x02,
+    Unknown = 0xFF,
+}
+
+#[embassy_executor::task]
+async fn height_sensor_task(
+    mut uart: usart::Uart<'static, Async>,
+    detect: Input<'static>,
+    can_id: StandardId,
+    can_tx: &'static Mutex<NoopRawMutex, CanTx<'static>>,
+) {
+
+    loop {
+        let (state, height_mm) = if detect.is_high() {
+            info!("Height sensor: NotPluggedIn");
+            (HeightSensorState::NotPluggedIn, 0u16)
+        } else {
+            read_height_sensor(&mut uart).await
+        };
+
+        let height_le = height_mm.to_le_bytes();
+        let frame = Frame::new_data(
+            can_id,
+            &[state as u8, height_le[0], height_le[1]],
+        )
+        .unwrap();
+
+        // {
+        //     let mut tx = can_tx.lock().await;
+        //     match tx.try_write(&frame) {
+        //         Ok(_) => {}
+        //         Err(e) => trace!("CAN tx error: {}", e),
+        //     }
+        // }
+
+        Timer::after_secs(1).await;
+    }
+}
+
+async fn read_height_sensor(uart: &mut usart::Uart<'static, Async>) -> (HeightSensorState, u16) {
+    let mut mreq = ModbusRequest::new(0x01, ModbusProto::Rtu);
+    let mut request: heapless::Vec<u8, 256> = heapless::Vec::new();
+    if mreq.generate_get_holdings(0x0101, 1, &mut request).is_err() {
+        warn!("Height sensor: failed to build request");
+        return (HeightSensorState::ModbusError, 0);
+    }
+
+    if let Err(e) = uart.write(&request).await {
+        warn!("Height sensor TX error: {}", e);
+        return (HeightSensorState::ModbusError, 0);
+    }
+    uart.flush().await.ok();
+
+    let mut response_buf = [0u8; 32];
+    match with_timeout(
+        Duration::from_millis(500),
+        uart.read_until_idle(&mut response_buf),
+    )
+    .await
+    {
+        Ok(Ok(n)) => {
+            let mut result: heapless::Vec<u16, 16> = heapless::Vec::new();
+            match mreq.parse_u16(&response_buf[..n], &mut result) {
+                Ok(()) => {
+                    if let Some(&height_mm) = result.first() {
+                        info!("Height: {} mm", height_mm);
+                        (HeightSensorState::Operational, height_mm)
+                    } else {
+                        warn!("Height sensor: empty response");
+                        (HeightSensorState::ModbusError, 0)
+                    }
+                }
+                Err(_) => {
+                    warn!("Height sensor Modbus parse error");
+                    (HeightSensorState::ModbusError, 0)
+                }
+            }
+        }
+        Ok(Err(e)) => {
+            warn!("Height sensor RX error: {}", e);
+            (HeightSensorState::ModbusError, 0)
+        }
+        Err(_) => {
+            warn!("Height sensor response timeout");
+            (HeightSensorState::ModbusError, 0)
+        }
+    }
+}
+
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
@@ -182,4 +278,25 @@ async fn main(spawner: Spawner) {
     );
 
     spawner.spawn(unwrap!(temperature_task(i2c, can_tx)));
+
+    let mut uart_config = usart::Config::default();
+    uart_config.baudrate = 9600;
+    uart_config.parity = usart::Parity::ParityNone;
+    uart_config.stop_bits = usart::StopBits::STOP2;
+    uart_config.data_bits = usart::DataBits::DataBits8;
+
+    let uart = usart::Uart::new_with_de(
+        p.USART2,
+        p.PA3,      // RX
+        p.PA2,      // TX
+        Irqs,
+        p.PA1,      // DE (RS-485 direction)
+        p.DMA1_CH7, // TX DMA
+        p.DMA1_CH6, // RX DMA
+        uart_config,
+    )
+    .unwrap();
+
+    let height_detect = Input::new(p.PA0, Pull::Down);
+    spawner.spawn(unwrap!(height_sensor_task(uart, height_detect, StandardId::new(0x011).unwrap(), can_tx)));
 }
