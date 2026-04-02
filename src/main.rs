@@ -18,7 +18,7 @@ use embassy_stm32::{
     gpio::{Input, Level, Output, Pull, Speed},
     i2c::{self, Master},
     mode::Async,
-    peripherals::{CAN1, I2C2, USART2},
+    peripherals::{CAN1, I2C2, UART4, UART5, USART2, USART3},
     usart,
 };
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
@@ -64,7 +64,15 @@ bind_interrupts!(struct Irqs {
     I2C2_EV  => i2c::EventInterruptHandler<I2C2>;
     I2C2_ER  => i2c::ErrorInterruptHandler<I2C2>;
     USART2   => usart::InterruptHandler<USART2>;
+    USART3   => usart::InterruptHandler<USART3>;
+    UART4    => usart::InterruptHandler<UART4>;
+    UART5    => usart::InterruptHandler<UART5>;
 });
+
+const CAN_ID_HEIGHT_SENSOR_FRONT_LEFT: StandardId = unsafe { StandardId::new_unchecked(0x011) };
+const CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT: StandardId = unsafe { StandardId::new_unchecked(0x012) };
+const CAN_ID_HEIGHT_SENSOR_RESERVED1: StandardId = unsafe { StandardId::new_unchecked(0x013) };
+const CAN_ID_HEIGHT_SENSOR_RESERVED2: StandardId = unsafe { StandardId::new_unchecked(0x014) };
 
 static CAN_TX: StaticCell<Mutex<NoopRawMutex, CanTx<'static>>> = StaticCell::new();
 
@@ -158,7 +166,7 @@ enum HeightSensorState {
     Unknown = 0xFF,
 }
 
-#[embassy_executor::task]
+#[embassy_executor::task(pool_size = 4)]
 async fn height_sensor_task(
     mut uart: usart::Uart<'static, Async>,
     detect: Input<'static>,
@@ -297,6 +305,52 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
 
+    // HeightSensorFrontLeft — USART2
     let height_detect = Input::new(p.PA0, Pull::Down);
-    spawner.spawn(unwrap!(height_sensor_task(uart, height_detect, StandardId::new(0x011).unwrap(), can_tx)));
+    spawner.spawn(unwrap!(height_sensor_task(uart, height_detect, CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, can_tx)));
+
+    // HeightSensorFrontRight — USART3
+    let uart3 = usart::Uart::new_with_de(
+        p.USART3,
+        p.PC5,      // RX
+        p.PC4,      // TX
+        Irqs,
+        p.PB1,      // DE (RS-485 direction)
+        p.DMA1_CH2, // TX DMA
+        p.DMA1_CH3, // RX DMA
+        uart_config,
+    )
+    .unwrap();
+    let height_detect3 = Input::new(p.PB2, Pull::Down);
+    spawner.spawn(unwrap!(height_sensor_task(uart3, height_detect3, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT, can_tx)));
+
+    // HeightSensorReserved1 — UART4
+    let uart4 = usart::Uart::new_with_de(
+        p.UART4,
+        p.PC11,     // RX
+        p.PC10,     // TX
+        Irqs,
+        p.PA15,     // DE (RS-485 direction)
+        p.DMA2_CH3, // TX DMA
+        p.DMA2_CH5, // RX DMA
+        uart_config,
+    )
+    .unwrap();
+    let height_detect4 = Input::new(p.PA12, Pull::Down);
+    spawner.spawn(unwrap!(height_sensor_task(uart4, height_detect4, CAN_ID_HEIGHT_SENSOR_RESERVED1, can_tx)));
+
+    // HeightSensorReserved2 — UART5
+    let uart5 = usart::Uart::new_with_de(
+        p.UART5,
+        p.PD2,      // RX
+        p.PC12,     // TX
+        Irqs,
+        p.PB4,      // DE (RS-485 direction)
+        p.DMA2_CH1, // TX DMA
+        p.DMA2_CH2, // RX DMA
+        uart_config,
+    )
+    .unwrap();
+    let height_detect5 = Input::new(p.PB5, Pull::Down);
+    spawner.spawn(unwrap!(height_sensor_task(uart5, height_detect5, CAN_ID_HEIGHT_SENSOR_RESERVED2, can_tx)));
 }
