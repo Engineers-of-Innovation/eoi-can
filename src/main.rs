@@ -23,7 +23,7 @@ use embassy_stm32::{
 };
 use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer, with_timeout};
-use rmodbus::{client::ModbusRequest, ModbusProto};
+use rmodbus::{ModbusProto, client::ModbusRequest};
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -73,6 +73,7 @@ const CAN_ID_HEIGHT_SENSOR_FRONT_LEFT: StandardId = unsafe { StandardId::new_unc
 const CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT: StandardId = unsafe { StandardId::new_unchecked(0x012) };
 const CAN_ID_HEIGHT_SENSOR_RESERVED1: StandardId = unsafe { StandardId::new_unchecked(0x013) };
 const CAN_ID_HEIGHT_SENSOR_RESERVED2: StandardId = unsafe { StandardId::new_unchecked(0x014) };
+const CAN_ID_TEMPERATURE: StandardId = unsafe { StandardId::new_unchecked(0x800) };
 
 static CAN_TX: StaticCell<Mutex<NoopRawMutex, CanTx<'static>>> = StaticCell::new();
 
@@ -88,7 +89,7 @@ async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
 async fn can_rx_task(mut rx: CanRx<'static>) {
     loop {
         match rx.read().await {
-            Ok(envelope) => info!("CAN rx: {:02x}", envelope.frame.data()),
+            Ok(envelope) => trace!("CAN rx: {:02x}", envelope.frame.data()),
             Err(e) => trace!("CAN rx error: {}", e),
         }
     }
@@ -97,6 +98,7 @@ async fn can_rx_task(mut rx: CanRx<'static>) {
 #[embassy_executor::task]
 async fn temperature_task(
     mut i2c: i2c::I2c<'static, Async, Master>,
+    can_id: StandardId,
     can_tx: &'static Mutex<NoopRawMutex, CanTx<'static>>,
 ) {
     const ADDR: u8 = 0x3F;
@@ -143,16 +145,11 @@ async fn temperature_task(
             (temp_raw % 100).abs()
         );
 
-        let frame =
-            Frame::new_data(StandardId::new(0x100).unwrap(), &temp_raw.to_be_bytes()).unwrap();
-
-        // {
-        //     let mut tx = can_tx.lock().await;
-        //     match tx.try_write(&frame) {
-        //         Ok(_) => {}
-        //         Err(e) => trace!("CAN tx error: {}", e),
-        //     }
-        // }
+        let frame = Frame::new_data(can_id, &temp_raw.to_be_bytes()).unwrap();
+        {
+            let mut tx = can_tx.lock().await;
+            tx.write(&frame).await;
+        }
 
         Timer::after_secs(1).await;
     }
@@ -173,7 +170,6 @@ async fn height_sensor_task(
     can_id: StandardId,
     can_tx: &'static Mutex<NoopRawMutex, CanTx<'static>>,
 ) {
-
     loop {
         let (state, height_mm) = if detect.is_high() {
             info!("Height sensor: NotPluggedIn");
@@ -183,19 +179,12 @@ async fn height_sensor_task(
         };
 
         let height_le = height_mm.to_le_bytes();
-        let frame = Frame::new_data(
-            can_id,
-            &[state as u8, height_le[0], height_le[1]],
-        )
-        .unwrap();
+        let frame = Frame::new_data(can_id, &[state as u8, height_le[0], height_le[1]]).unwrap();
 
-        // {
-        //     let mut tx = can_tx.lock().await;
-        //     match tx.try_write(&frame) {
-        //         Ok(_) => {}
-        //         Err(e) => trace!("CAN tx error: {}", e),
-        //     }
-        // }
+        {
+            let mut tx = can_tx.lock().await;
+            tx.write(&frame).await;
+        }
 
         Timer::after_secs(1).await;
     }
@@ -285,7 +274,7 @@ async fn main(spawner: Spawner) {
         Default::default(),
     );
 
-    spawner.spawn(unwrap!(temperature_task(i2c, can_tx)));
+    spawner.spawn(unwrap!(temperature_task(i2c, CAN_ID_TEMPERATURE, can_tx)));
 
     let mut uart_config = usart::Config::default();
     uart_config.baudrate = 9600;
@@ -295,8 +284,8 @@ async fn main(spawner: Spawner) {
 
     let uart = usart::Uart::new_with_de(
         p.USART2,
-        p.PA3,      // RX
-        p.PA2,      // TX
+        p.PA3, // RX
+        p.PA2, // TX
         Irqs,
         p.PA1,      // DE (RS-485 direction)
         p.DMA1_CH7, // TX DMA
@@ -307,13 +296,18 @@ async fn main(spawner: Spawner) {
 
     // HeightSensorFrontLeft — USART2
     let height_detect = Input::new(p.PA0, Pull::Down);
-    spawner.spawn(unwrap!(height_sensor_task(uart, height_detect, CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, can_tx)));
+    spawner.spawn(unwrap!(height_sensor_task(
+        uart,
+        height_detect,
+        CAN_ID_HEIGHT_SENSOR_FRONT_LEFT,
+        can_tx
+    )));
 
     // HeightSensorFrontRight — USART3
     let uart3 = usart::Uart::new_with_de(
         p.USART3,
-        p.PC5,      // RX
-        p.PC4,      // TX
+        p.PC5, // RX
+        p.PC4, // TX
         Irqs,
         p.PB1,      // DE (RS-485 direction)
         p.DMA1_CH2, // TX DMA
@@ -322,13 +316,18 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
     let height_detect3 = Input::new(p.PB2, Pull::Down);
-    spawner.spawn(unwrap!(height_sensor_task(uart3, height_detect3, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT, can_tx)));
+    spawner.spawn(unwrap!(height_sensor_task(
+        uart3,
+        height_detect3,
+        CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
+        can_tx
+    )));
 
     // HeightSensorReserved1 — UART4
     let uart4 = usart::Uart::new_with_de(
         p.UART4,
-        p.PC11,     // RX
-        p.PC10,     // TX
+        p.PC11, // RX
+        p.PC10, // TX
         Irqs,
         p.PA15,     // DE (RS-485 direction)
         p.DMA2_CH3, // TX DMA
@@ -337,13 +336,18 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
     let height_detect4 = Input::new(p.PA12, Pull::Down);
-    spawner.spawn(unwrap!(height_sensor_task(uart4, height_detect4, CAN_ID_HEIGHT_SENSOR_RESERVED1, can_tx)));
+    spawner.spawn(unwrap!(height_sensor_task(
+        uart4,
+        height_detect4,
+        CAN_ID_HEIGHT_SENSOR_RESERVED1,
+        can_tx
+    )));
 
     // HeightSensorReserved2 — UART5
     let uart5 = usart::Uart::new_with_de(
         p.UART5,
-        p.PD2,      // RX
-        p.PC12,     // TX
+        p.PD2,  // RX
+        p.PC12, // TX
         Irqs,
         p.PB4,      // DE (RS-485 direction)
         p.DMA2_CH1, // TX DMA
@@ -352,5 +356,10 @@ async fn main(spawner: Spawner) {
     )
     .unwrap();
     let height_detect5 = Input::new(p.PB5, Pull::Down);
-    spawner.spawn(unwrap!(height_sensor_task(uart5, height_detect5, CAN_ID_HEIGHT_SENSOR_RESERVED2, can_tx)));
+    spawner.spawn(unwrap!(height_sensor_task(
+        uart5,
+        height_detect5,
+        CAN_ID_HEIGHT_SENSOR_RESERVED2,
+        can_tx
+    )));
 }
