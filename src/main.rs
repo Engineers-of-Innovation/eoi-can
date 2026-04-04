@@ -12,16 +12,16 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::{
     bind_interrupts,
     can::{
-        Can, CanRx, CanTx, Fifo, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler,
-        TxInterruptHandler, filter::Mask32,
+        BufferedCanReceiver, BufferedCanSender, Can, Fifo, Rx0InterruptHandler,
+        Rx1InterruptHandler, RxBuf, SceInterruptHandler, TxBuf, TxInterruptHandler, filter::Mask32,
     },
+    dma,
     gpio::{Input, Level, Output, Pull, Speed},
     i2c::{self, Master},
     mode::Async,
-    peripherals::{CAN1, I2C2, UART4, UART5, USART2, USART3},
+    peripherals::{self, CAN1, I2C2, UART4, UART5, USART2, USART3},
     usart,
 };
-use embassy_sync::{blocking_mutex::raw::NoopRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer, with_timeout};
 use rmodbus::{ModbusProto, client::ModbusRequest};
 use static_cell::StaticCell;
@@ -67,6 +67,16 @@ bind_interrupts!(struct Irqs {
     USART3   => usart::InterruptHandler<USART3>;
     UART4    => usart::InterruptHandler<UART4>;
     UART5    => usart::InterruptHandler<UART5>;
+    DMA1_CHANNEL2 => dma::InterruptHandler<peripherals::DMA1_CH2>;
+    DMA1_CHANNEL3 => dma::InterruptHandler<peripherals::DMA1_CH3>;
+    DMA1_CHANNEL4 => dma::InterruptHandler<peripherals::DMA1_CH4>;
+    DMA1_CHANNEL5 => dma::InterruptHandler<peripherals::DMA1_CH5>;
+    DMA1_CHANNEL6 => dma::InterruptHandler<peripherals::DMA1_CH6>;
+    DMA1_CHANNEL7 => dma::InterruptHandler<peripherals::DMA1_CH7>;
+    DMA2_CHANNEL1 => dma::InterruptHandler<peripherals::DMA2_CH1>;
+    DMA2_CHANNEL2 => dma::InterruptHandler<peripherals::DMA2_CH2>;
+    DMA2_CHANNEL3 => dma::InterruptHandler<peripherals::DMA2_CH3>;
+    DMA2_CHANNEL5 => dma::InterruptHandler<peripherals::DMA2_CH5>;
 });
 
 const CAN_ID_HEIGHT_SENSOR_FRONT_LEFT: StandardId = unsafe { StandardId::new_unchecked(0x011) };
@@ -75,7 +85,8 @@ const CAN_ID_HEIGHT_SENSOR_RESERVED1: StandardId = unsafe { StandardId::new_unch
 const CAN_ID_HEIGHT_SENSOR_RESERVED2: StandardId = unsafe { StandardId::new_unchecked(0x014) };
 const CAN_ID_TEMPERATURE: StandardId = unsafe { StandardId::new_unchecked(0x800) };
 
-static CAN_TX: StaticCell<Mutex<NoopRawMutex, CanTx<'static>>> = StaticCell::new();
+static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
+static RX_BUF: StaticCell<RxBuf<8>> = StaticCell::new();
 
 #[embassy_executor::task]
 async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
@@ -86,11 +97,11 @@ async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
 }
 
 #[embassy_executor::task]
-async fn can_rx_task(mut rx: CanRx<'static>) {
+async fn can_rx_task(rx: BufferedCanReceiver) {
     loop {
-        match rx.read().await {
-            Ok(envelope) => trace!("CAN rx: {:02x}", envelope.frame.data()),
-            Err(e) => trace!("CAN rx error: {}", e),
+        match rx.receive().await {
+            Ok(envelope) => info!("CAN rx: {:02x}", envelope.frame.data()),
+            Err(e) => warn!("CAN rx error: {}", e),
         }
     }
 }
@@ -99,7 +110,7 @@ async fn can_rx_task(mut rx: CanRx<'static>) {
 async fn temperature_task(
     mut i2c: i2c::I2c<'static, Async, Master>,
     can_id: StandardId,
-    can_tx: &'static Mutex<NoopRawMutex, CanTx<'static>>,
+    mut can_tx: BufferedCanSender,
 ) {
     const ADDR: u8 = 0x3F;
     const REG_SOFT_RESET: u8 = 0x0C;
@@ -146,11 +157,10 @@ async fn temperature_task(
         );
 
         let frame = Frame::new_data(can_id, &temp_raw.to_be_bytes()).unwrap();
-        {
-            let mut tx = can_tx.lock().await;
-            tx.write(&frame).await;
+        match can_tx.try_write(frame) {
+            Ok(()) => {}
+            Err(e) => warn!("Height sensor CAN tx error: {}", e),
         }
-
         Timer::after_secs(1).await;
     }
 }
@@ -168,7 +178,7 @@ async fn height_sensor_task(
     mut uart: usart::Uart<'static, Async>,
     detect: Input<'static>,
     can_id: StandardId,
-    can_tx: &'static Mutex<NoopRawMutex, CanTx<'static>>,
+    mut can_tx: BufferedCanSender,
 ) {
     loop {
         let (state, height_mm) = if detect.is_high() {
@@ -180,10 +190,9 @@ async fn height_sensor_task(
 
         let height_le = height_mm.to_le_bytes();
         let frame = Frame::new_data(can_id, &[state as u8, height_le[0], height_le[1]]).unwrap();
-
-        {
-            let mut tx = can_tx.lock().await;
-            tx.write(&frame).await;
+        match can_tx.try_write(frame) {
+            Ok(()) => {}
+            Err(e) => warn!("Height sensor CAN tx error: {}", e),
         }
 
         Timer::after_secs(1).await;
@@ -257,24 +266,28 @@ async fn main(spawner: Spawner) {
     can.modify_config().set_bitrate(1_000_000);
     can.enable().await;
 
-    let (tx, rx) = can.split();
-    let can_tx = CAN_TX.init(Mutex::new(tx));
+    let buffered = can.buffered(
+        TX_BUF.init(embassy_stm32::can::TxBuf::new()),
+        RX_BUF.init(embassy_stm32::can::RxBuf::new()),
+    );
 
-    core::mem::forget(can); // keep the CAN peripheral alive so it doesn't get deinitialized
-
-    spawner.spawn(unwrap!(can_rx_task(rx)));
+    spawner.spawn(unwrap!(can_rx_task(buffered.reader())));
 
     let i2c = i2c::I2c::new(
         p.I2C2,
         p.PB10, // SCL
         p.PB11, // SDA
-        Irqs,
         p.DMA1_CH4,
         p.DMA1_CH5,
+        Irqs,
         Default::default(),
     );
 
-    spawner.spawn(unwrap!(temperature_task(i2c, CAN_ID_TEMPERATURE, can_tx)));
+    spawner.spawn(unwrap!(temperature_task(
+        i2c,
+        CAN_ID_TEMPERATURE,
+        buffered.writer()
+    )));
 
     let mut uart_config = usart::Config::default();
     uart_config.baudrate = 9600;
@@ -284,12 +297,12 @@ async fn main(spawner: Spawner) {
 
     let uart = usart::Uart::new_with_de(
         p.USART2,
-        p.PA3, // RX
-        p.PA2, // TX
-        Irqs,
+        p.PA3,      // RX
+        p.PA2,      // TX
         p.PA1,      // DE (RS-485 direction)
         p.DMA1_CH7, // TX DMA
         p.DMA1_CH6, // RX DMA
+        Irqs,
         uart_config,
     )
     .unwrap();
@@ -300,18 +313,18 @@ async fn main(spawner: Spawner) {
         uart,
         height_detect,
         CAN_ID_HEIGHT_SENSOR_FRONT_LEFT,
-        can_tx
+        buffered.writer()
     )));
 
     // HeightSensorFrontRight — USART3
     let uart3 = usart::Uart::new_with_de(
         p.USART3,
-        p.PC5, // RX
-        p.PC4, // TX
-        Irqs,
+        p.PC5,      // RX
+        p.PC4,      // TX
         p.PB1,      // DE (RS-485 direction)
         p.DMA1_CH2, // TX DMA
         p.DMA1_CH3, // RX DMA
+        Irqs,
         uart_config,
     )
     .unwrap();
@@ -320,18 +333,18 @@ async fn main(spawner: Spawner) {
         uart3,
         height_detect3,
         CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
-        can_tx
+        buffered.writer()
     )));
 
     // HeightSensorReserved1 — UART4
     let uart4 = usart::Uart::new_with_de(
         p.UART4,
-        p.PC11, // RX
-        p.PC10, // TX
-        Irqs,
+        p.PC11,     // RX
+        p.PC10,     // TX
         p.PA15,     // DE (RS-485 direction)
         p.DMA2_CH3, // TX DMA
         p.DMA2_CH5, // RX DMA
+        Irqs,
         uart_config,
     )
     .unwrap();
@@ -340,18 +353,18 @@ async fn main(spawner: Spawner) {
         uart4,
         height_detect4,
         CAN_ID_HEIGHT_SENSOR_RESERVED1,
-        can_tx
+        buffered.writer()
     )));
 
     // HeightSensorReserved2 — UART5
     let uart5 = usart::Uart::new_with_de(
         p.UART5,
-        p.PD2,  // RX
-        p.PC12, // TX
-        Irqs,
+        p.PD2,      // RX
+        p.PC12,     // TX
         p.PB4,      // DE (RS-485 direction)
         p.DMA2_CH1, // TX DMA
         p.DMA2_CH2, // RX DMA
+        Irqs,
         uart_config,
     )
     .unwrap();
@@ -360,6 +373,6 @@ async fn main(spawner: Spawner) {
         uart5,
         height_detect5,
         CAN_ID_HEIGHT_SENSOR_RESERVED2,
-        can_tx
+        buffered.writer()
     )));
 }
