@@ -16,6 +16,7 @@ pub enum EoiCanData {
     RudderController(RudderControllerData),
     HeightSensors(HeightSensorData),
     GanMppt(GanMpptData),
+    Temperature(TemperatureData),
 }
 
 #[derive(Debug, Serialize)]
@@ -636,6 +637,15 @@ impl From<u8> for HeightSensorState {
     }
 }
 
+// --- Temperature Sensors ---
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum TemperatureData {
+    HeightSensorsController(i16),
+    RudderController(i16),
+}
+
 pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData> {
     let id = match can_frame.id {
         embedded_can::Id::Standard(id) => id.as_raw() as u32,
@@ -685,6 +695,12 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 setpoint: bytes_le_to_u16(data.get(1..3)?)?,
             }),
         ))),
+        0x210 => Some(EoiCanData::Temperature(
+            TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
+        )),
+        0x211 => Some(EoiCanData::Temperature(
+            TemperatureData::RudderController(bytes_le_to_i16(data.get(0..2)?)?),
+        )),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -1227,6 +1243,8 @@ mod tests {
         };
         assert!(status.state == HeightSensorState::Operational);
         assert!(status.value == 300);
+    }
+
     // GaN MPPT tests
     // Default node ID = 64 (0x40), CAN ID = (NodeID << 4) | PacketID
     // Node 0 (hardware offset 0): base CAN ID = 0x400
