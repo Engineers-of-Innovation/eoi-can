@@ -15,7 +15,16 @@ defmt = "0.3.10"
 defmt-rtt = "0.4"
 tmc2209 = "0.2.2"
 nb = "1.1.0"
-embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["defmt"] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "defmt" ] }
 static_cell = "2.1.1"
-rmodbus = { version = "0.12", default-features = false, features = ["heapless"] }
+rmodbus = { version = "0.12", default-features = false, features = [ "heapless" ] }
 heapless = "0.9"
+
+[profile.release]
+lto = true
+debug = true
+opt-level = "z"
+
+[profile.dev]
+opt-level = "z"
+lto = true
