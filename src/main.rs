@@ -83,7 +83,7 @@ const CAN_ID_HEIGHT_SENSOR_FRONT_LEFT: StandardId = unsafe { StandardId::new_unc
 const CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT: StandardId = unsafe { StandardId::new_unchecked(0x012) };
 const CAN_ID_HEIGHT_SENSOR_RESERVED1: StandardId = unsafe { StandardId::new_unchecked(0x013) };
 const CAN_ID_HEIGHT_SENSOR_RESERVED2: StandardId = unsafe { StandardId::new_unchecked(0x014) };
-const CAN_ID_TEMPERATURE: StandardId = unsafe { StandardId::new_unchecked(0x800) };
+const CAN_ID_TEMPERATURE: StandardId = unsafe { StandardId::new_unchecked(0x210) };
 
 static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
 static RX_BUF: StaticCell<RxBuf<8>> = StaticCell::new();
@@ -101,7 +101,7 @@ async fn can_rx_task(rx: BufferedCanReceiver) {
     loop {
         match rx.receive().await {
             Ok(envelope) => info!("CAN rx: {:02x}", envelope.frame.data()),
-            Err(e) => warn!("CAN rx error: {}", e),
+            Err(e) => warn!("CAN rx error: {:?}", e),
         }
     }
 }
@@ -159,7 +159,7 @@ async fn temperature_task(
         let frame = Frame::new_data(can_id, &temp_raw.to_be_bytes()).unwrap();
         match can_tx.try_write(frame) {
             Ok(()) => {}
-            Err(e) => warn!("Height sensor CAN tx error: {}", e),
+            Err(e) => warn!("Temperature CAN tx error: {:?}", e),
         }
         Timer::after_secs(1).await;
     }
@@ -192,7 +192,7 @@ async fn height_sensor_task(
         let frame = Frame::new_data(can_id, &[state as u8, height_le[0], height_le[1]]).unwrap();
         match can_tx.try_write(frame) {
             Ok(()) => {}
-            Err(e) => warn!("Height sensor CAN tx error: {}", e),
+            Err(e) => warn!("Height sensor CAN tx error: {:?}", e),
         }
 
         Timer::after_secs(1).await;
@@ -270,6 +270,7 @@ async fn main(spawner: Spawner) {
         TX_BUF.init(embassy_stm32::can::TxBuf::new()),
         RX_BUF.init(embassy_stm32::can::RxBuf::new()),
     );
+    core::mem::forget(can); // Can::drop() resets peripheral back to sleep mode, this is a bug in embassy-stm32's CAN driver, so we have to forget it to keep it running
 
     spawner.spawn(unwrap!(can_rx_task(buffered.reader())));
 
