@@ -25,6 +25,7 @@ use embassy_time::Timer;
 use height_sensor::{
     CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
     CAN_ID_HEIGHT_SENSOR_RESERVED1, CAN_ID_HEIGHT_SENSOR_RESERVED2, height_sensor_task,
+    height_sensor_timer_task,
 };
 use static_cell::StaticCell;
 use temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
@@ -140,7 +141,8 @@ async fn main(spawner: Spawner) {
         uart,
         height_detect,
         CAN_ID_HEIGHT_SENSOR_FRONT_LEFT,
-        buffered.writer()
+        buffered.writer(),
+        0,
     )));
 
     // HeightSensorFrontRight — USART3
@@ -160,7 +162,8 @@ async fn main(spawner: Spawner) {
         uart3,
         height_detect3,
         CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
-        buffered.writer()
+        buffered.writer(),
+        1,
     )));
 
     // HeightSensorReserved1 — UART4
@@ -180,7 +183,8 @@ async fn main(spawner: Spawner) {
         uart4,
         height_detect4,
         CAN_ID_HEIGHT_SENSOR_RESERVED1,
-        buffered.writer()
+        buffered.writer(),
+        2,
     )));
 
     // HeightSensorReserved2 — UART5
@@ -200,6 +204,9 @@ async fn main(spawner: Spawner) {
         uart5,
         height_detect5,
         CAN_ID_HEIGHT_SENSOR_RESERVED2,
-        buffered.writer()
+        buffered.writer(),
+        3,
     )));
+
+    spawner.spawn(unwrap!(height_sensor_timer_task()));
 }
