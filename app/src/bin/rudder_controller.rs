@@ -11,6 +11,7 @@ use embassy_stm32::{
     i2c,
     peripherals::{self, CAN1, I2C2},
 };
+use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_time::Timer;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;
@@ -29,8 +30,13 @@ bind_interrupts!(struct Irqs {
 });
 
 #[embassy_executor::task]
-async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
+async fn heartbeat_task(
+    mut output: embassy_stm32::gpio::Output<'static>,
+    mut watchdog: IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+) {
+    watchdog.unleash();
     loop {
+        watchdog.pet();
         output.toggle();
         Timer::after_secs(1).await;
     }
@@ -42,7 +48,8 @@ async fn main(spawner: Spawner) {
     info!("Rudder Controller");
 
     let status_led = Output::new(p.PC1, Level::High, Speed::Low);
-    spawner.spawn(unwrap!(heartbeat_task(status_led)));
+    let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
+    spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
 
     let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
     let buffered = init_can(can, p.PB7).await;

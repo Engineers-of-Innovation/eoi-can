@@ -6,11 +6,10 @@ mod height_sensor;
 
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_stm32::{
     bind_interrupts,
-    can::{
-        Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler,
-    },
+    can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
     dma,
     gpio::{Input, Level, Output, Pull, Speed},
     i2c,
@@ -52,8 +51,13 @@ bind_interrupts!(struct Irqs {
 });
 
 #[embassy_executor::task]
-async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
+async fn heartbeat_task(
+    mut output: embassy_stm32::gpio::Output<'static>,
+    mut watchdog: IndependentWatchdog<'static, embassy_stm32::peripherals::IWDG>,
+) {
+    watchdog.unleash();
     loop {
+        watchdog.pet();
         output.toggle();
         Timer::after_secs(1).await;
     }
@@ -65,7 +69,8 @@ async fn main(spawner: Spawner) {
     info!("Height Sensor Controller");
 
     let status_led = Output::new(p.PC1, Level::High, Speed::Low);
-    spawner.spawn(unwrap!(heartbeat_task(status_led)));
+    let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
+    spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
 
     let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
     let buffered = init_can(can, p.PB7).await;
