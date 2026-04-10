@@ -1,7 +1,15 @@
 [package]
-name = "staartstuk-controller"
+name = "eoi-rust-firmware"
 version = "0.1.0"
 edition = "2024"
+
+[[bin]]
+name = "height-sensor-controller"
+path = "src/bin/height_sensor_controller.rs"
+
+[[bin]]
+name = "rudder-controller"
+path = "src/bin/rudder_controller.rs"
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "platform-cortex-m", "executor-thread", "defmt" ] }

@@ -1,19 +1,15 @@
 #![no_std]
 #![no_main]
 
-mod clock;
+#[path = "../height_sensor.rs"]
 mod height_sensor;
-mod temperature;
 
-use clock::clock_config;
 use defmt::*;
 use embassy_executor::Spawner;
-use embassy_stm32::can::Fifo;
 use embassy_stm32::{
     bind_interrupts,
     can::{
-        BufferedCanReceiver, Can, Rx0InterruptHandler, Rx1InterruptHandler, RxBuf,
-        SceInterruptHandler, TxBuf, TxInterruptHandler, filter::Mask32,
+        Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler,
     },
     dma,
     gpio::{Input, Level, Output, Pull, Speed},
@@ -22,13 +18,14 @@ use embassy_stm32::{
     usart,
 };
 use embassy_time::Timer;
+use eoi_rust_firmware::can::{can_rx_task, init_can};
+use eoi_rust_firmware::clock::clock_config;
+use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
 use height_sensor::{
     CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
     CAN_ID_HEIGHT_SENSOR_RESERVED1, CAN_ID_HEIGHT_SENSOR_RESERVED2, height_sensor_task,
     height_sensor_timer_task,
 };
-use static_cell::StaticCell;
-use temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
 use {defmt_rtt as _, panic_probe as _};
 
 bind_interrupts!(struct Irqs {
@@ -54,9 +51,6 @@ bind_interrupts!(struct Irqs {
     DMA2_CHANNEL5 => dma::InterruptHandler<peripherals::DMA2_CH5>;
 });
 
-static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
-static RX_BUF: StaticCell<RxBuf<8>> = StaticCell::new();
-
 #[embassy_executor::task]
 async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
     loop {
@@ -65,39 +59,16 @@ async fn heartbeat_task(mut output: embassy_stm32::gpio::Output<'static>) {
     }
 }
 
-#[embassy_executor::task]
-async fn can_rx_task(rx: BufferedCanReceiver) {
-    loop {
-        match rx.receive().await {
-            Ok(envelope) => info!("CAN rx: {:02x}", envelope.frame.data()),
-            Err(e) => warn!("CAN rx error: {:?}", e),
-        }
-    }
-}
-
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
-    info!("Hello World!");
+    info!("Height Sensor Controller");
 
     let status_led = Output::new(p.PC1, Level::High, Speed::Low);
     spawner.spawn(unwrap!(heartbeat_task(status_led)));
 
-    let can_standby = Output::new(p.PB7, Level::Low, Speed::Low);
-    core::mem::forget(can_standby); // keep the pin alive so it doesn't get deinitialized and go into standby mode
-
-    let mut can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
-    can.modify_filters()
-        .enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
-    can.modify_config().set_bitrate(1_000_000);
-    can.enable().await;
-
-    let buffered = can.buffered(
-        TX_BUF.init(embassy_stm32::can::TxBuf::new()),
-        RX_BUF.init(embassy_stm32::can::RxBuf::new()),
-    );
-    // Can::drop() resets peripheral back to sleep mode, this is a bug in embassy-stm32's CAN driver, so we have to forget it to keep it running
-    core::mem::forget(can);
+    let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
+    let buffered = init_can(can, p.PB7).await;
 
     spawner.spawn(unwrap!(can_rx_task(buffered.reader())));
 
