@@ -12,6 +12,9 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x012 | HeightSensorFrontRight | Height Sensors |
 | 0x013 | HeightSensor (placement TBD) | Height Sensors |
 | 0x014 | HeightSensor (placement TBD) | Height Sensors |
+| 0x030 | BootloaderHostToDevice | Bootloader |
+| 0x031 | BootloaderDeviceToHost | Bootloader |
+| 0x032 | BootloaderWriteData | Bootloader |
 | 0x020 | ServoRudderStatus | Rudder Controller |
 | 0x021 | ServoRudderCommand | Rudder Controller |
 | 0x100 | PackAndPerriCurrent | Battery Management System |
@@ -63,6 +66,21 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | | | | 1–2 | Height value | u16 | LE | TBD (raw, unit undecided) |
 | HeightSensor (placement TBD) | 0x014 | 3 | 0 | State | u8 enum | | 0=NotPluggedIn, 1=ModbusError, 2=Operational, 0xFF=Unknown |
 | | | | 1–2 | Height value | u16 | LE | TBD (raw, unit undecided) |
+
+## Bootloader
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| BootloaderHostToDevice | 0x030 | 1 | 0 | Command | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot |
+| BootloaderDeviceToHost (GetState) | 0x031 | 2 | 0 | Message type | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x03=WriteAck, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot, 0xFF=Error |
+| | | | 1 | State | u8 enum | | 0=WaitingWithoutApp, 1=WaitingWithApp, 2=FlashingApp |
+| BootloaderDeviceToHost (WriteAck) | 0x031 | 5 | 0 | Message type | u8 | | 0x03 |
+| | | | 1–4 | Write offset | u32 | LE | Cumulative bytes written |
+| BootloaderDeviceToHost (ValidateApp) | 0x031 | 2 | 0 | Message type | u8 | | 0x04 |
+| | | | 1 | Result | u8 enum | | 0=Valid, 1=BadMagic, 2=BadLength, 3=BadCrc |
+| BootloaderDeviceToHost (Error) | 0x031 | 2 | 0 | Message type | u8 | | 0xFF |
+| | | | 1 | Error code | u8 enum | | 0x01=EraseFailure, 0x02=InvalidWriteLength, 0x03=FlashWriteFailure, 0x04=InvalidApp, 0x05=UnknownCommand |
+| BootloaderWriteData | 0x032 | 8 | 0–7 | Data | u8[8] | | Raw firmware data (8-byte aligned) |
 
 ## Battery Management System (BMS)
 

@@ -698,9 +698,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x210 => Some(EoiCanData::Temperature(
             TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
         )),
-        0x211 => Some(EoiCanData::Temperature(
-            TemperatureData::RudderController(bytes_le_to_i16(data.get(0..2)?)?),
-        )),
+        0x211 => Some(EoiCanData::Temperature(TemperatureData::RudderController(
+            bytes_le_to_i16(data.get(0..2)?)?,
+        ))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -1191,9 +1191,8 @@ mod tests {
             &[0x00], // Initialize
         );
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Command(
-            command,
-        ))) = data
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Command(command))) =
+            data
         else {
             panic!("Unexpected data type");
         };
@@ -1207,9 +1206,8 @@ mod tests {
             &[0x01, 0xD0, 0x07], // Operational, setpoint=2000 little-endian
         );
         let data = parse_eoi_can_data(&can_frame).unwrap();
-        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(
-            status,
-        ))) = data
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(status))) =
+            data
         else {
             panic!("Unexpected data type");
         };
