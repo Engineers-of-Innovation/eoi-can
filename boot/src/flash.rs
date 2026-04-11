@@ -7,7 +7,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
-use crate::header::HEADER_PARTITION_SIZE;
+use eoi_boot_api::header::HEADER_PARTITION_SIZE;
 
 pub struct FlashLayout<'a, M: RawMutex, T: NorFlash + ReadNorFlash> {
     flash: &'a Mutex<M, RefCell<T>>,

@@ -1,5 +1,6 @@
 [workspace]
-members = ["app", "boot"]
+resolver = "3"
+members = ["app", "boot", "boot-api"]
 exclude = ["flash-tool"]
 default-members = ["app"]
 

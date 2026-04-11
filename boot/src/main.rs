@@ -3,7 +3,6 @@
 
 mod bootloader;
 mod flash;
-mod header;
 
 use core::cell::RefCell;
 

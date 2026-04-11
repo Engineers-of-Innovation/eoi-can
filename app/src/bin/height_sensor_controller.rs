@@ -68,7 +68,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Height Sensor Controller");
 
-    let status_led = Output::new(p.PC1, Level::High, Speed::Low);
+    let status_led = Output::new(p.PC3, Level::High, Speed::Low);
     let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
     spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
 

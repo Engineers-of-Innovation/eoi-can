@@ -12,7 +12,8 @@ pub struct HeaderInfo {
     pub app_crc: u32,
 }
 
-#[derive(Debug, defmt::Format)]
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum HeaderError {
     BadMagic,
     BadVersion,
@@ -21,7 +22,8 @@ pub enum HeaderError {
     BadAppCrc,
 }
 
-#[derive(Debug, Clone, Copy, defmt::Format)]
+#[derive(Debug, Clone, Copy)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ValidationResult {
     Valid = 0,
@@ -75,4 +77,21 @@ impl HeaderInfo {
         }
         Ok(())
     }
+}
+
+/// Build a 2048-byte header for the given app.
+pub fn build_header(app_len: u32, app_crc: u32) -> [u8; HEADER_PARTITION_SIZE] {
+    let mut header = [0xFF_u8; HEADER_PARTITION_SIZE];
+    header[0..4].copy_from_slice(&HEADER_MAGIC);
+    header[4] = HEADER_VERSION;
+    header[5..9].copy_from_slice(&app_len.to_le_bytes());
+    header[9..13].copy_from_slice(&app_crc.to_le_bytes());
+    header
+}
+
+/// Compute CRC32-ISCSI over a byte slice.
+pub fn compute_crc(data: &[u8]) -> u32 {
+    let mut d = CRC.digest();
+    d.update(data);
+    d.finalize()
 }

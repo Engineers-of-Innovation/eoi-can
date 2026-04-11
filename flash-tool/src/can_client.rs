@@ -3,23 +3,7 @@ use can_socket::{CanFrame, CanId, StandardId};
 use std::time::Duration;
 use tokio::time::timeout;
 
-/// CAN IDs matching the bootloader protocol
-const CAN_ID_HOST_TO_DEVICE: u16 = 0x030;
-const CAN_ID_DEVICE_TO_HOST: u16 = 0x031;
-const CAN_ID_WRITE_DATA: u16 = 0x032;
-
-/// Message types (byte 0 of CAN command/response frames)
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum MsgType {
-    GetState = 0x01,
-    EraseApp = 0x02,
-    WriteAck = 0x03,
-    ValidateApp = 0x04,
-    BootApp = 0x05,
-    Reboot = 0x06,
-    Error = 0xFF,
-}
+use eoi_boot_api::protocol;
 
 // Timeouts
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
@@ -102,11 +86,11 @@ impl CanClient {
     /// Send a command frame and wait for a response with the expected type.
     async fn send_and_recv(
         &self,
-        msg: MsgType,
+        msg: u8,
         recv_timeout: Duration,
     ) -> Result<Vec<u8>, ClientError> {
-        let id = CanId::Standard(StandardId::new(CAN_ID_HOST_TO_DEVICE).unwrap());
-        let frame = make_frame(id, &[msg as u8]);
+        let id = CanId::Standard(StandardId::new(protocol::CAN_ID_HOST_TO_DEVICE).unwrap());
+        let frame = make_frame(id, &[msg]);
         self.socket.send(&frame).await.map_err(ClientError::Send)?;
         self.recv_expected(msg, recv_timeout).await
     }
@@ -114,7 +98,7 @@ impl CanClient {
     /// Wait for a response frame with the expected message type.
     async fn recv_expected(
         &self,
-        expected: MsgType,
+        expected: u8,
         recv_timeout: Duration,
     ) -> Result<Vec<u8>, ClientError> {
         let deadline = tokio::time::Instant::now() + recv_timeout;
@@ -133,7 +117,7 @@ impl CanClient {
                 Some(id) => id,
                 None => continue,
             };
-            if resp_std_id.as_u16() != CAN_ID_DEVICE_TO_HOST {
+            if resp_std_id.as_u16() != protocol::CAN_ID_DEVICE_TO_HOST {
                 continue;
             }
             // RTR frames have no data
@@ -145,11 +129,11 @@ impl CanClient {
                 continue;
             }
             // Check for error response
-            if resp_data[0] == MsgType::Error as u8 {
+            if resp_data[0] == protocol::msg::ERROR {
                 let code = if resp_data.len() > 1 { resp_data[1] } else { 0 };
                 return Err(ClientError::DeviceError(code));
             }
-            if resp_data[0] == expected as u8 {
+            if resp_data[0] == expected {
                 return Ok(resp_data.to_vec());
             }
             // Ignore other response types (e.g. state broadcasts)
@@ -158,14 +142,14 @@ impl CanClient {
 
     pub async fn get_state(&self) -> Result<BootloaderState, ClientError> {
         let resp = self
-            .send_and_recv(MsgType::GetState, READ_TIMEOUT)
+            .send_and_recv(protocol::msg::GET_STATE, READ_TIMEOUT)
             .await?;
         let state = resp.get(1).copied().unwrap_or(0);
         Ok(BootloaderState::from(state))
     }
 
     pub async fn erase_app(&self) -> Result<(), ClientError> {
-        self.send_and_recv(MsgType::EraseApp, ERASE_TIMEOUT)
+        self.send_and_recv(protocol::msg::ERASE_APP, ERASE_TIMEOUT)
             .await?;
         Ok(())
     }
@@ -182,13 +166,13 @@ impl CanClient {
             let chunk = &padded[offset..offset + 8];
 
             // Send on dedicated write data CAN ID — all 8 bytes are payload
-            let id = CanId::Standard(StandardId::new(CAN_ID_WRITE_DATA).unwrap());
+            let id = CanId::Standard(StandardId::new(protocol::CAN_ID_WRITE_DATA).unwrap());
             let frame = make_frame(id, chunk);
             self.socket.send(&frame).await.map_err(ClientError::Send)?;
 
             // Wait for write acknowledgment on the response channel
             let resp = self
-                .recv_expected(MsgType::WriteAck, WRITE_TIMEOUT)
+                .recv_expected(protocol::msg::WRITE_ACK, WRITE_TIMEOUT)
                 .await?;
 
             // Parse offset acknowledgment
@@ -218,20 +202,20 @@ impl CanClient {
 
     pub async fn validate_app(&self) -> Result<ValidationResult, ClientError> {
         let resp = self
-            .send_and_recv(MsgType::ValidateApp, READ_TIMEOUT)
+            .send_and_recv(protocol::msg::VALIDATE_APP, READ_TIMEOUT)
             .await?;
         let result = resp.get(1).copied().unwrap_or(0xFF);
         Ok(ValidationResult::from(result))
     }
 
     pub async fn boot_app(&self) -> Result<(), ClientError> {
-        self.send_and_recv(MsgType::BootApp, READ_TIMEOUT)
+        self.send_and_recv(protocol::msg::BOOT_APP, READ_TIMEOUT)
             .await?;
         Ok(())
     }
 
     pub async fn reboot(&self) -> Result<(), ClientError> {
-        self.send_and_recv(MsgType::Reboot, READ_TIMEOUT)
+        self.send_and_recv(protocol::msg::REBOOT, READ_TIMEOUT)
             .await?;
         Ok(())
     }

@@ -1,11 +1,5 @@
-use crc::{Crc, CRC_32_ISCSI};
+use eoi_boot_api::header;
 use std::path::Path;
-
-const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
-
-const HEADER_MAGIC: [u8; 4] = [0xB0, 0x07, 0xCA, 0xFE];
-const HEADER_VERSION: u8 = 1;
-const HEADER_PARTITION_SIZE: usize = 2048;
 
 /// Firmware image ready to be flashed (header + raw app binary).
 pub struct FirmwareImage {
@@ -39,20 +33,14 @@ impl FirmwareImage {
         let raw_image = extract_loadable_segments(&elf, input)?;
         log::info!("Raw firmware image: {} bytes", raw_image.len());
 
-        // Compute CRC32 of the raw image
-        let mut digest = CRC.digest();
-        digest.update(&raw_image);
-        let app_crc = digest.finalize();
+        // Compute CRC32 and build header
+        let app_crc = header::compute_crc(&raw_image);
+        let hdr = header::build_header(raw_image.len() as u32, app_crc);
 
-        // Build header
-        let mut blob = vec![0xFF_u8; HEADER_PARTITION_SIZE + raw_image.len()];
-        blob[0..4].copy_from_slice(&HEADER_MAGIC);
-        blob[4] = HEADER_VERSION;
-        blob[5..9].copy_from_slice(&(raw_image.len() as u32).to_le_bytes());
-        blob[9..13].copy_from_slice(&app_crc.to_le_bytes());
-
-        // Copy raw image after header
-        blob[HEADER_PARTITION_SIZE..].copy_from_slice(&raw_image);
+        // Combine header + raw image
+        let mut blob = Vec::with_capacity(header::HEADER_PARTITION_SIZE + raw_image.len());
+        blob.extend_from_slice(&hdr);
+        blob.extend_from_slice(&raw_image);
 
         Ok(Self {
             app_size: raw_image.len(),

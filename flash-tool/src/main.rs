@@ -85,10 +85,19 @@ async fn flash(
         firmware.data.len()
     );
 
-    // Check device state
+    // If app is running (no bootloader response), reboot into bootloader first
     log::info!("Reading device state...");
-    let state = client.get_state().await?;
-    log::info!("Device state: {}", state);
+    match client.get_state().await {
+        Ok(state) => log::info!("Device state: {}", state),
+        Err(_) => {
+            log::info!("No bootloader response, sending reboot command...");
+            // Send reboot — the app will reset, bootloader starts and waits 2s
+            let _ = client.reboot().await;
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            let state = client.get_state().await?;
+            log::info!("Device state after reboot: {}", state);
+        }
+    }
 
     // Erase
     log::info!("Erasing application...");

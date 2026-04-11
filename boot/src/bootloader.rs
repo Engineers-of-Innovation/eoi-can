@@ -6,40 +6,15 @@ use embassy_time::{Duration, Timer, with_timeout};
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
 use crate::flash::FlashLayout;
-use crate::header::{HeaderError, HeaderInfo, ValidationResult};
+use eoi_boot_api::header::{HeaderError, HeaderInfo, ValidationResult};
+use eoi_boot_api::protocol;
 
-// CAN IDs for bootloader protocol
-const CAN_ID_HOST_TO_DEVICE: StandardId = unsafe { StandardId::new_unchecked(0x030) };
-const CAN_ID_DEVICE_TO_HOST: StandardId = unsafe { StandardId::new_unchecked(0x031) };
-const CAN_ID_WRITE_DATA: StandardId = unsafe { StandardId::new_unchecked(0x032) };
-
-/// Message types (byte 0 of CAN command/response frames)
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
-#[repr(u8)]
-enum MsgType {
-    GetState = 0x01,
-    EraseApp = 0x02,
-    WriteAck = 0x03,
-    ValidateApp = 0x04,
-    BootApp = 0x05,
-    Reboot = 0x06,
-    Error = 0xFF,
-}
-
-impl MsgType {
-    fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0x01 => Some(Self::GetState),
-            0x02 => Some(Self::EraseApp),
-            0x03 => Some(Self::WriteAck),
-            0x04 => Some(Self::ValidateApp),
-            0x05 => Some(Self::BootApp),
-            0x06 => Some(Self::Reboot),
-            0xFF => Some(Self::Error),
-            _ => None,
-        }
-    }
-}
+const CAN_ID_HOST_TO_DEVICE: StandardId =
+    unsafe { StandardId::new_unchecked(protocol::CAN_ID_HOST_TO_DEVICE) };
+const CAN_ID_DEVICE_TO_HOST: StandardId =
+    unsafe { StandardId::new_unchecked(protocol::CAN_ID_DEVICE_TO_HOST) };
+const CAN_ID_WRITE_DATA: StandardId =
+    unsafe { StandardId::new_unchecked(protocol::CAN_ID_WRITE_DATA) };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
 #[repr(u8)]
@@ -137,22 +112,20 @@ where
     }
 
     async fn process_command(&mut self, cmd: u8) -> Result<(), u8> {
-        let Some(msg) = MsgType::from_u8(cmd) else {
-            return Err(0x05);
-        };
-        match msg {
-            MsgType::GetState => {
+        use protocol::msg;
+        match cmd {
+            msg::GET_STATE => {
                 self.send_state().await;
             }
-            MsgType::EraseApp => {
+            msg::ERASE_APP => {
                 info!("Erasing application");
                 self.flash.erase_header_and_app().await.map_err(|_| 0x01)?;
                 self.write_offset = 0;
                 self.state = BootloaderState::WaitingWithoutApp;
-                self.send_response(&[MsgType::EraseApp as u8]).await;
+                self.send_response(&[msg::ERASE_APP]).await;
                 info!("Erase complete");
             }
-            MsgType::ValidateApp => {
+            msg::VALIDATE_APP => {
                 let result = match validate_app(&self.flash) {
                     Ok(_) => {
                         self.state = BootloaderState::WaitingWithApp;
@@ -166,19 +139,19 @@ where
                     ) => ValidationResult::BadLength,
                     Err(HeaderError::BadAppCrc) => ValidationResult::BadCrc,
                 };
-                self.send_response(&[MsgType::ValidateApp as u8, result as u8])
+                self.send_response(&[msg::VALIDATE_APP, result as u8])
                     .await;
             }
-            MsgType::BootApp => {
+            msg::BOOT_APP => {
                 if validate_app(&self.flash).is_err() {
                     return Err(0x04);
                 }
-                self.send_response(&[MsgType::BootApp as u8]).await;
+                self.send_response(&[msg::BOOT_APP]).await;
                 Timer::after(Duration::from_millis(500)).await;
                 self.boot_app().await;
             }
-            MsgType::Reboot => {
-                self.send_response(&[MsgType::Reboot as u8]).await;
+            msg::REBOOT => {
+                self.send_response(&[msg::REBOOT]).await;
                 Timer::after(Duration::from_millis(500)).await;
                 cortex_m::peripheral::SCB::sys_reset();
             }
@@ -202,7 +175,7 @@ where
 
         let offset_bytes = (self.write_offset as u32).to_le_bytes();
         self.send_response(&[
-            MsgType::WriteAck as u8,
+            protocol::msg::WRITE_ACK,
             offset_bytes[0],
             offset_bytes[1],
             offset_bytes[2],
@@ -213,12 +186,12 @@ where
     }
 
     async fn send_state(&mut self) {
-        self.send_response(&[MsgType::GetState as u8, self.state as u8])
+        self.send_response(&[protocol::msg::GET_STATE, self.state as u8])
             .await;
     }
 
     async fn send_error(&mut self, code: u8) {
-        self.send_response(&[MsgType::Error as u8, code]).await;
+        self.send_response(&[protocol::msg::ERROR, code]).await;
     }
 
     async fn send_response(&mut self, data: &[u8]) {
