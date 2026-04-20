@@ -17,7 +17,8 @@ use embedded_graphics::{
 };
 use eoi_can_decoder::{
     BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData, GnssData, GnssDateTime,
-    MpptChannel, MpptInfo, ThrottleData, ThrottleErrors, VescData,
+    HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors,
+    VescData,
 };
 use heapless::String;
 use time::{Duration, Instant};
@@ -102,6 +103,10 @@ pub struct DisplayData {
     pub ip_address: DisplayValue<Ipv4Addr>,
     pub display_state_of_charge: DisplayValue<f32>,
     pub display_is_charging: DisplayValue<bool>,
+    pub height_sensor_front_left: DisplayValue<u16>,
+    pub height_sensor_front_right: DisplayValue<u16>,
+    pub temperature_height_sensors_controller: DisplayValue<i16>,
+    pub temperature_rudder_controller: DisplayValue<i16>,
 }
 
 impl DisplayData {
@@ -244,7 +249,25 @@ impl DisplayData {
                 GnssData::GnssLatitude(_) => {}
                 GnssData::GnssLongitude(_) => {}
             },
+            EoiCanData::RudderController(_) => {}
+            EoiCanData::HeightSensors(height) => match height {
+                HeightSensorData::FrontLeft(status) => {
+                    self.height_sensor_front_left.update(status.value);
+                }
+                HeightSensorData::FrontRight(status) => {
+                    self.height_sensor_front_right.update(status.value);
+                }
+                _ => {}
+            },
             EoiCanData::GanMppt(_) => {}
+            EoiCanData::Temperature(temp) => match temp {
+                TemperatureData::HeightSensorsController(value) => {
+                    self.temperature_height_sensors_controller.update(value);
+                }
+                TemperatureData::RudderController(value) => {
+                    self.temperature_rudder_controller.update(value);
+                }
+            },
         }
     }
 
@@ -547,7 +570,7 @@ where
     // battery information
 
     let mut battery_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
-    let battery_offset_left = 415;
+    let battery_offset_left = 430;
     let battery_offset_right = 790;
 
     Text::new(
@@ -655,7 +678,7 @@ where
     .unwrap();
 
     Text::new(
-        "Temperature min/max/avg",
+        "Temp min/max/avg",
         Point::new(battery_offset_left, battery_offset_y),
         font_normal,
     )
@@ -841,7 +864,10 @@ where
     const CELL_SPACING: i32 = 28;
 
     for cell in 0..data.battery_cell_voltages.len() {
-        let bottom_left = Point::new(battery_offset_left + cell as i32 * CELL_SPACING, 480 - 10);
+        let bottom_left = Point::new(
+            battery_offset_left - 15 + cell as i32 * CELL_SPACING,
+            480 - 10,
+        );
         let cell_box = Point::new(CELL_VOLTAGES_WIDTH, -CELL_VOLTAGES_HEIGTH);
         let text_top_left = bottom_left + cell_box.y_axis() + Point::new(1, -3);
         // draw outline of cell voltages boxes
@@ -868,6 +894,76 @@ where
     Line::new(Point::new(400, 140), Point::new(400, 480))
         .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 2))
         .draw(display)?;
+
+    // Height sensor bars
+    {
+        const HEIGHT_BAR_HEIGHT: i32 = 200;
+        const HEIGHT_BAR_WIDTH: i32 = 12;
+        let bar_bottom_y = 355;
+        let bar_top_y = bar_bottom_y - HEIGHT_BAR_HEIGHT;
+
+        // Front Left bar - left of center
+        let fl_x = 378;
+        let fl_bottom_left = Point::new(fl_x, bar_bottom_y);
+        let fl_box = Point::new(HEIGHT_BAR_WIDTH, -HEIGHT_BAR_HEIGHT);
+        Rectangle::with_corners(fl_bottom_left, fl_bottom_left + fl_box)
+            .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 1))
+            .draw(display)?;
+        if let Some(&value) = data.height_sensor_front_left.get() {
+            let level = scale_to_range(0.0, 2000.0, value as f32, HEIGHT_BAR_HEIGHT);
+            let level_pt = Point::new(HEIGHT_BAR_WIDTH, -level);
+            Rectangle::with_corners(fl_bottom_left, fl_bottom_left + level_pt)
+                .into_styled(PrimitiveStyle::with_fill(C::from(BinaryColor::Off)))
+                .draw(display)?;
+            string_helper.clear();
+            write!(&mut string_helper, "{}", value).unwrap();
+            Text::with_alignment(
+                string_helper.as_str(),
+                Point::new(fl_x + HEIGHT_BAR_WIDTH / 2, bar_bottom_y + 12),
+                font_small,
+                Alignment::Center,
+            )
+            .draw(display)?;
+        }
+        Text::with_alignment(
+            "FL",
+            Point::new(fl_x + HEIGHT_BAR_WIDTH / 2, bar_top_y - 3),
+            font_small,
+            Alignment::Center,
+        )
+        .draw(display)?;
+
+        // Front Right bar - right of center
+        let fr_x = 408;
+        let fr_bottom_left = Point::new(fr_x, bar_bottom_y);
+        let fr_box = Point::new(HEIGHT_BAR_WIDTH, -HEIGHT_BAR_HEIGHT);
+        Rectangle::with_corners(fr_bottom_left, fr_bottom_left + fr_box)
+            .into_styled(PrimitiveStyle::with_stroke(C::from(BinaryColor::Off), 1))
+            .draw(display)?;
+        if let Some(&value) = data.height_sensor_front_right.get() {
+            let level = scale_to_range(0.0, 2000.0, value as f32, HEIGHT_BAR_HEIGHT);
+            let level_pt = Point::new(HEIGHT_BAR_WIDTH, -level);
+            Rectangle::with_corners(fr_bottom_left, fr_bottom_left + level_pt)
+                .into_styled(PrimitiveStyle::with_fill(C::from(BinaryColor::Off)))
+                .draw(display)?;
+            string_helper.clear();
+            write!(&mut string_helper, "{}", value).unwrap();
+            Text::with_alignment(
+                string_helper.as_str(),
+                Point::new(fr_x + HEIGHT_BAR_WIDTH / 2, bar_bottom_y + 12),
+                font_small,
+                Alignment::Center,
+            )
+            .draw(display)?;
+        }
+        Text::with_alignment(
+            "FR",
+            Point::new(fr_x + HEIGHT_BAR_WIDTH / 2, bar_top_y - 3),
+            font_small,
+            Alignment::Center,
+        )
+        .draw(display)?;
+    }
 
     // Create a new window
     let mut motor_driver_offset_y = MOTOR_DRIVER_AND_BATTERY_OFFSET_START;
