@@ -191,7 +191,7 @@ macro_rules! node_enum {
             }
 
             impl $name {
-                pub(crate) fn from_node_id(id: u8, inner: $inner) -> Option<Self> {
+                pub fn from_node_id(id: u8, inner: $inner) -> Option<Self> {
                     match id {
                         #(N => Some(Self::Id~N(inner)),)*
                         _ => None,

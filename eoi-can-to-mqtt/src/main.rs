@@ -17,6 +17,7 @@ use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
 
+mod ha_discovery;
 mod mqtt_settings;
 
 #[derive(Parser, Debug)]
@@ -91,11 +92,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
         .clean_session(true)
         .user_name(mqtt_settings::USER.to_string())
         .password(mqtt_settings::PASSWORD.to_string())
+        .will_message(ha_discovery::availability_will())
         .finalize();
 
     if let Err(error) = client.connect(conn_opts.clone()) {
         panic!("Unable to connect to MQTT broker: {:?}", error);
     }
+
+    announce_presence(&client);
 
     // Spawn a task to read CAN frames
     tokio::spawn(async move {
@@ -183,6 +187,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
                     client
                         .connect(conn_opts.clone())
                         .expect("Unable to reconnect");
+                    announce_presence(&client);
                 }
             } else {
                 debug!("Published message: {:?}", merged_json);
@@ -190,5 +195,16 @@ async fn main() -> Result<(), core::convert::Infallible> {
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+fn announce_presence(client: &mqtt::Client) {
+    if let Err(e) = ha_discovery::publish_discovery(client) {
+        error!("Failed to publish HA discovery configs: {:?}", e);
+    } else {
+        info!("Published Home Assistant discovery configs");
+    }
+    if let Err(e) = ha_discovery::publish_availability(client, true) {
+        error!("Failed to publish availability: {:?}", e);
     }
 }
