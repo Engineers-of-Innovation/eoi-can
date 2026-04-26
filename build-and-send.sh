@@ -37,5 +37,4 @@ cd ..
 scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~/eoi-can-display-framebuffer.new
 scp target/${arch}/release/eoi-gnss-to-can ${1}:~/eoi-gnss-to-can.new
 scp target/${arch}/release/eoi-can-to-mqtt ${1}:~/eoi-can-to-mqtt.new
-scp -r eoi-can-to-mqtt/certs ${1}:certs 
 scp -r support ${1}:~

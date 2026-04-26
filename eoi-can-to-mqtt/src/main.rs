@@ -7,7 +7,6 @@ use paho_mqtt as mqtt;
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use serde_json::json;
-use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use systemstat::{Platform, System};
@@ -58,13 +57,6 @@ async fn main() -> Result<(), core::convert::Infallible> {
             .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
 
-    let mut trust_store = env::current_dir().unwrap();
-    trust_store.push(mqtt_settings::TRUST_STORE);
-
-    if !trust_store.exists() {
-        panic!("The trust store file does not exist: {:?}", trust_store);
-    }
-
     let create_opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(mqtt_settings::BROKER.to_string())
         .client_id(format!("eoi-can-to-mqtt-{}", {
@@ -81,10 +73,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
         panic!("Error creating the client: {:?}", err);
     });
 
-    let ssl_opts = mqtt::SslOptionsBuilder::new()
-        .trust_store(trust_store)
-        .unwrap()
-        .finalize();
+    let ssl_opts = mqtt::SslOptionsBuilder::new().finalize();
 
     let conn_opts = mqtt::ConnectOptionsBuilder::new()
         .ssl_options(ssl_opts)
