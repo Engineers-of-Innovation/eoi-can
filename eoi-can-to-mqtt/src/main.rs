@@ -18,6 +18,7 @@ use tracing_subscriber::prelude::*;
 
 mod ha_discovery;
 mod mqtt_settings;
+mod round_floats;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -163,6 +164,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
             });
             trace!("Parsed frames: {}", parsed_frames);
             can_collector.clear();
+            round_floats::round_floats_in_place(&mut merged_json, 5);
 
             // Send merged JSON to MQTT
             let mqtt_message = mqtt::Message::new(
