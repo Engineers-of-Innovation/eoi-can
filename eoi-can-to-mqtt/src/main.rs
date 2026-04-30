@@ -16,6 +16,7 @@ use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
 
+mod derived;
 mod ha_discovery;
 mod mqtt_settings;
 mod round_floats;
@@ -164,6 +165,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
             });
             trace!("Parsed frames: {}", parsed_frames);
             can_collector.clear();
+
+            derived::apply_derived(&mut merged_json);
+
             round_floats::round_floats_in_place(&mut merged_json, 5);
 
             // Send merged JSON to MQTT
@@ -172,13 +176,17 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 merged_json.to_string(),
                 mqtt::QOS_1,
             );
+
+            debug!("Publishing message to MQTT: {:?}", merged_json);
             if let Err(e) = client.publish(mqtt_message) {
                 error!("Failed to publish message: {:?}", e);
                 if matches!(e, mqtt::Error::Disconnected) {
                     client
                         .connect(conn_opts.clone())
                         .expect("Unable to reconnect");
-                    announce_presence(&client);
+                    if let Err(e) = ha_discovery::publish_availability(&client, true) {
+                        error!("Failed to republish availability: {:?}", e);
+                    }
                 }
             } else {
                 debug!("Published message: {:?}", merged_json);

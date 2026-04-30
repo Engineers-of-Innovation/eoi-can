@@ -84,6 +84,14 @@ impl HaEntity {
     fn current(self) -> Self {
         self.unit("A").device_class("current").measurement()
     }
+    fn power(self) -> Self {
+        self.unit("W").device_class("power").measurement()
+    }
+    fn efficiency(self) -> Self {
+        self.unit("%")
+            .measurement()
+            .icon("mdi:chart-bell-curve-cumulative")
+    }
     fn temperature(self) -> Self {
         self.unit("°C").device_class("temperature").measurement()
     }
@@ -419,6 +427,48 @@ fn add_battery(v: &mut Vec<HaEntity>) {
         .device_class("duration")
         .diagnostic(),
     );
+
+    // Derived powers (computed in derived.rs)
+    v.push(
+        sensor(
+            "battery_pack_power",
+            "Battery Pack Power",
+            "EoiBattery.PackAndPerriCurrent.pack_power",
+        )
+        .power(),
+    );
+    v.push(
+        sensor(
+            "battery_perri_power",
+            "Battery Peripheral Power",
+            "EoiBattery.PackAndPerriCurrent.perri_power",
+        )
+        .power(),
+    );
+    v.push(
+        sensor(
+            "battery_charge_power",
+            "Battery Charge Power",
+            "EoiBattery.ChargeAndDischargeCurrent.charge_power",
+        )
+        .power(),
+    );
+    v.push(
+        sensor(
+            "battery_discharge_power",
+            "Battery Discharge Power",
+            "EoiBattery.ChargeAndDischargeCurrent.discharge_power",
+        )
+        .power(),
+    );
+    v.push(
+        sensor(
+            "battery_stack_power",
+            "Battery Stack Power",
+            "EoiBattery.CellVoltages13_14PackAndStack.stack_power",
+        )
+        .power(),
+    );
 }
 
 fn add_vesc(v: &mut Vec<HaEntity>) {
@@ -531,6 +581,16 @@ fn add_vesc(v: &mut Vec<HaEntity>) {
         .total_increasing()
         .diagnostic()
         .icon("mdi:counter"),
+    );
+
+    // Derived (computed in derived.rs)
+    v.push(
+        sensor(
+            "vesc_total_input_power",
+            "VESC Total Input Power",
+            "Vesc.StatusMessage4.total_input_power",
+        )
+        .power(),
     );
 }
 
@@ -851,6 +911,14 @@ fn add_mppt(v: &mut Vec<HaEntity>) {
             );
             v.push(
                 sensor(
+                    format!("mppt{node}_ch{ch}_power_in"),
+                    format!("MPPT {node} Ch{ch} Power In"),
+                    &format!("{ch_root}.Power.power_in"),
+                )
+                .power(),
+            );
+            v.push(
+                sensor(
                     format!("mppt{node}_ch{ch}_duty_cycle"),
                     format!("MPPT {node} Ch{ch} Duty Cycle"),
                     &format!("{ch_root}.State.duty_cycle"),
@@ -899,6 +967,14 @@ fn add_mppt(v: &mut Vec<HaEntity>) {
                 &format!("{root}.Power.current_out"),
             )
             .current(),
+        );
+        v.push(
+            sensor(
+                format!("mppt{node}_power_out"),
+                format!("MPPT {node} Output Power"),
+                &format!("{root}.Power.power_out"),
+            )
+            .power(),
         );
 
         v.push(
@@ -980,6 +1056,30 @@ fn add_gan_mppt(v: &mut Vec<HaEntity>) {
                 &format!("{root}.Power.output_current"),
             )
             .current(),
+        );
+        v.push(
+            sensor(
+                format!("gan_mppt{node}_input_power"),
+                format!("GaN MPPT {node} Input Power"),
+                &format!("{root}.Power.input_power"),
+            )
+            .power(),
+        );
+        v.push(
+            sensor(
+                format!("gan_mppt{node}_output_power"),
+                format!("GaN MPPT {node} Output Power"),
+                &format!("{root}.Power.output_power"),
+            )
+            .power(),
+        );
+        v.push(
+            sensor(
+                format!("gan_mppt{node}_efficiency"),
+                format!("GaN MPPT {node} Efficiency"),
+                &format!("{root}.Power.efficiency"),
+            )
+            .efficiency(),
         );
 
         v.push(
@@ -1245,10 +1345,10 @@ mod tests {
             let mk = |pkt: GanMpptPacket| GanMpptData::from_node_id(node, pkt).unwrap();
             v.push(EoiCanData::GanMppt(mk(GanMpptPacket::Power(
                 GanMpptPower {
-                    input_voltage: 0.0,
-                    input_current: 0.0,
-                    output_voltage: 0.0,
-                    output_current: 0.0,
+                    input_voltage: 2.0,
+                    input_current: 1.0,
+                    output_voltage: 1.0,
+                    output_current: 1.0,
                 },
             ))));
             v.push(EoiCanData::GanMppt(mk(GanMpptPacket::Status(
@@ -1278,6 +1378,7 @@ mod tests {
             let j = serde_json::to_value(&s).expect("serialize");
             merge(&mut root, &j);
         }
+        crate::derived::apply_derived(&mut root);
         root
     }
 
