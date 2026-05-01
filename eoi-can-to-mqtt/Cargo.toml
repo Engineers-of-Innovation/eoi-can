@@ -19,3 +19,6 @@ paho-mqtt = "0.13"
 json-patch = "4.0"
 systemstat = "0.2.4"
 rand = "0.9"
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }

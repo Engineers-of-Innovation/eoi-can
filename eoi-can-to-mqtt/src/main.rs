@@ -1,6 +1,6 @@
 use clap::Parser;
 use embedded_can::Frame;
-use eoi_can_decoder::{can_collector, parse_eoi_can_data};
+use eoi_can_decoder::parse_eoi_can_data;
 use get_wifi_ip::get_wifi_ip;
 use json_patch::merge;
 use paho_mqtt as mqtt;
@@ -17,9 +17,12 @@ use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
 
 mod derived;
+mod frame_cache;
 mod ha_discovery;
 mod mqtt_settings;
 mod round_floats;
+
+const FRAME_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -50,9 +53,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
 
-    let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
+    let shared_frame_cache = Arc::new(Mutex::new(frame_cache::FrameCache::new()));
 
-    let can_collector_receiver = shared_can_collector.clone();
+    let frame_cache_receiver = shared_frame_cache.clone();
 
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
@@ -110,8 +113,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 continue;
             };
 
-            if let Ok(mut collector) = can_collector_receiver.lock() {
-                collector.insert(embedded_frame);
+            if let Ok(mut cache) = frame_cache_receiver.lock() {
+                cache.insert(embedded_frame);
             }
         }
     });
@@ -122,9 +125,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
     tokio::time::sleep(Duration::from_secs(1)).await;
 
     loop {
-        if let Ok(mut can_collector) = shared_can_collector.lock() {
-            if can_collector.get_dropped_frames() > 0 {
-                trace!("Dropped frames: {}", can_collector.get_dropped_frames());
+        if let Ok(mut cache) = shared_frame_cache.lock() {
+            let dropped = cache.take_dropped_frames();
+            if dropped > 0 {
+                trace!("Dropped frames: {}", dropped);
             }
             let mut parsed_frames = 0_u32;
             let system_uptime = sys.uptime().unwrap_or_default().as_secs();
@@ -148,7 +152,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
             };
             let mut merged_json = json!({ "DataLogger": { "Uptime": { "System": system_uptime, "Process": process_uptime }, "CpuLoad1M": cpu_usage_m1, "CpuTemp": cpu_temperature, "MemoryUsage": memory_percent_used, "WifiIp": wifi_ip } });
 
-            can_collector.iter().for_each(|frame| {
+            cache.iter_fresh(FRAME_TTL).for_each(|frame| {
                 trace!("Paring CAN frame: {:?}", frame);
                 if let Some(data) = parse_eoi_can_data(frame) {
                     trace!("{:?}", data);
@@ -164,7 +168,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 parsed_frames = parsed_frames.saturating_add(1);
             });
             trace!("Parsed frames: {}", parsed_frames);
-            can_collector.clear();
+            cache.prune(FRAME_TTL);
 
             derived::apply_derived(&mut merged_json);
 

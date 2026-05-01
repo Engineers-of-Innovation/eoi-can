@@ -73,6 +73,7 @@ pub struct HaEntity {
     icon: Option<Str>,
     entity_category: Option<Str>,
     enabled_by_default: Option<bool>,
+    json_attributes_template: Option<Str>,
     device: Device,
 }
 
@@ -89,6 +90,27 @@ fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEnti
         icon: None,
         entity_category: None,
         enabled_by_default: None,
+        json_attributes_template: None,
+        device: HUB,
+    }
+}
+
+fn device_tracker(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
+    HaEntity {
+        component: Cow::Borrowed("device_tracker"),
+        object_id: object_id.into(),
+        name: name.into(),
+        path: Cow::Owned(path.to_string()),
+        value_template: Cow::Owned(format!(
+            "{{% if value_json.{path} is defined and value_json.{path} != 0 %}}home{{% else %}}not_home{{% endif %}}"
+        )),
+        unit: None,
+        device_class: None,
+        state_class: None,
+        icon: None,
+        entity_category: None,
+        enabled_by_default: None,
+        json_attributes_template: None,
         device: HUB,
     }
 }
@@ -150,6 +172,10 @@ impl HaEntity {
     }
     fn disabled(mut self) -> Self {
         self.enabled_by_default = Some(false);
+        self
+    }
+    fn json_attributes_template(mut self, v: impl Into<Str>) -> Self {
+        self.json_attributes_template = Some(v.into());
         self
     }
     fn measurement(self) -> Self {
@@ -244,6 +270,10 @@ fn build_config(entity: &HaEntity) -> Value {
     if let Some(v) = entity.enabled_by_default {
         m.insert("enabled_by_default".into(), json!(v));
     }
+    if let Some(v) = &entity.json_attributes_template {
+        m.insert("json_attributes_topic".into(), json!(mqtt_settings::TOPIC));
+        m.insert("json_attributes_template".into(), json!(v.as_ref()));
+    }
     m.insert("expire_after".into(), json!(10));
     m.insert(
         "availability".into(),
@@ -288,9 +318,17 @@ pub fn entities() -> Vec<HaEntity> {
     add_rudder(&mut v);
     add_height_sensors(&mut v);
     add_gnss(&mut v);
+    add_boat_location(&mut v);
     add_mppt(&mut v);
     add_gan_mppt(&mut v);
     v
+}
+
+fn add_boat_location(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, HUB);
+    v.push(device_tracker("boat_location", "Boat Location", "Gnss.GnssLatitude").json_attributes_template(
+        "{{ {'latitude': value_json.Gnss.GnssLatitude, 'longitude': value_json.Gnss.GnssLongitude} | tojson }}",
+    ));
 }
 
 fn add_datalogger(v: &mut Vec<HaEntity>) {
