@@ -18,10 +18,54 @@ use crate::mqtt_settings;
 
 type Str = Cow<'static, str>;
 
+#[derive(Clone, Copy)]
+struct Device {
+    id: &'static str,
+    name: &'static str,
+}
+
+const HUB: Device = Device {
+    id: mqtt_settings::DEVICE_ID,
+    name: mqtt_settings::DEVICE_NAME,
+};
+const BATTERY: Device = Device {
+    id: "eoi_battery",
+    name: "EoI Battery",
+};
+const VESC: Device = Device {
+    id: "eoi_vesc",
+    name: "EoI VESC",
+};
+const THROTTLE: Device = Device {
+    id: "eoi_throttle",
+    name: "EoI Throttle",
+};
+const RUDDER: Device = Device {
+    id: "eoi_rudder",
+    name: "EoI Rudder",
+};
+const HEIGHT_SENSORS: Device = Device {
+    id: "eoi_height_sensors",
+    name: "EoI Height Sensors",
+};
+const GNSS: Device = Device {
+    id: "eoi_gnss",
+    name: "EoI GNSS",
+};
+const MPPT: Device = Device {
+    id: "eoi_mppt",
+    name: "EoI MPPT",
+};
+const GAN_MPPT: Device = Device {
+    id: "eoi_gan_mppt",
+    name: "EoI GaN MPPT",
+};
+
 pub struct HaEntity {
     component: Str,
     object_id: Str,
     name: Str,
+    path: Str,
     value_template: Str,
     unit: Option<Str>,
     device_class: Option<Str>,
@@ -29,6 +73,7 @@ pub struct HaEntity {
     icon: Option<Str>,
     entity_category: Option<Str>,
     enabled_by_default: Option<bool>,
+    device: Device,
 }
 
 fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
@@ -36,14 +81,50 @@ fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEnti
         component: Cow::Borrowed("sensor"),
         object_id: object_id.into(),
         name: name.into(),
-        value_template: Cow::Owned(format!("{{{{ value_json.{path} }}}}")),
+        path: Cow::Owned(path.to_string()),
+        value_template: Cow::Owned(format!("{{{{ value_json.{path} | default('') }}}}")),
         unit: None,
         device_class: None,
         state_class: None,
         icon: None,
         entity_category: None,
         enabled_by_default: None,
+        device: HUB,
     }
+}
+
+fn path_defined_chain(path: &str) -> String {
+    let mut accum = String::new();
+    let mut checks: Vec<String> = Vec::new();
+    for seg in path.split('.') {
+        if !accum.is_empty() {
+            accum.push('.');
+        }
+        accum.push_str(seg);
+        checks.push(format!("value_json.{accum} is defined"));
+    }
+    checks.join(" and ")
+}
+
+fn availability_template_for(path: &str) -> String {
+    let chain = path_defined_chain(path);
+    format!("{{% if {chain} %}}online{{% else %}}offline{{% endif %}}")
+}
+
+struct Scope<'a> {
+    out: &'a mut Vec<HaEntity>,
+    device: Device,
+}
+
+impl Scope<'_> {
+    fn push(&mut self, mut e: HaEntity) {
+        e.device = self.device;
+        self.out.push(e);
+    }
+}
+
+fn scoped(out: &mut Vec<HaEntity>, device: Device) -> Scope<'_> {
+    Scope { out, device }
 }
 
 impl HaEntity {
@@ -125,7 +206,7 @@ pub fn publish_discovery(client: &mqtt::Client) -> Result<(), mqtt::Error> {
             "{}/{}/{}/{}/config",
             mqtt_settings::DISCOVERY_PREFIX,
             entity.component,
-            mqtt_settings::DEVICE_ID,
+            entity.device.id,
             entity.object_id,
         );
         let payload = build_config(&entity).to_string();
@@ -135,7 +216,7 @@ pub fn publish_discovery(client: &mqtt::Client) -> Result<(), mqtt::Error> {
 }
 
 fn build_config(entity: &HaEntity) -> Value {
-    let unique_id = format!("{}_{}", mqtt_settings::DEVICE_ID, entity.object_id);
+    let unique_id = format!("{}_{}", entity.device.id, entity.object_id);
     let mut m = Map::new();
     m.insert("name".into(), json!(entity.name.as_ref()));
     m.insert("unique_id".into(), json!(unique_id));
@@ -163,21 +244,38 @@ fn build_config(entity: &HaEntity) -> Value {
     if let Some(v) = entity.enabled_by_default {
         m.insert("enabled_by_default".into(), json!(v));
     }
+    m.insert("expire_after".into(), json!(10));
     m.insert(
-        "availability_topic".into(),
-        json!(mqtt_settings::AVAILABILITY_TOPIC),
+        "availability".into(),
+        json!([
+            {
+                "topic": mqtt_settings::AVAILABILITY_TOPIC,
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            },
+            {
+                "topic": mqtt_settings::TOPIC,
+                "value_template": availability_template_for(&entity.path),
+                "payload_available": "online",
+                "payload_not_available": "offline",
+            }
+        ]),
     );
-    m.insert("payload_available".into(), json!("online"));
-    m.insert("payload_not_available".into(), json!("offline"));
-    m.insert(
-        "device".into(),
-        json!({
-            "identifiers": [mqtt_settings::DEVICE_ID],
-            "name": mqtt_settings::DEVICE_NAME,
-            "manufacturer": mqtt_settings::DEVICE_MANUFACTURER,
-            "model": mqtt_settings::DEVICE_MODEL,
-        }),
-    );
+    m.insert("availability_mode".into(), json!("all"));
+
+    let mut device_block = json!({
+        "identifiers": [entity.device.id],
+        "name": entity.device.name,
+        "manufacturer": mqtt_settings::DEVICE_MANUFACTURER,
+        "model": mqtt_settings::DEVICE_MODEL,
+    });
+    if entity.device.id != HUB.id {
+        device_block
+            .as_object_mut()
+            .unwrap()
+            .insert("via_device".into(), json!(HUB.id));
+    }
+    m.insert("device".into(), device_block);
     Value::Object(m)
 }
 
@@ -189,7 +287,6 @@ pub fn entities() -> Vec<HaEntity> {
     add_throttle(&mut v);
     add_rudder(&mut v);
     add_height_sensors(&mut v);
-    add_temperature(&mut v);
     add_gnss(&mut v);
     add_mppt(&mut v);
     add_gan_mppt(&mut v);
@@ -197,6 +294,7 @@ pub fn entities() -> Vec<HaEntity> {
 }
 
 fn add_datalogger(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, HUB);
     v.push(
         sensor(
             "datalogger_uptime_system",
@@ -255,6 +353,7 @@ fn add_datalogger(v: &mut Vec<HaEntity>) {
 }
 
 fn add_battery(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, BATTERY);
     // Currents
     v.push(
         sensor(
@@ -472,6 +571,7 @@ fn add_battery(v: &mut Vec<HaEntity>) {
 }
 
 fn add_vesc(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, VESC);
     v.push(
         sensor("vesc_rpm", "VESC RPM", "Vesc.StatusMessage1.rpm")
             .unit("rpm")
@@ -595,6 +695,7 @@ fn add_vesc(v: &mut Vec<HaEntity>) {
 }
 
 fn add_throttle(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, THROTTLE);
     v.push(
         sensor(
             "throttle_to_vesc_duty_cycle",
@@ -736,6 +837,7 @@ fn add_throttle(v: &mut Vec<HaEntity>) {
 }
 
 fn add_rudder(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, RUDDER);
     v.push(
         sensor(
             "rudder_setpoint",
@@ -772,9 +874,18 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
         .diagnostic()
         .icon("mdi:console"),
     );
+    v.push(
+        sensor(
+            "rudder_controller_temperature",
+            "Rudder Controller Temperature",
+            "Temperature.RudderController",
+        )
+        .temperature(),
+    );
 }
 
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, HEIGHT_SENSORS);
     for (variant, label, disabled_by_default) in [
         ("FrontLeft", "Front Left", false),
         ("FrontRight", "Front Right", false),
@@ -804,28 +915,18 @@ fn add_height_sensors(v: &mut Vec<HaEntity>) {
             v.push(state_entity);
         }
     }
-}
-
-fn add_temperature(v: &mut Vec<HaEntity>) {
     v.push(
         sensor(
-            "temp_height_sensors_controller",
+            "height_sensors_controller_temperature",
             "Height Sensors Controller Temperature",
             "Temperature.HeightSensorsController",
-        )
-        .temperature(),
-    );
-    v.push(
-        sensor(
-            "temp_rudder_controller",
-            "Rudder Controller Temperature",
-            "Temperature.RudderController",
         )
         .temperature(),
     );
 }
 
 fn add_gnss(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, GNSS);
     v.push(
         sensor("gnss_fix", "GNSS Fix", "Gnss.GnssStatus.fix")
             .diagnostic()
@@ -878,15 +979,40 @@ fn add_gnss(v: &mut Vec<HaEntity>) {
             .icon("mdi:longitude"),
     );
 
-    v.push(sensor("gnss_year", "GNSS Year", "Gnss.GnssDateTime.year").diagnostic());
-    v.push(sensor("gnss_month", "GNSS Month", "Gnss.GnssDateTime.month").diagnostic());
-    v.push(sensor("gnss_day", "GNSS Day", "Gnss.GnssDateTime.day").diagnostic());
-    v.push(sensor("gnss_hours", "GNSS Hours", "Gnss.GnssDateTime.hours").diagnostic());
-    v.push(sensor("gnss_minutes", "GNSS Minutes", "Gnss.GnssDateTime.minutes").diagnostic());
-    v.push(sensor("gnss_seconds", "GNSS Seconds", "Gnss.GnssDateTime.seconds").diagnostic());
+    v.push(
+        sensor("gnss_year", "GNSS Year", "Gnss.GnssDateTime.year")
+            .diagnostic()
+            .disabled(),
+    );
+    v.push(
+        sensor("gnss_month", "GNSS Month", "Gnss.GnssDateTime.month")
+            .diagnostic()
+            .disabled(),
+    );
+    v.push(
+        sensor("gnss_day", "GNSS Day", "Gnss.GnssDateTime.day")
+            .diagnostic()
+            .disabled(),
+    );
+    v.push(
+        sensor("gnss_hours", "GNSS Hours", "Gnss.GnssDateTime.hours")
+            .diagnostic()
+            .disabled(),
+    );
+    v.push(
+        sensor("gnss_minutes", "GNSS Minutes", "Gnss.GnssDateTime.minutes")
+            .diagnostic()
+            .disabled(),
+    );
+    v.push(
+        sensor("gnss_seconds", "GNSS Seconds", "Gnss.GnssDateTime.seconds")
+            .diagnostic()
+            .disabled(),
+    );
 }
 
 fn add_mppt(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, MPPT);
     for node in 0..8u8 {
         let root = format!("Mppt.Id{node}");
 
@@ -1022,6 +1148,7 @@ fn add_mppt(v: &mut Vec<HaEntity>) {
 }
 
 fn add_gan_mppt(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, GAN_MPPT);
     for node in 0..16u8 {
         let root = format!("GanMppt.Id{node}");
 
@@ -1456,6 +1583,63 @@ mod tests {
                 "duplicate object_id: {}",
                 e.object_id,
             );
+        }
+    }
+
+    #[test]
+    fn device_block_has_via_device_for_non_hub() {
+        for e in entities() {
+            let cfg = build_config(&e);
+            let device = cfg.get("device").and_then(|d| d.as_object()).unwrap();
+            let ids = device
+                .get("identifiers")
+                .and_then(|v| v.as_array())
+                .unwrap();
+            assert_eq!(ids[0], json!(e.device.id));
+            assert_eq!(device.get("name").unwrap(), &json!(e.device.name));
+            if e.device.id == HUB.id {
+                assert!(
+                    device.get("via_device").is_none(),
+                    "hub device should not link via_device"
+                );
+            } else {
+                assert_eq!(
+                    device.get("via_device").unwrap(),
+                    &json!(HUB.id),
+                    "non-hub device {} must set via_device to hub",
+                    e.device.id,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn availability_template_chains_each_path_segment() {
+        assert_eq!(
+            availability_template_for("Mppt.Id0.Channel0.Power.power_in"),
+            "{% if value_json.Mppt is defined and value_json.Mppt.Id0 is defined \
+             and value_json.Mppt.Id0.Channel0 is defined \
+             and value_json.Mppt.Id0.Channel0.Power is defined \
+             and value_json.Mppt.Id0.Channel0.Power.power_in is defined \
+             %}online{% else %}offline{% endif %}"
+        );
+    }
+
+    #[test]
+    fn every_entity_has_two_availability_sources() {
+        for e in entities() {
+            let cfg = build_config(&e);
+            let avail = cfg
+                .get("availability")
+                .and_then(|v| v.as_array())
+                .unwrap_or_else(|| panic!("availability missing for {}", e.object_id));
+            assert_eq!(
+                avail.len(),
+                2,
+                "{} should have 2 availability sources (bridge + per-path)",
+                e.object_id,
+            );
+            assert_eq!(cfg.get("availability_mode").unwrap(), &json!("all"));
         }
     }
 }
