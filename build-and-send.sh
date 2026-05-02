@@ -29,7 +29,7 @@ cd ..
 
 # # sending, make sure you have you ssh keys set up in the datalogger, you might need to run ssh-copy-id
 
-scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~/eoi-can-display-framebuffer
-scp target/${arch}/release/eoi-gnss-to-can ${1}:~/eoi-gnss-to-can
-scp target/${arch}/release/eoi-can-to-mqtt ${1}:~/eoi-can-to-mqtt
+scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~/eoi-can-display-framebuffer.new
+scp target/${arch}/release/eoi-gnss-to-can ${1}:~/eoi-gnss-to-can.new
+scp target/${arch}/release/eoi-can-to-mqtt ${1}:~/eoi-can-to-mqtt.new
 scp -r support ${1}:~
