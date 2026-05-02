@@ -753,6 +753,15 @@ fn add_throttle(v: &mut Vec<HaEntity>) {
     );
     v.push(
         sensor(
+            "throttle_to_vesc_current_relative",
+            "Throttle → Current Relative",
+            "Throttle.ToVescCurrentRelative",
+        )
+        .unit("%")
+        .measurement(),
+    );
+    v.push(
+        sensor(
             "throttle_to_vesc_rpm",
             "Throttle → RPM",
             "Throttle.ToVescRpm",
@@ -1414,6 +1423,7 @@ mod tests {
             // Throttle
             EoiCanData::Throttle(ThrottleData::ToVescDutyCycle(0.0)),
             EoiCanData::Throttle(ThrottleData::ToVescCurrent(0.0)),
+            EoiCanData::Throttle(ThrottleData::ToVescCurrentRelative(0.0)),
             EoiCanData::Throttle(ThrottleData::ToVescRpm(0.0)),
             EoiCanData::Throttle(ThrottleData::Status(ThrottleStatus {
                 value: 0.0,

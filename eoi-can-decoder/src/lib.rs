@@ -53,6 +53,7 @@ pub struct GnssDateTime {
 pub enum ThrottleData {
     ToVescDutyCycle(f32),
     ToVescCurrent(f32),
+    ToVescCurrentRelative(f32),
     ToVescRpm(f32),
     Status(ThrottleStatus),
     Config(ThrottleConfig),
@@ -872,6 +873,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
         0x0109 => Some(EoiCanData::Throttle(ThrottleData::ToVescCurrent(
+            bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
+        ))),
+        0x0A09 => Some(EoiCanData::Throttle(ThrottleData::ToVescCurrentRelative(
             bytes_be_to_i32(data.get(0..4)?)? as f32 / 1000.0,
         ))),
         0x0309 => Some(EoiCanData::Throttle(ThrottleData::ToVescRpm(

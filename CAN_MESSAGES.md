@@ -27,6 +27,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x107 | TemperaturesAndStates | Battery Management System |
 | 0x108 | BatteryUptime | Battery Management System |
 | 0x109 | ThrottleToVescCurrent | Throttle Controller |
+| 0xA09 | ThrottleToVescCurrentRelative | Throttle Controller |
 | 0x200 | GnssStatus | GNSS |
 | 0x210 | TemperatureHeightSensorsController | Height Sensors |
 | 0x211 | TemperatureRudderController | Rudder Controller |
@@ -168,6 +169,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | ThrottleToVescDutyCycle | 0x0009 | 4 | 0–3 | Duty cycle | i32 | BE | raw / 1000 = % |
 | ThrottleToVescCurrent | 0x0109 | 4 | 0–3 | Current | i32 | BE | raw / 1000 = A |
+| ThrottleToVescCurrentRelative | 0x0A09 | 4 | 0–3 | Relative current | i32 | BE | raw / 1000 = % |
 | ThrottleToVescRpm | 0x0309 | 4 | 0–3 | RPM | i32 | BE | raw / 1000 = RPM |
 | ThrottleStatus | 0x1337 or 0x0337 (DLC=8) | 8 | 0–1 | Throttle value | i16 | BE | (raw / 512) × 100 = % |
 | | | | 2–3 | Raw angle | i16 | BE | Counts |
