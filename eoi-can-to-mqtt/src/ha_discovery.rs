@@ -1009,7 +1009,7 @@ fn add_gnss(v: &mut Vec<HaEntity>) {
 
     v.push(
         sensor("gnss_speed", "GNSS Speed", "Gnss.GnssSpeedAndHeading[0]")
-            .unit("m/s")
+            .unit("km/h")
             .device_class("speed")
             .measurement(),
     );
