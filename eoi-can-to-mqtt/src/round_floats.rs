@@ -3,7 +3,7 @@
 
 use serde_json::{Number, Value};
 
-pub fn round_floats_in_place(value: &mut Value, sig_digits: u32) {
+pub fn round_floats_in_place(value: &mut Value, sig_digits: u32, skip_keys: &[&str]) {
     match value {
         Value::Number(n) if n.is_f64() => {
             if let Some(f) = n.as_f64() {
@@ -15,12 +15,15 @@ pub fn round_floats_in_place(value: &mut Value, sig_digits: u32) {
         }
         Value::Array(arr) => {
             for v in arr {
-                round_floats_in_place(v, sig_digits);
+                round_floats_in_place(v, sig_digits, skip_keys);
             }
         }
         Value::Object(obj) => {
-            for v in obj.values_mut() {
-                round_floats_in_place(v, sig_digits);
+            for (k, v) in obj.iter_mut() {
+                if skip_keys.contains(&k.as_str()) {
+                    continue;
+                }
+                round_floats_in_place(v, sig_digits, skip_keys);
             }
         }
         _ => {}
@@ -81,7 +84,7 @@ mod tests {
     #[test]
     fn integer_numbers_remain_integers() {
         let mut v = json!({ "a": 5_u64, "b": 1.234567_f64, "c": -3_i64 });
-        round_floats_in_place(&mut v, 5);
+        round_floats_in_place(&mut v, 5, &[]);
         assert!(v["a"].is_u64(), "a should remain u64, got {:?}", v["a"]);
         assert!(v["c"].is_i64(), "c should remain i64, got {:?}", v["c"]);
         assert!(approx(v["b"].as_f64().unwrap(), 1.2346));
@@ -95,7 +98,7 @@ mod tests {
                 "inner": { "x": 0.00012345678_f64 }
             }
         });
-        round_floats_in_place(&mut v, 5);
+        round_floats_in_place(&mut v, 5, &[]);
         assert!(approx(v["outer"]["vals"][0].as_f64().unwrap(), 1.2346));
         assert!(approx(v["outer"]["vals"][1].as_f64().unwrap(), 2.3457));
         assert!(v["outer"]["vals"][2].is_u64());
@@ -103,5 +106,22 @@ mod tests {
             v["outer"]["inner"]["x"].as_f64().unwrap(),
             0.00012346
         ));
+    }
+
+    #[test]
+    fn skips_excluded_keys() {
+        let mut v = json!({
+            "Gnss": {
+                "GnssLatitude": 52.123456789_f64,
+                "GnssLongitude": 4.987654321_f64,
+                "Speed": 1.234567_f64
+            },
+            "Other": 1.234567_f64
+        });
+        round_floats_in_place(&mut v, 5, &["GnssLatitude", "GnssLongitude"]);
+        assert_eq!(v["Gnss"]["GnssLatitude"].as_f64().unwrap(), 52.123456789);
+        assert_eq!(v["Gnss"]["GnssLongitude"].as_f64().unwrap(), 4.987654321);
+        assert!(approx(v["Gnss"]["Speed"].as_f64().unwrap(), 1.2346));
+        assert!(approx(v["Other"].as_f64().unwrap(), 1.2346));
     }
 }

@@ -201,7 +201,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
             derived::apply_derived(&mut merged_json);
 
-            round_floats::round_floats_in_place(&mut merged_json, 5);
+            round_floats::round_floats_in_place(
+                &mut merged_json,
+                5,
+                &["GnssLatitude", "GnssLongitude"],
+            );
 
             // Send merged JSON to MQTT
             let mqtt_message = mqtt::Message::new(
