@@ -1,9 +1,6 @@
 #![no_std]
 #![no_main]
 
-#[path = "../height_sensor.rs"]
-mod height_sensor;
-
 use defmt::*;
 use embassy_executor::Spawner;
 use embassy_stm32::wdg::IndependentWatchdog;
@@ -20,7 +17,7 @@ use embassy_time::Timer;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
-use height_sensor::{
+use eoi_rust_firmware::height_sensor::{
     CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
     CAN_ID_HEIGHT_SENSOR_RESERVED1, CAN_ID_HEIGHT_SENSOR_RESERVED2, height_sensor_task,
     height_sensor_timer_task,
@@ -68,7 +65,7 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Height Sensor Controller");
 
-    let status_led = Output::new(p.PC3, Level::High, Speed::Low);
+    let status_led = Output::new(p.PC1, Level::High, Speed::Low);
     let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
     spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
 

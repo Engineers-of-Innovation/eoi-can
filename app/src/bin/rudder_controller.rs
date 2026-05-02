@@ -15,6 +15,7 @@ use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_time::Timer;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;
+use eoi_rust_firmware::cooling_pump;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
 use {defmt_rtt as _, panic_probe as _};
 
@@ -47,6 +48,9 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Rudder Controller");
 
+    let (_cooling_pump_current_ref, cooling_pump_fault) =
+        cooling_pump::init(p.DAC1, p.PA4, p.PA5, p.PA6, p.PA7, p.PC5);
+
     let status_led = Output::new(p.PC1, Level::High, Speed::Low);
     let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
     spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
@@ -69,6 +73,11 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(temperature_task(
         i2c,
         CAN_ID_TEMPERATURE_RUDDER_CONTROLLER,
+        buffered.writer()
+    )));
+
+    spawner.spawn(unwrap!(cooling_pump::fault_status_task(
+        cooling_pump_fault,
         buffered.writer()
     )));
 }
