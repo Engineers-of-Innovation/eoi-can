@@ -92,8 +92,23 @@ async fn main() -> Result<(), core::convert::Infallible> {
         .will_message(ha_discovery::availability_will())
         .finalize();
 
-    if let Err(error) = client.connect(conn_opts.clone()) {
-        panic!("Unable to connect to MQTT broker: {:?}", error);
+    let mut delay = Duration::from_secs(1);
+    const MAX_DELAY: Duration = Duration::from_secs(30);
+    loop {
+        match client.connect(conn_opts.clone()) {
+            Ok(_) => {
+                info!("Connected to MQTT broker");
+                break;
+            }
+            Err(e) => {
+                error!(
+                    "Unable to connect to MQTT broker: {:?}; retrying in {:?}",
+                    e, delay
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(MAX_DELAY);
+            }
+        }
     }
 
     announce_presence(&client);
@@ -126,6 +141,9 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let sys = System::new();
 
     tokio::time::sleep(Duration::from_secs(1)).await;
+
+    const MAX_RECONNECT_FAILURES: u32 = 5;
+    let mut reconnect_failures: u32 = 0;
 
     loop {
         if let Ok(mut cache) = shared_frame_cache.lock() {
@@ -188,14 +206,32 @@ async fn main() -> Result<(), core::convert::Infallible> {
             if let Err(e) = client.publish(mqtt_message) {
                 error!("Failed to publish message: {:?}", e);
                 if matches!(e, mqtt::Error::Disconnected) {
-                    client
-                        .connect(conn_opts.clone())
-                        .expect("Unable to reconnect");
-                    if let Err(e) = ha_discovery::publish_availability(&client, true) {
-                        error!("Failed to republish availability: {:?}", e);
+                    match client.connect(conn_opts.clone()) {
+                        Ok(_) => {
+                            info!("Reconnected to MQTT broker");
+                            reconnect_failures = 0;
+                            if let Err(e) = ha_discovery::publish_availability(&client, true) {
+                                error!("Failed to republish availability: {:?}", e);
+                            }
+                        }
+                        Err(reconnect_err) => {
+                            reconnect_failures += 1;
+                            error!(
+                                "Reconnect failed ({}/{}): {:?}",
+                                reconnect_failures, MAX_RECONNECT_FAILURES, reconnect_err
+                            );
+                            if reconnect_failures >= MAX_RECONNECT_FAILURES {
+                                error!(
+                                    "Giving up after {} reconnect failures; exiting for systemd restart",
+                                    MAX_RECONNECT_FAILURES
+                                );
+                                std::process::exit(1);
+                            }
+                        }
                     }
                 }
             } else {
+                reconnect_failures = 0;
                 debug!("Published message: {:?}", merged_json);
             }
         }
