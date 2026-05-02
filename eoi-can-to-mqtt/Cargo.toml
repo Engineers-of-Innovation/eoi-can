@@ -8,7 +8,7 @@ eoi-can-decoder = { path = "../eoi-can-decoder" }
 get-wifi-ip = { path = "../get-wifi-ip" }
 
 embedded-graphics.workspace = true
-clap.workspace = true
+clap = { workspace = true, features = ["env"] }
 socketcan.workspace = true
 embedded-can.workspace = true
 tracing.workspace = true

@@ -30,6 +30,14 @@ struct Args {
     /// CAN interface
     #[arg(short, long, default_value_t = String::from("can0"))]
     can_interface: String,
+
+    /// MQTT broker username
+    #[arg(short = 'u', long, env = "MQTT_USER", hide_env_values = true)]
+    mqtt_user: String,
+
+    /// MQTT broker password
+    #[arg(short = 'p', long, env = "MQTT_PASSWORD", hide_env_values = true)]
+    mqtt_password: String,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -87,8 +95,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
         .ssl_options(ssl_opts)
         .keep_alive_interval(Duration::from_secs(20))
         .clean_session(true)
-        .user_name(mqtt_settings::USER.to_string())
-        .password(mqtt_settings::PASSWORD.to_string())
+        .user_name(args.mqtt_user.clone())
+        .password(args.mqtt_password.clone())
         .will_message(ha_discovery::availability_will())
         .finalize();
 
