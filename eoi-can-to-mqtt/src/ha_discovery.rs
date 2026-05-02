@@ -938,6 +938,15 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
         )
         .temperature(),
     );
+    v.push(
+        sensor(
+            "rudder_cooling_pump_status",
+            "Rudder Cooling Pump Status",
+            "RudderController.CoolingPumpStatus",
+        )
+        .diagnostic()
+        .icon("mdi:pump"),
+    );
 }
 
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
@@ -1457,6 +1466,9 @@ mod tests {
             EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Command(
                 ServoRudderCommand::Initialize,
             ))),
+            EoiCanData::RudderController(RudderControllerData::CoolingPumpStatus(
+                CoolingPumpStatus::Ok,
+            )),
             // Height sensors
             EoiCanData::HeightSensors(HeightSensorData::FrontLeft(height_status())),
             EoiCanData::HeightSensors(HeightSensorData::FrontRight(height_status())),

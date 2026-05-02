@@ -31,6 +31,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x200 | GnssStatus | GNSS |
 | 0x210 | TemperatureHeightSensorsController | Height Sensors |
 | 0x211 | TemperatureRudderController | Rudder Controller |
+| 0x212 | RudderControllerCoolingPumpStatus | Rudder Controller |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
@@ -54,6 +55,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | ServoRudderStatus | 0x020 | 3 | 0 | State | u8 enum | | 0=Uninitialized, 1=Operational, 0xFF=Unknown |
 | | | | 1–2 | Current setpoint | u16 | LE | 1000–2000 |
 | ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize |
+| RudderControllerCoolingPumpStatus | 0x212 | 1 | 0 | Fault input level | u8 | | Raw PC5 level: 0=fault asserted (low), 1=ok (high). Sent every 1 s. |
 
 ## Height Sensors
 

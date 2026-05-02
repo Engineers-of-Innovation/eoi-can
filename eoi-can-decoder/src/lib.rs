@@ -544,6 +544,7 @@ pub enum VescData {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum RudderControllerData {
     Servo(ServoData),
+    CoolingPumpStatus(CoolingPumpStatus),
 }
 
 #[derive(Debug, Serialize)]
@@ -592,6 +593,25 @@ impl From<u8> for ServoState {
             0 => Self::Uninitialized,
             1 => Self::Operational,
             0xFF => Self::Unknown,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum CoolingPumpStatus {
+    Fault,
+    Ok,
+    #[default]
+    Unknown,
+}
+
+impl From<u8> for CoolingPumpStatus {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Fault,
+            1 => Self::Ok,
             _ => Self::Unknown,
         }
     }
@@ -696,6 +716,9 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 setpoint: bytes_le_to_u16(data.get(1..3)?)?,
             }),
         ))),
+        0x212 => Some(EoiCanData::RudderController(
+            RudderControllerData::CoolingPumpStatus((*data.get(0)?).into()),
+        )),
         0x210 => Some(EoiCanData::Temperature(
             TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
         )),
@@ -1219,6 +1242,27 @@ mod tests {
         };
         assert!(status.state == ServoState::Operational);
         assert!(status.setpoint == 2000);
+    }
+
+    #[test]
+    fn rudder_cooling_pump_status() {
+        for (byte, expected) in [
+            (0x00u8, CoolingPumpStatus::Fault),
+            (0x01, CoolingPumpStatus::Ok),
+            (0x42, CoolingPumpStatus::Unknown),
+        ] {
+            let can_frame = can_frame::CanFrame::from_encoded(
+                embedded_can::Id::Standard(StandardId::new(0x212).unwrap()),
+                &[byte],
+            );
+            let data = parse_eoi_can_data(&can_frame).unwrap();
+            let EoiCanData::RudderController(RudderControllerData::CoolingPumpStatus(status)) =
+                data
+            else {
+                panic!("Unexpected data type");
+            };
+            assert!(status == expected);
+        }
     }
 
     #[test]
