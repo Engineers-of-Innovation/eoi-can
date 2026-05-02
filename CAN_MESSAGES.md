@@ -176,8 +176,8 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | | | | 4–5 | Raw deadman | i16 | BE | Counts |
 | | | | 6 | Gain | u8 | | 0–255 |
 | | | | 7 | Error flags | u8 bitfield | | bits 0–2=TWI error state, bit 3=NoEeprom, bit 4=GainClipping, bit 5=GainInvalid, bit 6=DeadmanMissing, bit 7=ImpedanceHigh |
-| ThrottleConfig | 0x1337 or 0x0337 (DLC=6) | 6 | 0 | Control type | u8 enum | | 0=DutyCycle, 1=FilteredDutyCycle, 2=Current, 3=Rpm, 4=CurrentRelative |
-| | | | 1 | (unused) | u8 | | |
+| ThrottleConfig | 0x1337 or 0x0337 (DLC=6) | 6 | 0 | Marker | u8 | | Must be 0xAA; otherwise frame is ignored |
+| | | | 1 | Control type | u8 enum | | 1=FilteredDutyCycle, 2=DutyCycle, 3=Current, 4=Rpm, 5=CurrentRelative |
 | | | | 2–3 | Lever forward | i16 | BE | Counts |
 | | | | 4–5 | Lever backward | i16 | BE | Counts |
 

@@ -167,11 +167,11 @@ pub struct ThrottleConfig {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 #[repr(u8)]
 pub enum ThrottleControlType {
-    DutyCycle = 0,
     FilteredDutyCycle = 1,
-    Current = 2,
-    Rpm = 3,
-    CurrentRelative = 4,
+    DutyCycle = 2,
+    Current = 3,
+    Rpm = 4,
+    CurrentRelative = 5,
     #[default]
     Unknown = 255,
 }
@@ -928,18 +928,20 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     impedance_high: *data.get(7)? & (1 << 7) != 0,
                 },
             }))),
-            6 => Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {
-                control_type: match *data.first()? {
-                    0 => ThrottleControlType::DutyCycle,
-                    1 => ThrottleControlType::FilteredDutyCycle,
-                    2 => ThrottleControlType::Current,
-                    3 => ThrottleControlType::Rpm,
-                    4 => ThrottleControlType::CurrentRelative,
-                    _ => ThrottleControlType::Unknown,
-                },
-                lever_forward: bytes_be_to_i16(data.get(2..4)?)?,
-                lever_backward: bytes_be_to_i16(data.get(4..6)?)?,
-            }))),
+            6 if data.first() == Some(&0xAA) => {
+                Some(EoiCanData::Throttle(ThrottleData::Config(ThrottleConfig {
+                    control_type: match *data.get(1)? {
+                        1 => ThrottleControlType::FilteredDutyCycle,
+                        2 => ThrottleControlType::DutyCycle,
+                        3 => ThrottleControlType::Current,
+                        4 => ThrottleControlType::Rpm,
+                        5 => ThrottleControlType::CurrentRelative,
+                        _ => ThrottleControlType::Unknown,
+                    },
+                    lever_forward: bytes_be_to_i16(data.get(2..4)?)?,
+                    lever_backward: bytes_be_to_i16(data.get(4..6)?)?,
+                })))
+            }
             _ => None,
         },
         _ => None,
@@ -1330,5 +1332,79 @@ mod tests {
 
         let data = parse_eoi_can_data(&can_frame).unwrap();
         assert!(matches!(data, EoiCanData::GanMppt(GanMpptData::Id3(_))));
+    }
+
+    fn parse_throttle_config(raw: &[u8]) -> Option<ThrottleConfig> {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x337).unwrap()),
+            raw,
+        );
+        match parse_eoi_can_data(&can_frame)? {
+            EoiCanData::Throttle(ThrottleData::Config(c)) => Some(c),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn throttle_config_duty_cycle() {
+        // wiki example: cansend can0 337#AA0200000000
+        let cfg = parse_throttle_config(&[0xAA, 0x02, 0x00, 0x00, 0x00, 0x00]).unwrap();
+        assert!(matches!(cfg.control_type, ThrottleControlType::DutyCycle));
+        assert!(cfg.lever_forward == 0);
+        assert!(cfg.lever_backward == 0);
+    }
+
+    #[test]
+    fn throttle_config_current_120a() {
+        // wiki example: cansend can0 337#AA0304B004B0 (120 A in 100 mA units)
+        let cfg = parse_throttle_config(&[0xAA, 0x03, 0x04, 0xB0, 0x04, 0xB0]).unwrap();
+        assert!(matches!(cfg.control_type, ThrottleControlType::Current));
+        assert!(cfg.lever_forward == 1200);
+        assert!(cfg.lever_backward == 1200);
+    }
+
+    #[test]
+    fn throttle_config_current_relative() {
+        // wiki table: 0x05 = Current Control Relative
+        let cfg = parse_throttle_config(&[0xAA, 0x05, 0x00, 0x00, 0x00, 0x00]).unwrap();
+        assert!(matches!(
+            cfg.control_type,
+            ThrottleControlType::CurrentRelative
+        ));
+    }
+
+    #[test]
+    fn throttle_config_missing_marker_is_ignored() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x337).unwrap()),
+            &[0x00, 0x02, 0x00, 0x00, 0x00, 0x00],
+        );
+        assert!(parse_eoi_can_data(&can_frame).is_none());
+    }
+
+    #[test]
+    fn throttle_status_full_decode() {
+        // value: 256 -> (256/512)*100 = 50.0 %
+        // raw_angle: 1024, raw_deadmen: 512, gain: 0x42
+        // error: 0xFD = 0b1111_1101 -> twi=5 (SlaveNAK), all higher flags set
+        let raw: [u8; 8] = [0x01, 0x00, 0x04, 0x00, 0x02, 0x00, 0x42, 0xFD];
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x337).unwrap()),
+            &raw,
+        );
+        let status = match parse_eoi_can_data(&can_frame).unwrap() {
+            EoiCanData::Throttle(ThrottleData::Status(s)) => s,
+            _ => panic!("expected ThrottleStatus"),
+        };
+        assert!((status.value - 50.0).abs() < 0.001);
+        assert!(status.raw_angle == 1024);
+        assert!(status.raw_deadmen == 512);
+        assert!(status.gain == 0x42);
+        assert!(matches!(status.error.twi, ThrottleTwiErrors::SlaveNAK));
+        assert!(status.error.no_eeprom);
+        assert!(status.error.gain_clipping);
+        assert!(status.error.gain_invalid);
+        assert!(status.error.deadman_missing);
+        assert!(status.error.impedance_high);
     }
 }
