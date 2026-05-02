@@ -12,8 +12,27 @@ use serde_json::{Value, json};
 pub fn apply_derived(merged: &mut Value) {
     apply_battery(merged);
     apply_vesc(merged);
+    apply_throttle(merged);
     apply_mppt(merged);
     apply_gan_mppt(merged);
+}
+
+fn apply_throttle(merged: &mut Value) {
+    let active = if merged.pointer("/Throttle/ToVescDutyCycle").is_some() {
+        Some("DutyCycle")
+    } else if merged.pointer("/Throttle/ToVescCurrent").is_some() {
+        Some("Current")
+    } else if merged.pointer("/Throttle/ToVescCurrentRelative").is_some() {
+        Some("CurrentRelative")
+    } else if merged.pointer("/Throttle/ToVescRpm").is_some() {
+        Some("Rpm")
+    } else {
+        None
+    };
+
+    if let Some(s) = active {
+        set_leaf(merged, &["Throttle", "ActiveControlType"], json!(s));
+    }
 }
 
 fn apply_battery(merged: &mut Value) {
@@ -248,6 +267,37 @@ mod tests {
             root.pointer("/EoiBattery/PackAndPerriCurrent/pack_power")
                 .is_none()
         );
+    }
+
+    #[test]
+    fn throttle_active_control_type_picks_present_command() {
+        let cases = [
+            (
+                json!({ "Throttle": { "ToVescCurrentRelative": 0.0 } }),
+                "CurrentRelative",
+            ),
+            (json!({ "Throttle": { "ToVescRpm": 1234.0 } }), "Rpm"),
+            (json!({ "Throttle": { "ToVescCurrent": 5.0 } }), "Current"),
+            (
+                json!({ "Throttle": { "ToVescDutyCycle": 50.0 } }),
+                "DutyCycle",
+            ),
+        ];
+        for (mut root, expected) in cases {
+            apply_derived(&mut root);
+            assert_eq!(
+                root.pointer("/Throttle/ActiveControlType")
+                    .and_then(Value::as_str),
+                Some(expected),
+            );
+        }
+    }
+
+    #[test]
+    fn throttle_active_control_type_absent_when_no_command() {
+        let mut root = json!({ "Throttle": { "Status": { "value": 0.0 } } });
+        apply_derived(&mut root);
+        assert!(root.pointer("/Throttle/ActiveControlType").is_none());
     }
 
     #[test]

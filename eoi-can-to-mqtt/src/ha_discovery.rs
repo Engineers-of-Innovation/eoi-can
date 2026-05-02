@@ -865,6 +865,15 @@ fn add_throttle(v: &mut Vec<HaEntity>) {
     );
     v.push(
         sensor(
+            "throttle_active_control_type",
+            "Throttle Active Control Type",
+            "Throttle.ActiveControlType",
+        )
+        .diagnostic()
+        .icon("mdi:cog-sync-outline"),
+    );
+    v.push(
+        sensor(
             "throttle_lever_forward",
             "Throttle Lever Forward",
             "Throttle.Config.lever_forward",
