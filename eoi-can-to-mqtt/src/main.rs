@@ -78,7 +78,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
         panic!("Error creating the client: {:?}", err);
     });
 
-    let ssl_opts = mqtt::SslOptionsBuilder::new().finalize();
+    let ssl_opts = mqtt::SslOptionsBuilder::new()
+        .trust_store("/etc/ssl/certs/ca-certificates.crt")
+        .expect("system CA bundle must exist on the datalogger")
+        .finalize();
 
     let conn_opts = mqtt::ConnectOptionsBuilder::new()
         .ssl_options(ssl_opts)
@@ -202,6 +205,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
 }
 
 fn announce_presence(client: &mqtt::Client) {
+    info!("Announcing presence to MQTT broker");
     if let Err(e) = ha_discovery::publish_discovery(client) {
         error!("Failed to publish HA discovery configs: {:?}", e);
     } else {

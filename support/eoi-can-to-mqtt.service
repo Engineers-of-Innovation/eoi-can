@@ -8,6 +8,7 @@ ExecStart=/home/engineer/eoi-can-to-mqtt
 WorkingDirectory=/home/engineer
 User=engineer
 Group=engineer
+Environment=RUST_LOG=debug,paho_mqtt_c=info,paho_mqtt=info
 Restart=always
 RestartSec=10
 
