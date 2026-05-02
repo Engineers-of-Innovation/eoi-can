@@ -4,3 +4,4 @@ screenshot.png
 *.log
 flamegraph.svg
 perf.data*
+.env

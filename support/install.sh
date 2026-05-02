@@ -6,6 +6,14 @@ USER_DIR="/home/engineer"
 SUPPORT_DIR="${USER_DIR}/support"
 SYSTEMD_DIR="/etc/systemd/system"
 IGNORE_SERVICE="eoi-can-init.service"
+MQTT_ENV_FILE="${USER_DIR}/eoi-can-to-mqtt.env"
+
+if [[ ! -f "$MQTT_ENV_FILE" ]]; then
+    echo "WARNING: $MQTT_ENV_FILE not found."
+    echo "  -> eoi-can-to-mqtt will fail to start until you create it."
+    echo "  -> cp ${SUPPORT_DIR}/eoi-can-to-mqtt.env.example $MQTT_ENV_FILE"
+    echo "  -> chmod 600 $MQTT_ENV_FILE   # then edit it and set MQTT_PASSWORD"
+fi
 
 echo "Stopping and disabling existing eoi- services..."
 for service in $(systemctl list-units --type=service --all | grep -o 'eoi-[^ ]*'); do

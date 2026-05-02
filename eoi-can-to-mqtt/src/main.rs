@@ -1,13 +1,12 @@
 use clap::Parser;
 use embedded_can::Frame;
-use eoi_can_decoder::{can_collector, parse_eoi_can_data};
+use eoi_can_decoder::parse_eoi_can_data;
 use get_wifi_ip::get_wifi_ip;
 use json_patch::merge;
 use paho_mqtt as mqtt;
 use rand::Rng;
 use rand::distr::Alphanumeric;
 use serde_json::json;
-use std::env;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use systemstat::{Platform, System};
@@ -17,7 +16,13 @@ use tracing::{Level, debug, error, info, trace, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
 
+mod derived;
+mod frame_cache;
+mod ha_discovery;
 mod mqtt_settings;
+mod round_floats;
+
+const FRAME_TTL: Duration = Duration::from_secs(10);
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -25,6 +30,14 @@ struct Args {
     /// CAN interface
     #[arg(short, long, default_value_t = String::from("can0"))]
     can_interface: String,
+
+    /// MQTT broker username
+    #[arg(short = 'u', long, env = "MQTT_USER", hide_env_values = true)]
+    mqtt_user: String,
+
+    /// MQTT broker password
+    #[arg(short = 'p', long, env = "MQTT_PASSWORD", hide_env_values = true)]
+    mqtt_password: String,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -48,21 +61,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
 
-    let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
+    let shared_frame_cache = Arc::new(Mutex::new(frame_cache::FrameCache::new()));
 
-    let can_collector_receiver = shared_can_collector.clone();
+    let frame_cache_receiver = shared_frame_cache.clone();
 
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
             .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
-
-    let mut trust_store = env::current_dir().unwrap();
-    trust_store.push(mqtt_settings::TRUST_STORE);
-
-    if !trust_store.exists() {
-        panic!("The trust store file does not exist: {:?}", trust_store);
-    }
 
     let create_opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(mqtt_settings::BROKER.to_string())
@@ -81,21 +87,39 @@ async fn main() -> Result<(), core::convert::Infallible> {
     });
 
     let ssl_opts = mqtt::SslOptionsBuilder::new()
-        .trust_store(trust_store)
-        .unwrap()
+        .trust_store("/etc/ssl/certs/ca-certificates.crt")
+        .expect("system CA bundle must exist on the datalogger")
         .finalize();
 
     let conn_opts = mqtt::ConnectOptionsBuilder::new()
         .ssl_options(ssl_opts)
         .keep_alive_interval(Duration::from_secs(20))
         .clean_session(true)
-        .user_name(mqtt_settings::USER.to_string())
-        .password(mqtt_settings::PASSWORD.to_string())
+        .user_name(args.mqtt_user.clone())
+        .password(args.mqtt_password.clone())
+        .will_message(ha_discovery::availability_will())
         .finalize();
 
-    if let Err(error) = client.connect(conn_opts.clone()) {
-        panic!("Unable to connect to MQTT broker: {:?}", error);
+    let mut delay = Duration::from_secs(1);
+    const MAX_DELAY: Duration = Duration::from_secs(30);
+    loop {
+        match client.connect(conn_opts.clone()) {
+            Ok(_) => {
+                info!("Connected to MQTT broker");
+                break;
+            }
+            Err(e) => {
+                error!(
+                    "Unable to connect to MQTT broker: {:?}; retrying in {:?}",
+                    e, delay
+                );
+                tokio::time::sleep(delay).await;
+                delay = (delay * 2).min(MAX_DELAY);
+            }
+        }
     }
+
+    announce_presence(&client);
 
     // Spawn a task to read CAN frames
     tokio::spawn(async move {
@@ -115,8 +139,8 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 continue;
             };
 
-            if let Ok(mut collector) = can_collector_receiver.lock() {
-                collector.insert(embedded_frame);
+            if let Ok(mut cache) = frame_cache_receiver.lock() {
+                cache.insert(embedded_frame);
             }
         }
     });
@@ -126,10 +150,14 @@ async fn main() -> Result<(), core::convert::Infallible> {
 
     tokio::time::sleep(Duration::from_secs(1)).await;
 
+    const MAX_RECONNECT_FAILURES: u32 = 5;
+    let mut reconnect_failures: u32 = 0;
+
     loop {
-        if let Ok(mut can_collector) = shared_can_collector.lock() {
-            if can_collector.get_dropped_frames() > 0 {
-                trace!("Dropped frames: {}", can_collector.get_dropped_frames());
+        if let Ok(mut cache) = shared_frame_cache.lock() {
+            let dropped = cache.take_dropped_frames();
+            if dropped > 0 {
+                trace!("Dropped frames: {}", dropped);
             }
             let mut parsed_frames = 0_u32;
             let system_uptime = sys.uptime().unwrap_or_default().as_secs();
@@ -153,7 +181,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
             };
             let mut merged_json = json!({ "DataLogger": { "Uptime": { "System": system_uptime, "Process": process_uptime }, "CpuLoad1M": cpu_usage_m1, "CpuTemp": cpu_temperature, "MemoryUsage": memory_percent_used, "WifiIp": wifi_ip } });
 
-            can_collector.iter().for_each(|frame| {
+            cache.iter_fresh(FRAME_TTL).for_each(|frame| {
                 trace!("Paring CAN frame: {:?}", frame);
                 if let Some(data) = parse_eoi_can_data(frame) {
                     trace!("{:?}", data);
@@ -169,7 +197,15 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 parsed_frames = parsed_frames.saturating_add(1);
             });
             trace!("Parsed frames: {}", parsed_frames);
-            can_collector.clear();
+            cache.prune(FRAME_TTL);
+
+            derived::apply_derived(&mut merged_json);
+
+            round_floats::round_floats_in_place(
+                &mut merged_json,
+                5,
+                &["GnssLatitude", "GnssLongitude"],
+            );
 
             // Send merged JSON to MQTT
             let mqtt_message = mqtt::Message::new(
@@ -177,18 +213,53 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 merged_json.to_string(),
                 mqtt::QOS_1,
             );
+
+            debug!("Publishing message to MQTT: {:?}", merged_json);
             if let Err(e) = client.publish(mqtt_message) {
                 error!("Failed to publish message: {:?}", e);
                 if matches!(e, mqtt::Error::Disconnected) {
-                    client
-                        .connect(conn_opts.clone())
-                        .expect("Unable to reconnect");
+                    match client.connect(conn_opts.clone()) {
+                        Ok(_) => {
+                            info!("Reconnected to MQTT broker");
+                            reconnect_failures = 0;
+                            if let Err(e) = ha_discovery::publish_availability(&client, true) {
+                                error!("Failed to republish availability: {:?}", e);
+                            }
+                        }
+                        Err(reconnect_err) => {
+                            reconnect_failures += 1;
+                            error!(
+                                "Reconnect failed ({}/{}): {:?}",
+                                reconnect_failures, MAX_RECONNECT_FAILURES, reconnect_err
+                            );
+                            if reconnect_failures >= MAX_RECONNECT_FAILURES {
+                                error!(
+                                    "Giving up after {} reconnect failures; exiting for systemd restart",
+                                    MAX_RECONNECT_FAILURES
+                                );
+                                std::process::exit(1);
+                            }
+                        }
+                    }
                 }
             } else {
+                reconnect_failures = 0;
                 debug!("Published message: {:?}", merged_json);
             }
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
+    }
+}
+
+fn announce_presence(client: &mqtt::Client) {
+    info!("Announcing presence to MQTT broker");
+    if let Err(e) = ha_discovery::publish_discovery(client) {
+        error!("Failed to publish HA discovery configs: {:?}", e);
+    } else {
+        info!("Published Home Assistant discovery configs");
+    }
+    if let Err(e) = ha_discovery::publish_availability(client, true) {
+        error!("Failed to publish availability: {:?}", e);
     }
 }

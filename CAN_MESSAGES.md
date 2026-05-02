@@ -27,9 +27,11 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x107 | TemperaturesAndStates | Battery Management System |
 | 0x108 | BatteryUptime | Battery Management System |
 | 0x109 | ThrottleToVescCurrent | Throttle Controller |
+| 0xA09 | ThrottleToVescCurrentRelative | Throttle Controller |
 | 0x200 | GnssStatus | GNSS |
 | 0x210 | TemperatureHeightSensorsController | Height Sensors |
 | 0x211 | TemperatureRudderController | Rudder Controller |
+| 0x212 | RudderControllerCoolingPumpStatus | Rudder Controller |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
@@ -53,6 +55,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | ServoRudderStatus | 0x020 | 3 | 0 | State | u8 enum | | 0=Uninitialized, 1=Operational, 0xFF=Unknown |
 | | | | 1–2 | Current setpoint | u16 | LE | 1000–2000 |
 | ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize |
+| RudderControllerCoolingPumpStatus | 0x212 | 1 | 0 | Fault input level | u8 | | Raw PC5 level: 0=fault asserted (low), 1=ok (high). Sent every 1 s. |
 
 ## Height Sensors
 
@@ -168,14 +171,15 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | ThrottleToVescDutyCycle | 0x0009 | 4 | 0–3 | Duty cycle | i32 | BE | raw / 1000 = % |
 | ThrottleToVescCurrent | 0x0109 | 4 | 0–3 | Current | i32 | BE | raw / 1000 = A |
+| ThrottleToVescCurrentRelative | 0x0A09 | 4 | 0–3 | Relative current | i32 | BE | raw / 1000 = % |
 | ThrottleToVescRpm | 0x0309 | 4 | 0–3 | RPM | i32 | BE | raw / 1000 = RPM |
 | ThrottleStatus | 0x1337 or 0x0337 (DLC=8) | 8 | 0–1 | Throttle value | i16 | BE | (raw / 512) × 100 = % |
 | | | | 2–3 | Raw angle | i16 | BE | Counts |
 | | | | 4–5 | Raw deadman | i16 | BE | Counts |
 | | | | 6 | Gain | u8 | | 0–255 |
 | | | | 7 | Error flags | u8 bitfield | | bits 0–2=TWI error state, bit 3=NoEeprom, bit 4=GainClipping, bit 5=GainInvalid, bit 6=DeadmanMissing, bit 7=ImpedanceHigh |
-| ThrottleConfig | 0x1337 or 0x0337 (DLC=6) | 6 | 0 | Control type | u8 enum | | 0=DutyCycle, 1=FilteredDutyCycle, 2=Current, 3=Rpm, 4=CurrentRelative |
-| | | | 1 | (unused) | u8 | | |
+| ThrottleConfig | 0x1337 or 0x0337 (DLC=6) | 6 | 0 | Marker | u8 | | Must be 0xAA; otherwise frame is ignored |
+| | | | 1 | Control type | u8 enum | | 1=FilteredDutyCycle, 2=DutyCycle, 3=Current, 4=Rpm, 5=CurrentRelative |
 | | | | 2–3 | Lever forward | i16 | BE | Counts |
 | | | | 4–5 | Lever backward | i16 | BE | Counts |
 

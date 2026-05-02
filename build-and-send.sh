@@ -12,12 +12,7 @@ if [[ ! "$1" =~ ^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+$ ]]; then
     exit 1
 fi
 
-# add second argument to compile for raspberry pi 4, e.g. ./build-and-send.sh engineer@10.12.0.208 rpi
-if [[ $2 ]]; then
-    arch="aarch64-unknown-linux-gnu" #RPI4
-else
-    arch="armv7-unknown-linux-gnueabihf" #old datalogger
-fi
+arch="aarch64-unknown-linux-gnu" #RPI4
 
 # building
 cd eoi-gnss-to-can
@@ -37,5 +32,4 @@ cd ..
 scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~/eoi-can-display-framebuffer.new
 scp target/${arch}/release/eoi-gnss-to-can ${1}:~/eoi-gnss-to-can.new
 scp target/${arch}/release/eoi-can-to-mqtt ${1}:~/eoi-can-to-mqtt.new
-scp -r eoi-can-to-mqtt/certs ${1}:certs 
 scp -r support ${1}:~
