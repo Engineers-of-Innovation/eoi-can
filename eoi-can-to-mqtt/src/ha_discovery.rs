@@ -30,35 +30,35 @@ const HUB: Device = Device {
 };
 const BATTERY: Device = Device {
     id: "eoi_battery",
-    name: "EoI Battery",
+    name: "Battery",
 };
 const VESC: Device = Device {
     id: "eoi_vesc",
-    name: "EoI VESC",
+    name: "VESC",
 };
 const THROTTLE: Device = Device {
     id: "eoi_throttle",
-    name: "EoI Throttle",
+    name: "Throttle",
 };
 const RUDDER: Device = Device {
     id: "eoi_rudder",
-    name: "EoI Rudder",
+    name: "Rudder",
 };
 const HEIGHT_SENSORS: Device = Device {
     id: "eoi_height_sensors",
-    name: "EoI Height Sensors",
+    name: "Height Sensors",
 };
 const GNSS: Device = Device {
     id: "eoi_gnss",
-    name: "EoI GNSS",
+    name: "GNSS",
 };
 const MPPT: Device = Device {
     id: "eoi_mppt",
-    name: "EoI MPPT",
+    name: "MPPT",
 };
 const GAN_MPPT: Device = Device {
     id: "eoi_gan_mppt",
-    name: "EoI GaN MPPT",
+    name: "GaN MPPT",
 };
 
 pub struct HaEntity {
