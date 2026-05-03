@@ -16,6 +16,7 @@ use embassy_time::Timer;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;
 use eoi_rust_firmware::cooling_pump;
+use eoi_rust_firmware::flow_sensor;
 use eoi_rust_firmware::steering_angle;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
 use {defmt_rtt as _, panic_probe as _};
@@ -89,4 +90,18 @@ async fn main(spawner: Spawner) {
         buffered.writer()
     )));
     spawner.spawn(unwrap!(steering_angle::pwm_task(steering_pwm)));
+
+    let flow = flow_sensor::init(p.TIM2, p.PA0, p.PA2, p.ADC2, p.PA1, p.PA3);
+    spawner.spawn(unwrap!(flow_sensor::flow_in_task(
+        flow.tim_in,
+        flow.adc,
+        flow.ntc_in,
+        buffered.writer()
+    )));
+    spawner.spawn(unwrap!(flow_sensor::flow_out_task(
+        flow.tim_out,
+        flow.adc,
+        flow.ntc_out,
+        buffered.writer()
+    )));
 }
