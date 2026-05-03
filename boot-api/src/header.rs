@@ -1,4 +1,4 @@
-use crc::{Crc, CRC_32_ISCSI};
+use crc::{CRC_32_ISCSI, Crc};
 
 pub const HEADER_MAGIC: [u8; 4] = [0xB0, 0x07, 0xCA, 0xFE];
 pub const HEADER_VERSION: u8 = 1;

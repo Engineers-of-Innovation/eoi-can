@@ -3,8 +3,8 @@ use core::ffi::c_void;
 
 use defmt::*;
 use embassy_futures::yield_now;
-use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_sync::blocking_mutex::Mutex;
+use embassy_sync::blocking_mutex::raw::RawMutex;
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
 use eoi_boot_api::header::HEADER_PARTITION_SIZE;
@@ -44,7 +44,8 @@ impl<'a, M: RawMutex, T: NorFlash + ReadNorFlash> FlashLayout<'a, M, T> {
         );
 
         core::assert_eq!(
-            header_len, HEADER_PARTITION_SIZE,
+            header_len,
+            HEADER_PARTITION_SIZE,
             "Header partition size mismatch"
         );
 
@@ -99,9 +100,7 @@ impl<'a, M: RawMutex, T: NorFlash + ReadNorFlash> FlashLayout<'a, M, T> {
 
     /// Write bytes to flash. `address` is an absolute address (base + offset).
     pub fn write_bytes(&self, address: usize, data: &[u8]) -> Result<(), ()> {
-        let offset = address
-            .checked_sub(self.flash_base_address)
-            .ok_or(())?;
+        let offset = address.checked_sub(self.flash_base_address).ok_or(())?;
         // Must be within header or app partition
         if offset < self.header_offset || offset + data.len() > self.app_offset + self.app_len {
             return Err(());
@@ -121,9 +120,8 @@ impl<'a, M: RawMutex, T: NorFlash + ReadNorFlash> FlashLayout<'a, M, T> {
         for offset in (0..total).step_by(erase_size) {
             let from = (self.header_offset + offset) as u32;
             let to = from + erase_size as u32;
-            self.flash.lock(|flash| {
-                flash.borrow_mut().erase(from, to).map_err(|_| ())
-            })?;
+            self.flash
+                .lock(|flash| flash.borrow_mut().erase(from, to).map_err(|_| ()))?;
             yield_now().await;
         }
         Ok(())

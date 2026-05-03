@@ -3,6 +3,7 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_stm32::{
     bind_interrupts,
     can::{Can, Rx0InterruptHandler, Rx1InterruptHandler, SceInterruptHandler, TxInterruptHandler},
@@ -11,7 +12,6 @@ use embassy_stm32::{
     i2c,
     peripherals::{self, CAN1, I2C2},
 };
-use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_time::Timer;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;

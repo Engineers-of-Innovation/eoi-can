@@ -139,8 +139,7 @@ where
                     ) => ValidationResult::BadLength,
                     Err(HeaderError::BadAppCrc) => ValidationResult::BadCrc,
                 };
-                self.send_response(&[msg::VALIDATE_APP, result as u8])
-                    .await;
+                self.send_response(&[msg::VALIDATE_APP, result as u8]).await;
             }
             msg::BOOT_APP => {
                 if validate_app(&self.flash).is_err() {
