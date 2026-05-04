@@ -947,6 +947,67 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
         .diagnostic()
         .icon("mdi:pump"),
     );
+    v.push(
+        sensor(
+            "rudder_steering_angle",
+            "Rudder Steering Angle",
+            "RudderController.SteeringAngle.angle",
+        )
+        .unit("°")
+        .measurement()
+        .icon("mdi:ship-wheel"),
+    );
+    v.push(
+        sensor(
+            "rudder_steering_angle_raw_adc",
+            "Rudder Steering Angle Raw ADC",
+            "RudderController.SteeringAngle.raw_adc",
+        )
+        .measurement()
+        .diagnostic(),
+    );
+    for (variant, label, object_suffix) in [
+        ("FlowSensorIn", "In", "in"),
+        ("FlowSensorOut", "Out", "out"),
+    ] {
+        v.push(
+            sensor(
+                format!("rudder_flow_sensor_{object_suffix}_rate"),
+                format!("Rudder Flow Sensor {label} Rate"),
+                &format!("RudderController.{variant}.flow_rate"),
+            )
+            .unit("mL/min")
+            .measurement()
+            .icon("mdi:water-pump"),
+        );
+        v.push(
+            sensor(
+                format!("rudder_flow_sensor_{object_suffix}_temperature"),
+                format!("Rudder Flow Sensor {label} Temperature"),
+                &format!("RudderController.{variant}.temperature"),
+            )
+            .measurement()
+            .diagnostic(),
+        );
+        v.push(
+            sensor(
+                format!("rudder_flow_sensor_{object_suffix}_raw_pulses"),
+                format!("Rudder Flow Sensor {label} Raw Pulses"),
+                &format!("RudderController.{variant}.raw_pulses"),
+            )
+            .measurement()
+            .diagnostic(),
+        );
+        v.push(
+            sensor(
+                format!("rudder_flow_sensor_{object_suffix}_raw_adc"),
+                format!("Rudder Flow Sensor {label} Raw ADC"),
+                &format!("RudderController.{variant}.raw_adc"),
+            )
+            .measurement()
+            .diagnostic(),
+        );
+    }
 }
 
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
@@ -1469,6 +1530,22 @@ mod tests {
             EoiCanData::RudderController(RudderControllerData::CoolingPumpStatus(
                 CoolingPumpStatus::Ok,
             )),
+            EoiCanData::RudderController(RudderControllerData::SteeringAngle(SteeringAngle {
+                angle: 0,
+                raw_adc: 0,
+            })),
+            EoiCanData::RudderController(RudderControllerData::FlowSensorIn(FlowSensor {
+                flow_rate: 0,
+                temperature: Some(0),
+                raw_pulses: 0,
+                raw_adc: 0,
+            })),
+            EoiCanData::RudderController(RudderControllerData::FlowSensorOut(FlowSensor {
+                flow_rate: 0,
+                temperature: Some(0),
+                raw_pulses: 0,
+                raw_adc: 0,
+            })),
             // Height sensors
             EoiCanData::HeightSensors(HeightSensorData::FrontLeft(height_status())),
             EoiCanData::HeightSensors(HeightSensorData::FrontRight(height_status())),

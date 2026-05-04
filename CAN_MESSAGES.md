@@ -32,6 +32,10 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x210 | TemperatureHeightSensorsController | Height Sensors |
 | 0x211 | TemperatureRudderController | Rudder Controller |
 | 0x212 | RudderControllerCoolingPumpStatus | Rudder Controller |
+| 0x213 | SteeringAngle | Rudder Controller |
+| 0x214 | SteeringAngleCalibration (reserved) | Rudder Controller |
+| 0x215 | FlowSensorIn | Rudder Controller |
+| 0x216 | FlowSensorOut | Rudder Controller |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
@@ -56,6 +60,17 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | | | | 1–2 | Current setpoint | u16 | LE | 1000–2000 |
 | ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize |
 | RudderControllerCoolingPumpStatus | 0x212 | 1 | 0 | Fault input level | u8 | | Raw PC5 level: 0=fault asserted (low), 1=ok (high). Sent every 1 s. |
+| SteeringAngle | 0x213 | 4 | 0–1 | Angle | i16 | LE | -180 to +180 degrees. Sent every 100 ms. |
+| | | | 2–3 | Raw ADC | u16 | LE | 0–4095 (12-bit). Linear mapping: 0=-180°, 4095=+180°. |
+| SteeringAngleCalibration | 0x214 | TBD | TBD | TBD | TBD | | Reserved for steering angle calibration; format not yet defined. |
+| FlowSensorIn | 0x215 | 8 | 0–1 | Flow rate | u16 | LE | mL/min. Sent every 1 s. Datasheet: 22.9 Hz at 1880 mL/min. |
+| | | | 2–3 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` (`-32768`) means open/shorted NTC. |
+| | | | 4–5 | Raw pulses | u16 | LE | Pulses counted in the last 1 s window. |
+| | | | 6–7 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). NTC = 50 kΩ at 25 °C, B=3950, top = 47 kΩ. |
+| FlowSensorOut | 0x216 | 8 | 0–1 | Flow rate | u16 | LE | mL/min. Same scaling and cadence as `FlowSensorIn`. |
+| | | | 2–3 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` means open/shorted NTC. |
+| | | | 4–5 | Raw pulses | u16 | LE | Pulses counted in the last 1 s window. |
+| | | | 6–7 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). |
 
 ## Height Sensors
 

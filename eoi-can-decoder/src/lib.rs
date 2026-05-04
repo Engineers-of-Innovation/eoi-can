@@ -545,6 +545,26 @@ pub enum VescData {
 pub enum RudderControllerData {
     Servo(ServoData),
     CoolingPumpStatus(CoolingPumpStatus),
+    SteeringAngle(SteeringAngle),
+    FlowSensorIn(FlowSensor),
+    FlowSensorOut(FlowSensor),
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct SteeringAngle {
+    pub angle: i16,
+    pub raw_adc: u16,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct FlowSensor {
+    pub flow_rate: u16,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<i16>,
+    pub raw_pulses: u16,
+    pub raw_adc: u16,
 }
 
 #[derive(Debug, Serialize)]
@@ -718,6 +738,18 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         ))),
         0x212 => Some(EoiCanData::RudderController(
             RudderControllerData::CoolingPumpStatus((*data.get(0)?).into()),
+        )),
+        0x213 => Some(EoiCanData::RudderController(
+            RudderControllerData::SteeringAngle(SteeringAngle {
+                angle: bytes_le_to_i16(data.get(0..2)?)?,
+                raw_adc: bytes_le_to_u16(data.get(2..4)?)?,
+            }),
+        )),
+        0x215 => Some(EoiCanData::RudderController(
+            RudderControllerData::FlowSensorIn(parse_flow_sensor(data)?),
+        )),
+        0x216 => Some(EoiCanData::RudderController(
+            RudderControllerData::FlowSensorOut(parse_flow_sensor(data)?),
         )),
         0x210 => Some(EoiCanData::Temperature(
             TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
@@ -969,6 +1001,16 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         },
         _ => None,
     }
+}
+
+fn parse_flow_sensor(data: &[u8]) -> Option<FlowSensor> {
+    let raw_temperature = bytes_le_to_i16(data.get(2..4)?)?;
+    Some(FlowSensor {
+        flow_rate: bytes_le_to_u16(data.get(0..2)?)?,
+        temperature: (raw_temperature != i16::MIN).then_some(raw_temperature),
+        raw_pulses: bytes_le_to_u16(data.get(4..6)?)?,
+        raw_adc: bytes_le_to_u16(data.get(6..8)?)?,
+    })
 }
 
 // Helper functions now return Option<T> instead of panicking
@@ -1263,6 +1305,57 @@ mod tests {
             };
             assert!(status == expected);
         }
+    }
+
+    #[test]
+    fn rudder_steering_angle() {
+        // angle = -90° (0xFFA6 LE), raw_adc = 1024 (0x0400 LE)
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x213).unwrap()),
+            &[0xA6, 0xFF, 0x00, 0x04],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::SteeringAngle(steering)) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(steering.angle == -90);
+        assert!(steering.raw_adc == 1024);
+    }
+
+    #[test]
+    fn rudder_flow_sensor_in() {
+        // flow_rate = 1880 mL/min (0x0758 LE), temperature = 2345 cd (0x0929 LE),
+        // raw_pulses = 23 (0x0017 LE), raw_adc = 2048 (0x0800 LE)
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x215).unwrap()),
+            &[0x58, 0x07, 0x29, 0x09, 0x17, 0x00, 0x00, 0x08],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::FlowSensorIn(flow)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert!(flow.flow_rate == 1880);
+        assert!(flow.temperature == Some(2345));
+        assert!(flow.raw_pulses == 23);
+        assert!(flow.raw_adc == 2048);
+    }
+
+    #[test]
+    fn rudder_flow_sensor_out_ntc_fault() {
+        // temperature = i16::MIN (0x8000 LE) → None (open/shorted NTC)
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x216).unwrap()),
+            &[0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0xFF, 0x0F],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::FlowSensorOut(flow)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert!(flow.flow_rate == 0);
+        assert!(flow.temperature.is_none());
+        assert!(flow.raw_pulses == 0);
+        assert!(flow.raw_adc == 4095);
     }
 
     #[test]
