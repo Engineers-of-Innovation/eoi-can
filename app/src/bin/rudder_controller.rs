@@ -75,7 +75,7 @@ async fn main(spawner: Spawner) {
         buffered.writer()
     )));
 
-    let (cooling_pump_fault) = cooling_pump::init(p.DAC1, p.PA4, p.PA5, p.PA6, p.PA7, p.PC5);
+    let cooling_pump_fault = cooling_pump::init(p.DAC1, p.PA4, p.PA5, p.PA6, p.PA7, p.PC5);
 
     spawner.spawn(unwrap!(cooling_pump::fault_status_task(
         cooling_pump_fault,

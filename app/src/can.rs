@@ -35,14 +35,13 @@ pub async fn can_rx_task(rx: BufferedCanReceiver) {
             Ok(envelope) => {
                 let frame = &envelope.frame;
                 // Check for bootloader reboot command
-                if let embassy_stm32::can::Id::Standard(id) = frame.id() {
-                    if id.as_raw() == protocol::CAN_ID_HOST_TO_DEVICE
+                if let embassy_stm32::can::Id::Standard(id) = frame.id()
+                    && id.as_raw() == protocol::CAN_ID_HOST_TO_DEVICE
                         && frame.data().first() == Some(&protocol::msg::REBOOT)
                     {
                         info!("Reboot to bootloader requested via CAN");
                         cortex_m::peripheral::SCB::sys_reset();
                     }
-                }
                 trace!("CAN rx: {:02x}", frame.data());
             }
             Err(e) => warn!("CAN rx error: {:?}", e),

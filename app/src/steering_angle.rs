@@ -58,7 +58,7 @@ pub async fn sample_task(
         LATEST_ANGLE_DEG.store(angle, Ordering::Relaxed);
 
         sample_count += 1;
-        if sample_count % debug_every_n_samples == 0 {
+        if sample_count.is_multiple_of(debug_every_n_samples) {
             info!("Steering angle: {}° (raw {})", angle, raw);
             sample_count = 0;
         }

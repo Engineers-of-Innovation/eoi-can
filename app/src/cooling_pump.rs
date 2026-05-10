@@ -3,7 +3,6 @@ use embassy_stm32::Peri;
 use embassy_stm32::can::{BufferedCanSender, Frame, StandardId};
 use embassy_stm32::dac::{DacChannel, Value};
 use embassy_stm32::gpio::{Input, Level, Output, Pull, Speed};
-use embassy_stm32::mode::Blocking;
 use embassy_stm32::peripherals::{DAC1, PA4, PA5, PA6, PA7, PC5};
 use embassy_time::Timer;
 
@@ -36,9 +35,9 @@ pub fn init(
     core::mem::forget(dac); // Prevent the DAC from being deinitialized, which would disable the output.
 
     // Fault is open-drain active-low on the driver, so pull up internally.
-    let fault = Input::new(fault_pin, Pull::Up);
+    
 
-    fault
+    Input::new(fault_pin, Pull::Up)
 }
 
 #[embassy_executor::task]
