@@ -30,5 +30,6 @@ pub fn clock_config() -> embassy_stm32::Config {
             mode: LseMode::Oscillator(LseDrive::MediumHigh),
         }),
     };
+    config.rcc.mux.adcsel = embassy_stm32::rcc::mux::Adcsel::SYS;
     config
 }
