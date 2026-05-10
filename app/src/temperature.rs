@@ -54,7 +54,7 @@ pub async fn temperature_task(
 
         // temp_raw is in centidegrees (0.01 °C per LSB): 2500 = 25.00 °C
         info!(
-            "temperature: {}.{:02} C",
+            "PCB Temperature: {}.{:02} C",
             temp_raw / 100,
             (temp_raw % 100).abs()
         );
