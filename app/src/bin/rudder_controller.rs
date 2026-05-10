@@ -50,9 +50,6 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Rudder Controller");
 
-    let (_cooling_pump_current_ref, cooling_pump_fault) =
-        cooling_pump::init(p.DAC1, p.PA4, p.PA5, p.PA6, p.PA7, p.PC5);
-
     let status_led = Output::new(p.PC1, Level::High, Speed::Low);
     let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
     spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
@@ -77,6 +74,8 @@ async fn main(spawner: Spawner) {
         CAN_ID_TEMPERATURE_RUDDER_CONTROLLER,
         buffered.writer()
     )));
+
+    let (cooling_pump_fault) = cooling_pump::init(p.DAC1, p.PA4, p.PA5, p.PA6, p.PA7, p.PC5);
 
     spawner.spawn(unwrap!(cooling_pump::fault_status_task(
         cooling_pump_fault,

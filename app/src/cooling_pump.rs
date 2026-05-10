@@ -25,7 +25,7 @@ pub fn init(
     enable_pin: Peri<'static, PA6>,
     direction_pin: Peri<'static, PA7>,
     fault_pin: Peri<'static, PC5>,
-) -> (DacChannel<'static, Blocking>, Input<'static>) {
+) -> Input<'static> {
     // Drive motor driver into wake / enabled / forward state.
     core::mem::forget(Output::new(sleep_pin, Level::High, Speed::Low));
     core::mem::forget(Output::new(enable_pin, Level::High, Speed::Low));
@@ -33,11 +33,12 @@ pub fn init(
 
     let mut dac = DacChannel::new_blocking(dac1, vref_pin);
     dac.set(Value::Bit12Right(CURRENT_LIMIT_DAC_CODE));
+    core::mem::forget(dac); // Prevent the DAC from being deinitialized, which would disable the output.
 
     // Fault is open-drain active-low on the driver, so pull up internally.
     let fault = Input::new(fault_pin, Pull::Up);
 
-    (dac, fault)
+    fault
 }
 
 #[embassy_executor::task]
