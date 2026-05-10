@@ -48,12 +48,20 @@ pub async fn sample_task(
     mut can_tx: BufferedCanSender,
 ) {
     let mut ticker = Ticker::every(Duration::from_millis(SAMPLE_PERIOD_MS));
+    let debug_every_n_samples = 10;
+    let mut sample_count: u32 = 0;
     loop {
         ticker.next().await;
 
         let raw = adc.blocking_read(&mut input, SampleTime::CYCLES247_5);
         let angle = raw_to_angle_deg(raw);
         LATEST_ANGLE_DEG.store(angle, Ordering::Relaxed);
+
+        sample_count += 1;
+        if sample_count % debug_every_n_samples == 0 {
+            info!("Steering angle: {}° (raw {})", angle, raw);
+            sample_count = 0;
+        }
 
         let angle_le = angle.to_le_bytes();
         let raw_le = raw.to_le_bytes();

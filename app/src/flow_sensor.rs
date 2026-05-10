@@ -154,6 +154,14 @@ async fn broadcast<T: GeneralInstance4Channel>(
     let mlpm = pulses_to_milliliter_per_minute(pulses);
     let cdeg = raw_to_centidegrees(raw_adc);
 
+    info!(
+        "Flow sensor {:#x}: {} mL/min, {} °C (raw ADC {})",
+        can_id.as_raw(),
+        mlpm,
+        cdeg as f32 / 100.0,
+        raw_adc
+    );
+
     let mlpm_le = mlpm.to_le_bytes();
     let cdeg_le = cdeg.to_le_bytes();
     let pulses_le = pulses.to_le_bytes();
