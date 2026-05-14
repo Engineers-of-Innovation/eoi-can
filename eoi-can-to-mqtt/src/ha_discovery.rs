@@ -1008,6 +1008,24 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
             .diagnostic(),
         );
     }
+    v.push(
+        sensor(
+            "rudder_motor_temperature",
+            "Rudder Motor Temperature",
+            "RudderController.MotorTemperature.temperature",
+        )
+        .measurement()
+        .diagnostic(),
+    );
+    v.push(
+        sensor(
+            "rudder_motor_temperature_raw_adc",
+            "Rudder Motor Temperature Raw ADC",
+            "RudderController.MotorTemperature.raw_adc",
+        )
+        .measurement()
+        .diagnostic(),
+    );
 }
 
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
@@ -1546,6 +1564,12 @@ mod tests {
                 raw_pulses: 0,
                 raw_adc: 0,
             })),
+            EoiCanData::RudderController(RudderControllerData::MotorTemperature(
+                MotorTemperature {
+                    temperature: Some(0),
+                    raw_adc: 0,
+                },
+            )),
             // Height sensors
             EoiCanData::HeightSensors(HeightSensorData::FrontLeft(height_status())),
             EoiCanData::HeightSensors(HeightSensorData::FrontRight(height_status())),

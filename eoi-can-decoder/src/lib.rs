@@ -548,6 +548,7 @@ pub enum RudderControllerData {
     SteeringAngle(SteeringAngle),
     FlowSensorIn(FlowSensor),
     FlowSensorOut(FlowSensor),
+    MotorTemperature(MotorTemperature),
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -564,6 +565,14 @@ pub struct FlowSensor {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temperature: Option<i16>,
     pub raw_pulses: u16,
+    pub raw_adc: u16,
+}
+
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MotorTemperature {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<i16>,
     pub raw_adc: u16,
 }
 
@@ -751,6 +760,15 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x216 => Some(EoiCanData::RudderController(
             RudderControllerData::FlowSensorOut(parse_flow_sensor(data)?),
         )),
+        0x217 => {
+            let raw_temperature = bytes_le_to_i16(data.get(0..2)?)?;
+            Some(EoiCanData::RudderController(
+                RudderControllerData::MotorTemperature(MotorTemperature {
+                    temperature: (raw_temperature != i16::MIN).then_some(raw_temperature),
+                    raw_adc: bytes_le_to_u16(data.get(2..4)?)?,
+                }),
+            ))
+        }
         0x210 => Some(EoiCanData::Temperature(
             TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
         )),
@@ -1356,6 +1374,38 @@ mod tests {
         assert!(flow.temperature.is_none());
         assert!(flow.raw_pulses == 0);
         assert!(flow.raw_adc == 4095);
+    }
+
+    #[test]
+    fn rudder_motor_temperature() {
+        // temperature = 2345 cd (0x0929 LE), raw_adc = 2048 (0x0800 LE)
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x217).unwrap()),
+            &[0x29, 0x09, 0x00, 0x08],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::MotorTemperature(motor)) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(motor.temperature == Some(2345));
+        assert!(motor.raw_adc == 2048);
+    }
+
+    #[test]
+    fn rudder_motor_temperature_ntc_fault() {
+        // temperature = i16::MIN (0x8000 LE) → None (open/shorted NTC), raw_adc = 4095
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x217).unwrap()),
+            &[0x00, 0x80, 0xFF, 0x0F],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::MotorTemperature(motor)) = data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(motor.temperature.is_none());
+        assert!(motor.raw_adc == 4095);
     }
 
     #[test]

@@ -36,6 +36,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x214 | SteeringAngleCalibration (reserved) | Rudder Controller |
 | 0x215 | FlowSensorIn | Rudder Controller |
 | 0x216 | FlowSensorOut | Rudder Controller |
+| 0x217 | MotorTemperature | Rudder Controller |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
@@ -71,6 +72,8 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | | | | 2–3 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` means open/shorted NTC. |
 | | | | 4–5 | Raw pulses | u16 | LE | Pulses counted in the last 1 s window. |
 | | | | 6–7 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). |
+| MotorTemperature | 0x217 | 4 | 0–1 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` (`-32768`) means open/shorted NTC. Sent every 1 s. NTC = 10 kΩ at 25 °C, B=3950, top = 10 kΩ. Shares PA3 with `FlowSensorOut`'s NTC; mutually exclusive with 0x216. |
+| | | | 2–3 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). |
 
 ## Height Sensors
 
