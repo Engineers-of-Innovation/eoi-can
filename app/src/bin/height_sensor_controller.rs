@@ -14,8 +14,10 @@ use embassy_stm32::{
     usart,
 };
 use embassy_time::Timer;
+use eoi_rust_firmware::app_type::AppType;
 use eoi_rust_firmware::can::{can_rx_task, init_can};
 use eoi_rust_firmware::clock::clock_config;
+use eoi_rust_firmware::declare_app_type;
 use eoi_rust_firmware::height_sensor::{
     CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT,
     CAN_ID_HEIGHT_SENSOR_RESERVED1, CAN_ID_HEIGHT_SENSOR_RESERVED2, height_sensor_task,
@@ -23,6 +25,8 @@ use eoi_rust_firmware::height_sensor::{
 };
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
 use {defmt_rtt as _, panic_probe as _};
+
+declare_app_type!(AppType::HeightSensorController);
 
 bind_interrupts!(struct Irqs {
     CAN1_TX  => TxInterruptHandler<CAN1>;
@@ -65,9 +69,14 @@ async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Height Sensor Controller");
 
-    let status_led = Output::new(p.PC1, Level::High, Speed::Low);
+    let green_led = Output::new(p.PC1, Level::High, Speed::Low);
+    let red_led = Output::new(p.PC2, Level::High, Speed::Low);
+    let blue_led = Output::new(p.PC3, Level::High, Speed::Low);
+    core::mem::forget(red_led);
+    core::mem::forget(blue_led);
+
     let watchdog = IndependentWatchdog::new(p.IWDG, 4_000_000);
-    spawner.spawn(unwrap!(heartbeat_task(status_led, watchdog)));
+    spawner.spawn(unwrap!(heartbeat_task(green_led, watchdog)));
 
     let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
     let buffered = init_can(can, p.PB7).await;

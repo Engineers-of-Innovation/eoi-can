@@ -7,6 +7,11 @@ edition = "2024"
 name = "eoi-boot"
 path = "src/main.rs"
 
+[features]
+# Exactly one of these must be enabled. They match the app's [[bin]] names.
+rudder-controller = []
+height-sensor-controller = []
+
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }
 embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["stm32l471rg", "defmt", "time-driver-tim4"] }

@@ -4,6 +4,23 @@
 mod bootloader;
 mod flash;
 
+#[cfg(all(feature = "rudder-controller", feature = "height-sensor-controller"))]
+compile_error!(
+    "exactly one of the `rudder-controller` / `height-sensor-controller` features must be enabled, not both"
+);
+
+#[cfg(not(any(feature = "rudder-controller", feature = "height-sensor-controller")))]
+compile_error!(
+    "one of the `rudder-controller` / `height-sensor-controller` features must be enabled"
+);
+
+#[cfg(feature = "rudder-controller")]
+pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
+    eoi_boot_api::header::AppType::RudderController;
+#[cfg(feature = "height-sensor-controller")]
+pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
+    eoi_boot_api::header::AppType::HeightSensorController;
+
 use core::cell::RefCell;
 
 use defmt::*;

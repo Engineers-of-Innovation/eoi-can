@@ -46,6 +46,7 @@ pub enum ValidationResult {
     BadMagic,
     BadLength,
     BadCrc,
+    WrongAppType,
     Unknown(u8),
 }
 
@@ -56,6 +57,7 @@ impl std::fmt::Display for ValidationResult {
             Self::BadMagic => write!(f, "BadMagic"),
             Self::BadLength => write!(f, "BadLength"),
             Self::BadCrc => write!(f, "BadCrc"),
+            Self::WrongAppType => write!(f, "WrongAppType"),
             Self::Unknown(v) => write!(f, "Unknown(0x{:02X})", v),
         }
     }
@@ -68,6 +70,7 @@ impl From<u8> for ValidationResult {
             1 => Self::BadMagic,
             2 => Self::BadLength,
             3 => Self::BadCrc,
+            4 => Self::WrongAppType,
             other => Self::Unknown(other),
         }
     }

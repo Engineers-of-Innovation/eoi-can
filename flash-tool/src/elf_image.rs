@@ -1,5 +1,9 @@
-use eoi_boot_api::header;
+use eoi_boot_api::header::{self, AppType};
 use std::path::Path;
+
+/// The app partition starts here in flash. Keep in sync with
+/// `linker/app.x` (FLASH origin) and `boot/src/flash.rs` (app_offset).
+const EXPECTED_APP_BASE_ADDRESS: usize = 0x0801_4800;
 
 /// Firmware image ready to be flashed (header + raw app binary).
 pub struct FirmwareImage {
@@ -7,6 +11,8 @@ pub struct FirmwareImage {
     pub data: Vec<u8>,
     /// Size of just the app binary (without header).
     pub app_size: usize,
+    /// Application type declared by the binary (via the `.app_type` ELF section).
+    pub app_type: AppType,
 }
 
 impl FirmwareImage {
@@ -29,13 +35,16 @@ impl FirmwareImage {
             return Err(ElfError::NotArm(elf.ehdr.e_machine));
         }
 
+        // Read application type from the dedicated ELF section.
+        let app_type = extract_app_type(&elf, input)?;
+
         // Extract loadable segments into a raw memory image
         let raw_image = extract_loadable_segments(&elf, input)?;
         log::info!("Raw firmware image: {} bytes", raw_image.len());
 
         // Compute CRC32 and build header
         let app_crc = header::compute_crc(&raw_image);
-        let hdr = header::build_header(raw_image.len() as u32, app_crc);
+        let hdr = header::build_header(raw_image.len() as u32, app_crc, app_type);
 
         // Combine header + raw image
         let mut blob = Vec::with_capacity(header::HEADER_PARTITION_SIZE + raw_image.len());
@@ -45,8 +54,31 @@ impl FirmwareImage {
         Ok(Self {
             app_size: raw_image.len(),
             data: blob,
+            app_type,
         })
     }
+}
+
+/// Locate the `.app_type` section in the ELF and decode the single byte it carries.
+fn extract_app_type(
+    elf: &elf::ElfBytes<elf::endian::LittleEndian>,
+    input: &[u8],
+) -> Result<AppType, ElfError> {
+    let section = elf
+        .section_header_by_name(".app_type")
+        .map_err(ElfError::Parse)?
+        .ok_or(ElfError::MissingAppType)?;
+
+    let start = section.sh_offset as usize;
+    let end = start
+        .checked_add(section.sh_size as usize)
+        .ok_or(ElfError::MissingAppType)?;
+    let bytes = input.get(start..end).ok_or(ElfError::MissingAppType)?;
+
+    if bytes.len() != 1 {
+        return Err(ElfError::BadAppType(bytes.to_vec()));
+    }
+    AppType::from_u8(bytes[0]).ok_or(ElfError::BadAppType(bytes.to_vec()))
 }
 
 /// Extract all PT_LOAD segments from an ELF into a contiguous memory image.
@@ -81,6 +113,13 @@ fn extract_loadable_segments(
         highest_addr,
         highest_addr - lowest_addr
     );
+
+    if lowest_addr != EXPECTED_APP_BASE_ADDRESS {
+        return Err(ElfError::WrongLoadAddress {
+            found: lowest_addr,
+            expected: EXPECTED_APP_BASE_ADDRESS,
+        });
+    }
 
     // Build the raw image
     let mut output = vec![0x00_u8; highest_addr - lowest_addr];
@@ -123,4 +162,14 @@ pub enum ElfError {
         end: usize,
         file_size: usize,
     },
+    #[error(
+        "ELF is missing the `.app_type` section — binary must call `declare_app_type!(...)` (in eoi-rust-firmware::app_type)"
+    )]
+    MissingAppType,
+    #[error("`.app_type` section has unexpected contents: {0:02X?}")]
+    BadAppType(Vec<u8>),
+    #[error(
+        "ELF is linked at 0x{found:08X} but the app partition starts at 0x{expected:08X} — rebuild the app with `--features bootloader`"
+    )]
+    WrongLoadAddress { found: usize, expected: usize },
 }

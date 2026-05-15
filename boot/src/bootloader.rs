@@ -5,6 +5,7 @@ use embassy_sync::blocking_mutex::raw::RawMutex;
 use embassy_time::{Duration, Timer, with_timeout};
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
+use crate::EXPECTED_APP_TYPE;
 use crate::flash::FlashLayout;
 use eoi_boot_api::header::{HeaderError, HeaderInfo, ValidationResult};
 use eoi_boot_api::protocol;
@@ -138,6 +139,9 @@ where
                         | HeaderError::BadVersion,
                     ) => ValidationResult::BadLength,
                     Err(HeaderError::BadAppCrc) => ValidationResult::BadCrc,
+                    Err(HeaderError::BadAppType | HeaderError::WrongAppType) => {
+                        ValidationResult::WrongAppType
+                    }
                 };
                 self.send_response(&[msg::VALIDATE_APP, result as u8]).await;
             }
@@ -245,9 +249,17 @@ fn validate_app<M: RawMutex, T: NorFlash + ReadNorFlash>(
 
     let header = HeaderInfo::from_bytes(&header_bytes)?;
     info!(
-        "Header parsed: app_len={} app_crc=0x{:08X}",
-        header.app_len, header.app_crc
+        "Header parsed: app_len={} app_crc=0x{:08X} app_type={}",
+        header.app_len, header.app_crc, header.app_type
     );
+
+    if header.app_type != EXPECTED_APP_TYPE {
+        warn!(
+            "App type mismatch: image is {}, board expects {}",
+            header.app_type, EXPECTED_APP_TYPE
+        );
+        return Err(HeaderError::WrongAppType);
+    }
 
     let max_app_len = flash.max_app_len();
     let mut read_offset: usize = 0;

@@ -6,10 +6,32 @@ pub const HEADER_PARTITION_SIZE: usize = 2048;
 
 const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 
+/// Application type baked into the firmware header. The bootloader is
+/// compiled for one specific variant and refuses to boot an image whose
+/// type doesn't match.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+#[repr(u8)]
+pub enum AppType {
+    RudderController = 0x01,
+    HeightSensorController = 0x02,
+}
+
+impl AppType {
+    pub fn from_u8(v: u8) -> Option<Self> {
+        match v {
+            0x01 => Some(Self::RudderController),
+            0x02 => Some(Self::HeightSensorController),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct HeaderInfo {
     pub app_len: u32,
     pub app_crc: u32,
+    pub app_type: AppType,
 }
 
 #[derive(Debug)]
@@ -20,6 +42,8 @@ pub enum HeaderError {
     ZeroLength,
     AppTooLarge,
     BadAppCrc,
+    BadAppType,
+    WrongAppType,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +54,7 @@ pub enum ValidationResult {
     BadMagic = 1,
     BadLength = 2,
     BadCrc = 3,
+    WrongAppType = 4,
 }
 
 impl HeaderInfo {
@@ -46,7 +71,12 @@ impl HeaderInfo {
         if app_len == 0 {
             return Err(HeaderError::ZeroLength);
         }
-        Ok(Self { app_len, app_crc })
+        let app_type = AppType::from_u8(data[13]).ok_or(HeaderError::BadAppType)?;
+        Ok(Self {
+            app_len,
+            app_crc,
+            app_type,
+        })
     }
 
     /// Validate that app_len fits in the partition and CRC matches.
@@ -80,12 +110,13 @@ impl HeaderInfo {
 }
 
 /// Build a 2048-byte header for the given app.
-pub fn build_header(app_len: u32, app_crc: u32) -> [u8; HEADER_PARTITION_SIZE] {
+pub fn build_header(app_len: u32, app_crc: u32, app_type: AppType) -> [u8; HEADER_PARTITION_SIZE] {
     let mut header = [0xFF_u8; HEADER_PARTITION_SIZE];
     header[0..4].copy_from_slice(&HEADER_MAGIC);
     header[4] = HEADER_VERSION;
     header[5..9].copy_from_slice(&app_len.to_le_bytes());
     header[9..13].copy_from_slice(&app_crc.to_le_bytes());
+    header[13] = app_type as u8;
     header
 }
 

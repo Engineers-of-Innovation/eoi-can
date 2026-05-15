@@ -1,5 +1,6 @@
 #![no_std]
 
+pub mod app_type;
 pub mod can;
 pub mod clock;
 pub mod cooling_pump;

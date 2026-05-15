@@ -37,9 +37,17 @@ enum Command {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
+    if let Err(e) = run().await {
+        // Use Display, not Debug, so thiserror's #[error(...)] messages reach the user.
+        eprintln!("Error: {e}");
+        std::process::exit(1);
+    }
+}
+
+async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let client = CanClient::connect(&cli.interface).await?;
 
@@ -80,7 +88,8 @@ async fn flash(
     log::info!("Parsing ELF file: {}", elf_file);
     let firmware = FirmwareImage::from_elf_file(elf_file)?;
     log::info!(
-        "Firmware: {} bytes app + 2048 bytes header = {} bytes total",
+        "Firmware: app_type={:?}, {} bytes app + 2048 bytes header = {} bytes total",
+        firmware.app_type,
         firmware.app_size,
         firmware.data.len()
     );
@@ -113,6 +122,13 @@ async fn flash(
     log::info!("Validating application...");
     let result = client.validate_app().await?;
     if result != ValidationResult::Valid {
+        if result == ValidationResult::WrongAppType {
+            return Err(format!(
+                "Validation failed: device rejected app type {:?} — wrong bootloader variant for this board",
+                firmware.app_type
+            )
+            .into());
+        }
         return Err(format!("Validation failed: {}", result).into());
     }
     log::info!("Validation: {}", result);
