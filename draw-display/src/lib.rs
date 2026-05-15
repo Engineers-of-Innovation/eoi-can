@@ -105,8 +105,8 @@ pub struct DisplayData {
     pub display_is_charging: DisplayValue<bool>,
     pub height_sensor_front_left: DisplayValue<u16>,
     pub height_sensor_front_right: DisplayValue<u16>,
-    pub temperature_height_sensors_controller: DisplayValue<i16>,
-    pub temperature_rudder_controller: DisplayValue<i16>,
+    pub temperature_height_sensors_controller: DisplayValue<f32>,
+    pub temperature_rudder_controller: DisplayValue<f32>,
 }
 
 impl DisplayData {

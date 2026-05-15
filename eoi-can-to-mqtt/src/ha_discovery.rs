@@ -1554,19 +1554,19 @@ mod tests {
             })),
             EoiCanData::RudderController(RudderControllerData::FlowSensorIn(FlowSensor {
                 flow_rate: 0,
-                temperature: Some(0),
+                temperature: Some(0.0),
                 raw_pulses: 0,
                 raw_adc: 0,
             })),
             EoiCanData::RudderController(RudderControllerData::FlowSensorOut(FlowSensor {
                 flow_rate: 0,
-                temperature: Some(0),
+                temperature: Some(0.0),
                 raw_pulses: 0,
                 raw_adc: 0,
             })),
             EoiCanData::RudderController(RudderControllerData::MotorTemperature(
                 MotorTemperature {
-                    temperature: Some(0),
+                    temperature: Some(0.0),
                     raw_adc: 0,
                 },
             )),
@@ -1576,8 +1576,8 @@ mod tests {
             EoiCanData::HeightSensors(HeightSensorData::Reserved1(height_status())),
             EoiCanData::HeightSensors(HeightSensorData::Reserved2(height_status())),
             // Temperature
-            EoiCanData::Temperature(TemperatureData::HeightSensorsController(0)),
-            EoiCanData::Temperature(TemperatureData::RudderController(0)),
+            EoiCanData::Temperature(TemperatureData::HeightSensorsController(0.0)),
+            EoiCanData::Temperature(TemperatureData::RudderController(0.0)),
             // GNSS
             EoiCanData::Gnss(GnssData::GnssStatus(GnssStatus {
                 fix: 0,

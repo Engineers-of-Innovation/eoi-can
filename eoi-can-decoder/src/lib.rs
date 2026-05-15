@@ -563,7 +563,7 @@ pub struct SteeringAngle {
 pub struct FlowSensor {
     pub flow_rate: u16,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<i16>,
+    pub temperature: Option<f32>,
     pub raw_pulses: u16,
     pub raw_adc: u16,
 }
@@ -572,7 +572,7 @@ pub struct FlowSensor {
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MotorTemperature {
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub temperature: Option<i16>,
+    pub temperature: Option<f32>,
     pub raw_adc: u16,
 }
 
@@ -692,8 +692,8 @@ impl From<u8> for HeightSensorState {
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub enum TemperatureData {
-    HeightSensorsController(i16),
-    RudderController(i16),
+    HeightSensorsController(f32),
+    RudderController(f32),
 }
 
 pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData> {
@@ -764,16 +764,19 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             let raw_temperature = bytes_le_to_i16(data.get(0..2)?)?;
             Some(EoiCanData::RudderController(
                 RudderControllerData::MotorTemperature(MotorTemperature {
-                    temperature: (raw_temperature != i16::MIN).then_some(raw_temperature),
+                    temperature: (raw_temperature != i16::MIN)
+                        .then(|| raw_temperature as f32 / 100.0),
                     raw_adc: bytes_le_to_u16(data.get(2..4)?)?,
                 }),
             ))
         }
         0x210 => Some(EoiCanData::Temperature(
-            TemperatureData::HeightSensorsController(bytes_le_to_i16(data.get(0..2)?)?),
+            TemperatureData::HeightSensorsController(
+                bytes_le_to_i16(data.get(0..2)?)? as f32 / 100.0,
+            ),
         )),
         0x211 => Some(EoiCanData::Temperature(TemperatureData::RudderController(
-            bytes_le_to_i16(data.get(0..2)?)?,
+            bytes_le_to_i16(data.get(0..2)?)? as f32 / 100.0,
         ))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
@@ -1025,7 +1028,7 @@ fn parse_flow_sensor(data: &[u8]) -> Option<FlowSensor> {
     let raw_temperature = bytes_le_to_i16(data.get(2..4)?)?;
     Some(FlowSensor {
         flow_rate: bytes_le_to_u16(data.get(0..2)?)?,
-        temperature: (raw_temperature != i16::MIN).then_some(raw_temperature),
+        temperature: (raw_temperature != i16::MIN).then(|| raw_temperature as f32 / 100.0),
         raw_pulses: bytes_le_to_u16(data.get(4..6)?)?,
         raw_adc: bytes_le_to_u16(data.get(6..8)?)?,
     })
@@ -1354,7 +1357,7 @@ mod tests {
             panic!("Unexpected data type");
         };
         assert!(flow.flow_rate == 1880);
-        assert!(flow.temperature == Some(2345));
+        assert!(flow.temperature == Some(23.45));
         assert!(flow.raw_pulses == 23);
         assert!(flow.raw_adc == 2048);
     }
@@ -1388,7 +1391,7 @@ mod tests {
         else {
             panic!("Unexpected data type");
         };
-        assert!(motor.temperature == Some(2345));
+        assert!(motor.temperature == Some(23.45));
         assert!(motor.raw_adc == 2048);
     }
 
