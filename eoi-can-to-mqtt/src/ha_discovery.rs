@@ -74,6 +74,7 @@ pub struct HaEntity {
     entity_category: Option<Str>,
     enabled_by_default: Option<bool>,
     json_attributes_template: Option<Str>,
+    suggested_display_precision: Option<u8>,
     device: Device,
 }
 
@@ -94,6 +95,7 @@ fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEnti
         entity_category: None,
         enabled_by_default: None,
         json_attributes_template: None,
+        suggested_display_precision: None,
         device: HUB,
     }
 }
@@ -115,6 +117,7 @@ fn device_tracker(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -
         entity_category: None,
         enabled_by_default: None,
         json_attributes_template: None,
+        suggested_display_precision: None,
         device: HUB,
     }
 }
@@ -180,6 +183,10 @@ impl HaEntity {
     }
     fn json_attributes_template(mut self, v: impl Into<Str>) -> Self {
         self.json_attributes_template = Some(v.into());
+        self
+    }
+    fn display_precision(mut self, n: u8) -> Self {
+        self.suggested_display_precision = Some(n);
         self
     }
     fn measurement(self) -> Self {
@@ -277,6 +284,9 @@ fn build_config(entity: &HaEntity) -> Value {
     if let Some(v) = &entity.json_attributes_template {
         m.insert("json_attributes_topic".into(), json!(mqtt_settings::TOPIC));
         m.insert("json_attributes_template".into(), json!(v.as_ref()));
+    }
+    if let Some(v) = entity.suggested_display_precision {
+        m.insert("suggested_display_precision".into(), json!(v));
     }
     m.insert("expire_after".into(), json!(10));
     m.insert(
@@ -487,7 +497,8 @@ fn add_battery(v: &mut Vec<HaEntity>) {
                 format!("Battery Cell {cell} Voltage"),
                 &format!("EoiBattery.{group}.cell_voltage[{inner_idx}]"),
             )
-            .voltage(),
+            .voltage()
+            .display_precision(3),
         );
     }
 
