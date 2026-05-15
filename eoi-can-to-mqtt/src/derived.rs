@@ -44,7 +44,6 @@ fn apply_battery(merged: &mut Value) {
         merged,
         "/EoiBattery/CellVoltages13_14PackAndStack/stack_voltage",
     );
-    let pack_current = read_f64(merged, "/EoiBattery/PackAndPerriCurrent/pack_current");
     let perri_current = read_f64(merged, "/EoiBattery/PackAndPerriCurrent/perri_current");
     let charge_current = read_f64(
         merged,
@@ -54,6 +53,23 @@ fn apply_battery(merged: &mut Value) {
         merged,
         "/EoiBattery/ChargeAndDischargeCurrent/discharge_current",
     );
+
+    // The BMS reports pack_current on 0x100 as charge + |discharge| + perri rather
+    // than a true net current, so override it with the Kirchhoff sum of the
+    // already-sign-corrected component currents when all three are available.
+    // this is done because BMS reports it incorrectly
+    let pack_current = match (charge_current, discharge_current, perri_current) {
+        (Some(c), Some(d), Some(p)) => {
+            let derived = c + d + p;
+            set_leaf(
+                merged,
+                &["EoiBattery", "PackAndPerriCurrent", "pack_current"],
+                json!(derived as f32),
+            );
+            Some(derived)
+        }
+        _ => read_f64(merged, "/EoiBattery/PackAndPerriCurrent/pack_current"),
+    };
 
     if let (Some(v), Some(i)) = (pack_voltage, pack_current) {
         set_leaf(
@@ -238,6 +254,36 @@ mod tests {
             root.pointer("/EoiBattery/CellVoltages13_14PackAndStack/stack_power")
                 .and_then(Value::as_f64),
             Some(490.0)
+        );
+    }
+
+    #[test]
+    fn battery_pack_current_derived_from_kirchhoff() {
+        let mut root = json!({
+            "EoiBattery": {
+                "PackAndPerriCurrent": { "pack_current": 99.0, "perri_current": -0.57 },
+                "ChargeAndDischargeCurrent": { "charge_current": 8.06, "discharge_current": -15.97 },
+                "CellVoltages13_14PackAndStack": { "pack_voltage": 50.0, "stack_voltage": 49.0 }
+            }
+        });
+        apply_derived(&mut root);
+
+        let pack_current = root
+            .pointer("/EoiBattery/PackAndPerriCurrent/pack_current")
+            .and_then(Value::as_f64)
+            .expect("pack_current present");
+        assert!(
+            (pack_current - (8.06 + -15.97 + -0.57)).abs() < 1e-4,
+            "got {pack_current}"
+        );
+
+        let pack_power = root
+            .pointer("/EoiBattery/PackAndPerriCurrent/pack_power")
+            .and_then(Value::as_f64)
+            .expect("pack_power present");
+        assert!(
+            (pack_power - 50.0 * pack_current).abs() < 1e-3,
+            "got {pack_power}"
         );
     }
 
