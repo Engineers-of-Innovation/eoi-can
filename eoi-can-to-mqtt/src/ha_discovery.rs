@@ -78,12 +78,15 @@ pub struct HaEntity {
 }
 
 fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
+    let chain = path_defined_chain(path);
     HaEntity {
         component: Cow::Borrowed("sensor"),
         object_id: object_id.into(),
         name: name.into(),
         path: Cow::Owned(path.to_string()),
-        value_template: Cow::Owned(format!("{{{{ value_json.{path} | default('') }}}}")),
+        value_template: Cow::Owned(format!(
+            "{{% if {chain} %}}{{{{ value_json.{path} }}}}{{% endif %}}"
+        )),
         unit: None,
         device_class: None,
         state_class: None,
@@ -96,13 +99,14 @@ fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEnti
 }
 
 fn device_tracker(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
+    let chain = path_defined_chain(path);
     HaEntity {
         component: Cow::Borrowed("device_tracker"),
         object_id: object_id.into(),
         name: name.into(),
         path: Cow::Owned(path.to_string()),
         value_template: Cow::Owned(format!(
-            "{{% if value_json.{path} is defined and value_json.{path} != 0 %}}home{{% else %}}not_home{{% endif %}}"
+            "{{% if {chain} and value_json.{path} != 0 %}}home{{% else %}}not_home{{% endif %}}"
         )),
         unit: None,
         device_class: None,
@@ -1709,20 +1713,10 @@ mod tests {
         out
     }
 
-    fn template_path(template: &str) -> Option<String> {
-        const PREFIX: &str = "value_json.";
-        let start = template.find(PREFIX)? + PREFIX.len();
-        let rest = &template[start..];
-        let end = rest
-            .find(|c: char| c.is_whitespace() || c == '}' || c == '|')
-            .unwrap_or(rest.len());
-        Some(rest[..end].to_string())
-    }
-
     fn registry_paths() -> BTreeSet<String> {
         entities()
             .iter()
-            .filter_map(|e| template_path(&e.value_template))
+            .map(|e| e.path.clone().into_owned())
             .collect()
     }
 
