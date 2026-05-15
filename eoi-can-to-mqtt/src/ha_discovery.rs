@@ -100,6 +100,28 @@ fn sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEnti
     }
 }
 
+fn binary_sensor(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
+    let chain = path_defined_chain(path);
+    HaEntity {
+        component: Cow::Borrowed("binary_sensor"),
+        object_id: object_id.into(),
+        name: name.into(),
+        path: Cow::Owned(path.to_string()),
+        value_template: Cow::Owned(format!(
+            "{{% if {chain} %}}{{{{ 'ON' if value_json.{path} else 'OFF' }}}}{{% endif %}}"
+        )),
+        unit: None,
+        device_class: None,
+        state_class: None,
+        icon: None,
+        entity_category: None,
+        enabled_by_default: None,
+        json_attributes_template: None,
+        suggested_display_precision: None,
+        device: HUB,
+    }
+}
+
 fn device_tracker(object_id: impl Into<Str>, name: impl Into<Str>, path: &str) -> HaEntity {
     let chain = path_defined_chain(path);
     HaEntity {
@@ -853,11 +875,12 @@ fn add_throttle(v: &mut Vec<HaEntity>) {
         .diagnostic(),
     );
     v.push(
-        sensor(
+        binary_sensor(
             "throttle_error_deadman_missing",
             "Throttle Deadman Missing",
             "Throttle.Status.error.deadman_missing",
         )
+        .device_class("problem")
         .diagnostic(),
     );
     v.push(
