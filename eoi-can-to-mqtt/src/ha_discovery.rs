@@ -11,6 +11,7 @@
 
 use std::borrow::Cow;
 
+use mppt_layout::{LAYOUT, MpptKind};
 use paho_mqtt as mqtt;
 use serde_json::{Map, Value, json};
 
@@ -59,6 +60,10 @@ const MPPT: Device = Device {
 const GAN_MPPT: Device = Device {
     id: "eoi_gan_mppt",
     name: "GaN MPPT",
+};
+const SOLAR_PANELS: Device = Device {
+    id: "eoi_solar_panels",
+    name: "Solar Panels",
 };
 
 pub struct HaEntity {
@@ -357,7 +362,61 @@ pub fn entities() -> Vec<HaEntity> {
     add_boat_location(&mut v);
     add_mppt(&mut v);
     add_gan_mppt(&mut v);
+    add_solar_panels(&mut v);
     v
+}
+
+fn add_solar_panels(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, SOLAR_PANELS);
+    for (i, kind) in LAYOUT.iter().enumerate() {
+        let pos = i + 1;
+        let (voltage_path, current_path, power_path, temperature_path) = match kind {
+            MpptKind::Legacy { node, channel } => (
+                format!("Mppt.Id{node}.Channel{channel}.Power.voltage_in"),
+                format!("Mppt.Id{node}.Channel{channel}.Power.current_in"),
+                format!("Mppt.Id{node}.Channel{channel}.Power.power_in"),
+                format!("Mppt.Id{node}.Status.temperature"),
+            ),
+            MpptKind::Gan { node } => (
+                format!("GanMppt.Id{node}.Power.input_voltage"),
+                format!("GanMppt.Id{node}.Power.input_current"),
+                format!("GanMppt.Id{node}.Power.input_power"),
+                format!("GanMppt.Id{node}.Status.heat_sink_temp"),
+            ),
+        };
+        v.push(
+            sensor(
+                format!("panel_{pos}_voltage"),
+                format!("Panel {pos} Voltage"),
+                &voltage_path,
+            )
+            .voltage(),
+        );
+        v.push(
+            sensor(
+                format!("panel_{pos}_current"),
+                format!("Panel {pos} Current"),
+                &current_path,
+            )
+            .current(),
+        );
+        v.push(
+            sensor(
+                format!("panel_{pos}_power"),
+                format!("Panel {pos} Power"),
+                &power_path,
+            )
+            .power(),
+        );
+        v.push(
+            sensor(
+                format!("panel_{pos}_temperature"),
+                format!("Panel {pos} Temperature"),
+                &temperature_path,
+            )
+            .temperature(),
+        );
+    }
 }
 
 fn add_boat_location(v: &mut Vec<HaEntity>) {

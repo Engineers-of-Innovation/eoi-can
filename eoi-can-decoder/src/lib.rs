@@ -198,6 +198,18 @@ macro_rules! node_enum {
                         _ => None,
                     }
                 }
+
+                pub fn node_id(&self) -> u8 {
+                    match self {
+                        #(Self::Id~N(_) => N,)*
+                    }
+                }
+
+                pub fn inner(&self) -> &$inner {
+                    match self {
+                        #(Self::Id~N(x) => x,)*
+                    }
+                }
             }
         });
     };

@@ -21,3 +21,4 @@ defmt = { version = "0.3", optional = true }
 embassy-time = { version = "0.4" }
 tokio = { version = "1.43.0", features = [ "full" ], optional = true }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
+mppt-layout = { path = "../mppt-layout" }

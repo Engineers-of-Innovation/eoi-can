@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 eoi-can-decoder = { path = "../eoi-can-decoder" }
 get-wifi-ip = { path = "../get-wifi-ip" }
+mppt-layout = { path = "../mppt-layout" }
 
 embedded-graphics.workspace = true
 clap = { workspace = true, features = ["env"] }

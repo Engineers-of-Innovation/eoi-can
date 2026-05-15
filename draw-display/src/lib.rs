@@ -16,10 +16,13 @@ use embedded_graphics::{
     text::{Alignment, Text},
 };
 use eoi_can_decoder::{
-    BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData, GnssData, GnssDateTime,
-    HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors,
-    VescData,
+    BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData, GanMpptPacket, GnssData,
+    GnssDateTime, HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData,
+    ThrottleErrors, VescData,
 };
+use mppt_layout::{position_of, MpptKind, LAYOUT};
+
+const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use heapless::String;
 use time::{Duration, Instant};
 use tinybmp::Bmp; // Import EoICanData from the appropriate module
@@ -97,7 +100,7 @@ pub struct DisplayData {
     pub motor_temperature: DisplayValue<f32>,
     pub throttle_value: DisplayValue<f32>,
     pub throttle_errors: DisplayValue<ThrottleErrors>,
-    pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; 11], // (Power, Voltage, Current)
+    pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; MPPT_PANEL_COUNT], // (Power, Voltage, Current), indexed by boat-position - 1
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
     pub ip_address: DisplayValue<Ipv4Addr>,
@@ -190,53 +193,21 @@ impl DisplayData {
                 _ => {}
             },
             EoiCanData::Mppt(mppt_data) => {
-                let (panel_id, channel_power) = match mppt_data {
-                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel1(MpptChannel::Power(
-                        power,
-                    ))) => (0, power),
-                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel2(MpptChannel::Power(
-                        power,
-                    ))) => (1, power),
-                    eoi_can_decoder::MpptData::Id2(MpptInfo::Channel3(MpptChannel::Power(
-                        power,
-                    ))) => (2, power),
-
-                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel0(MpptChannel::Power(
-                        power,
-                    ))) => (3, power),
-                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel1(MpptChannel::Power(
-                        power,
-                    ))) => (4, power),
-                    eoi_can_decoder::MpptData::Id5(MpptInfo::Channel2(MpptChannel::Power(
-                        power,
-                    ))) => (5, power),
-
-                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel1(MpptChannel::Power(
-                        power,
-                    ))) => (6, power),
-                    eoi_can_decoder::MpptData::Id4(MpptInfo::Channel3(MpptChannel::Power(
-                        power,
-                    ))) => (7, power),
-
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel2(MpptChannel::Power(
-                        power,
-                    ))) => (8, power),
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel3(MpptChannel::Power(
-                        power,
-                    ))) => (9, power),
-                    eoi_can_decoder::MpptData::Id6(MpptInfo::Channel0(MpptChannel::Power(
-                        power,
-                    ))) => (10, power),
-
-                    _ => return, // not used mppt id or channel
+                let node = mppt_data.node_id();
+                let (channel, power) = match mppt_data.inner() {
+                    MpptInfo::Channel0(MpptChannel::Power(p)) => (0u8, p),
+                    MpptInfo::Channel1(MpptChannel::Power(p)) => (1u8, p),
+                    MpptInfo::Channel2(MpptChannel::Power(p)) => (2u8, p),
+                    MpptInfo::Channel3(MpptChannel::Power(p)) => (3u8, p),
+                    _ => return,
                 };
-
-                // update the panel info
-                self.mppt_panel_info[panel_id].update((
-                    channel_power.voltage_in * channel_power.current_in,
-                    channel_power.voltage_in,
-                    channel_power.current_in,
-                ));
+                if let Some(pos) = position_of(MpptKind::Legacy { node, channel }) {
+                    self.mppt_panel_info[pos as usize - 1].update((
+                        power.voltage_in * power.current_in,
+                        power.voltage_in,
+                        power.current_in,
+                    ));
+                }
             }
             EoiCanData::Gnss(gnss) => match gnss {
                 GnssData::GnssSpeedAndHeading(speed_kmh, _) => {
@@ -259,7 +230,18 @@ impl DisplayData {
                 }
                 _ => {}
             },
-            EoiCanData::GanMppt(_) => {}
+            EoiCanData::GanMppt(gan_data) => {
+                let node = gan_data.node_id();
+                if let GanMpptPacket::Power(power) = gan_data.inner() {
+                    if let Some(pos) = position_of(MpptKind::Gan { node }) {
+                        self.mppt_panel_info[pos as usize - 1].update((
+                            power.input_voltage * power.input_current,
+                            power.input_voltage,
+                            power.input_current,
+                        ));
+                    }
+                }
+            }
             EoiCanData::Temperature(temp) => match temp {
                 TemperatureData::HeightSensorsController(value) => {
                     self.temperature_height_sensors_controller.update(value);
