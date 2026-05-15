@@ -59,7 +59,7 @@ pub async fn temperature_task(
             (temp_raw % 100).abs()
         );
 
-        let frame = Frame::new_data(can_id, &temp_raw.to_be_bytes()).unwrap();
+        let frame = Frame::new_data(can_id, &temp_raw.to_le_bytes()).unwrap();
         match can_tx.try_write(frame) {
             Ok(()) => {}
             Err(e) => warn!("Temperature CAN tx error: {:?}", e),
