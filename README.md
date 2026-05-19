@@ -46,10 +46,16 @@ You do **not** need to be a Rust expert to get started! This guide will help you
   - Just runs on your computer, you only need to connect a CAN bus
 - `eoi-can-to-mqtt/` — Bridge for sending CAN data to MQTT
   - Collects CAN messages and decodes and sends it over to our MQTT broker
+- `eoi-candump-to-csv/` — Convert a candump `.log` capture into a CSV
+  - Decodes frames through `eoi-can-decoder` and samples either per-frame
+    or in fixed-width time buckets. Same signal coverage as `eoi-can-to-mqtt`.
 - `eoi-gnss-to-can/` — GNSS to CAN integration
   - A simple program to send GNSS/GPS information on the CAN bus, since this way we only need to log the CAN bus
 - `get-wifi-ip/` — Crate for getting WiFi IP address
 - `pisugar/` — Crate for getting PiSugar's battery information
+- `mppt-layout/` — Physical layout of MPPTs on the boat
+  - Maps 1-based MPPT positions (front to back) to the underlying node IDs
+    so display and reporting tools can refer to them by position.
 - `support/` — Shell scripts and systemd service files running on the data logger in the boat
 - `fuzz/` — Fuzz testing for CAN decoder
 
