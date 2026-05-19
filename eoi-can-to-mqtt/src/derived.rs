@@ -188,14 +188,14 @@ fn apply_gan_mppt(merged: &mut Value) {
                 json!(p as f32),
             );
         }
-        if let (Some(ip), Some(op)) = (input_power, output_power) {
-            if ip.abs() >= 1.0 {
-                set_leaf(
-                    merged,
-                    &["GanMppt", &format!("Id{node}"), "Power", "efficiency"],
-                    json!((op / ip * 100.0) as f32),
-                );
-            }
+        if let (Some(ip), Some(op)) = (input_power, output_power)
+            && ip.abs() >= 1.0
+        {
+            set_leaf(
+                merged,
+                &["GanMppt", &format!("Id{node}"), "Power", "efficiency"],
+                json!((op / ip * 100.0) as f32),
+            );
         }
     }
 }

@@ -725,40 +725,40 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             ServoData::Setpoint(bytes_le_to_u16(data.get(0..2)?)?),
         ))),
         0x21 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
-            ServoData::Command((*data.get(0)?).into()),
+            ServoData::Command((*data.first()?).into()),
         ))),
         0x11 => Some(EoiCanData::HeightSensors(HeightSensorData::FrontLeft(
             HeightSensorStatus {
-                state: (*data.get(0)?).into(),
+                state: (*data.first()?).into(),
                 value: bytes_le_to_u16(data.get(1..3)?)?,
             },
         ))),
         0x12 => Some(EoiCanData::HeightSensors(HeightSensorData::FrontRight(
             HeightSensorStatus {
-                state: (*data.get(0)?).into(),
+                state: (*data.first()?).into(),
                 value: bytes_le_to_u16(data.get(1..3)?)?,
             },
         ))),
         0x13 => Some(EoiCanData::HeightSensors(HeightSensorData::Reserved1(
             HeightSensorStatus {
-                state: (*data.get(0)?).into(),
+                state: (*data.first()?).into(),
                 value: bytes_le_to_u16(data.get(1..3)?)?,
             },
         ))),
         0x14 => Some(EoiCanData::HeightSensors(HeightSensorData::Reserved2(
             HeightSensorStatus {
-                state: (*data.get(0)?).into(),
+                state: (*data.first()?).into(),
                 value: bytes_le_to_u16(data.get(1..3)?)?,
             },
         ))),
         0x20 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
             ServoData::Status(ServoStatus {
-                state: (*data.get(0)?).into(),
+                state: (*data.first()?).into(),
                 setpoint: bytes_le_to_u16(data.get(1..3)?)?,
             }),
         ))),
         0x212 => Some(EoiCanData::RudderController(
-            RudderControllerData::CoolingPumpStatus((*data.get(0)?).into()),
+            RudderControllerData::CoolingPumpStatus((*data.first()?).into()),
         )),
         0x213 => Some(EoiCanData::RudderController(
             RudderControllerData::SteeringAngle(SteeringAngle {

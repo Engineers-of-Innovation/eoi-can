@@ -2,6 +2,7 @@ target/
 Cargo.lock
 screenshot.png
 *.log
+*.csv
 flamegraph.svg
 perf.data*
 .env

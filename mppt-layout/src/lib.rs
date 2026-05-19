@@ -69,12 +69,11 @@ mod tests {
 
     #[test]
     fn no_duplicate_entries() {
-        for i in 0..LAYOUT.len() {
-            for j in (i + 1)..LAYOUT.len() {
+        for (i, a) in LAYOUT.iter().enumerate() {
+            for (j, b) in LAYOUT.iter().enumerate().skip(i + 1) {
                 assert!(
-                    !kind_eq(LAYOUT[i], LAYOUT[j]),
-                    "duplicate LAYOUT entry at indices {i} and {j}: {:?}",
-                    LAYOUT[i],
+                    !kind_eq(*a, *b),
+                    "duplicate LAYOUT entry at indices {i} and {j}: {a:?}",
                 );
             }
         }
