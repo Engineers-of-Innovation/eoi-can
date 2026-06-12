@@ -149,7 +149,7 @@ async fn main(spawner: Spawner) {
     spi_config.frequency = Hertz::mhz(2); // max 5 on display
     let spi = spi::Spi::new_blocking(p.SPI2, p.PB13, p.PB15, p.PB14, spi_config);
 
-    let cs = Output::new(p.PB6, Level::High, Speed::VeryHigh);
+    let cs = Output::new(p.PC6, Level::High, Speed::VeryHigh);
 
     let mut spi_device = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs, Delay).unwrap();
 
