@@ -27,10 +27,10 @@ bind_interrupts!(struct CanInterrupts {
     CAN1_TX => TxInterruptHandler<CAN1>;
 });
 
-use epd_waveshare::{
-    epd7in5_v2::{Display7in5, Epd7in5},
-    prelude::*,
-};
+use epd_waveshare::{epd7in5_v2::Epd7in5, prelude::*};
+
+mod inverted_display;
+use inverted_display::EpdDisplay;
 
 static SHARED_CAN_COLLECTOR: Mutex<ThreadModeRawMutex, CanCollector> =
     Mutex::new(CanCollector::new());
@@ -176,7 +176,7 @@ async fn main(spawner: Spawner) {
 
     led_red.set_high();
 
-    let mut display = Display7in5::default();
+    let mut display = EpdDisplay::new();
     let mut display_data = draw_display::DisplayData::default();
     draw_display::draw_display(&mut display, &display_data).unwrap();
 
