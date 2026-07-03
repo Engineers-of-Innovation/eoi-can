@@ -56,10 +56,12 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| ServoRudderSetpoint | 0x010 | 2 | 0–1 | Setpoint | u16 | LE | 1000–2000 |
-| ServoRudderStatus | 0x020 | 3 | 0 | State | u8 enum | | 0=Uninitialized, 1=Operational, 0xFF=Unknown |
+| ServoRudderSetpoint | 0x010 | 2 | 0–1 | Setpoint | u16 | LE | 1000–2000. Out-of-range values are rejected by the rudder controller and do not feed its 2 s communication watchdog. |
+| ServoRudderStatus | 0x020 | 6 | 0 | State | u8 enum | | 0=Uninitialized, 1=Operational, 2=Homing, 3=FailSafe, 4=Fault, 0xFF=Unknown |
 | | | | 1–2 | Current setpoint | u16 | LE | 1000–2000 |
-| ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize |
+| | | | 3–4 | Actual position | u16 | LE | 1000–2000, in setpoint units. Sent every 100 ms. |
+| | | | 5 | Fault cause | u8 enum | | 0=None, 1=StallDuringMove, 2=HomingTimeout, 3=DriverNoUartResponse, 4=DriverError |
+| ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize. Starts (re-)homing from any state; required to leave FailSafe or Fault. |
 | RudderControllerCoolingPumpStatus | 0x212 | 1 | 0 | Fault input level | u8 | | Raw PC5 level: 0=fault asserted (low), 1=ok (high). Sent every 1 s. |
 | SteeringAngle | 0x213 | 4 | 0–1 | Angle | i16 | LE | -180 to +180 degrees. Sent every 100 ms. |
 | | | | 2–3 | Raw ADC | u16 | LE | 0–4095 (12-bit). Linear mapping: 0=-180°, 4095=+180°. |

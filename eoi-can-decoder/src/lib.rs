@@ -617,6 +617,8 @@ impl From<u8> for ServoRudderCommand {
 pub struct ServoStatus {
     pub state: ServoState,
     pub setpoint: u16,
+    pub actual_position: u16,
+    pub fault_cause: ServoFaultCause,
 }
 
 #[derive(Debug, Serialize, Default, PartialEq)]
@@ -625,6 +627,9 @@ pub enum ServoState {
     #[default]
     Uninitialized,
     Operational,
+    Homing,
+    FailSafe,
+    Fault,
     Unknown,
 }
 
@@ -633,7 +638,34 @@ impl From<u8> for ServoState {
         match value {
             0 => Self::Uninitialized,
             1 => Self::Operational,
-            0xFF => Self::Unknown,
+            2 => Self::Homing,
+            3 => Self::FailSafe,
+            4 => Self::Fault,
+            _ => Self::Unknown,
+        }
+    }
+}
+
+#[derive(Debug, Serialize, Default, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ServoFaultCause {
+    #[default]
+    None,
+    StallDuringMove,
+    HomingTimeout,
+    DriverNoUartResponse,
+    DriverError,
+    Unknown,
+}
+
+impl From<u8> for ServoFaultCause {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::None,
+            1 => Self::StallDuringMove,
+            2 => Self::HomingTimeout,
+            3 => Self::DriverNoUartResponse,
+            4 => Self::DriverError,
             _ => Self::Unknown,
         }
     }
@@ -755,6 +787,8 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             ServoData::Status(ServoStatus {
                 state: (*data.first()?).into(),
                 setpoint: bytes_le_to_u16(data.get(1..3)?)?,
+                actual_position: bytes_le_to_u16(data.get(3..5)?)?,
+                fault_cause: (*data.get(5)?).into(),
             }),
         ))),
         0x212 => Some(EoiCanData::RudderController(
@@ -1307,7 +1341,8 @@ mod tests {
     fn servo_rudder_status() {
         let can_frame = can_frame::CanFrame::from_encoded(
             embedded_can::Id::Standard(StandardId::new(0x20).unwrap()),
-            &[0x01, 0xD0, 0x07], // Operational, setpoint=2000 little-endian
+            // Operational, setpoint=2000 LE, actual position=1500 LE, fault cause=None
+            &[0x01, 0xD0, 0x07, 0xDC, 0x05, 0x00],
         );
         let data = parse_eoi_can_data(&can_frame).unwrap();
         let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(status))) =
@@ -1317,6 +1352,27 @@ mod tests {
         };
         assert!(status.state == ServoState::Operational);
         assert!(status.setpoint == 2000);
+        assert!(status.actual_position == 1500);
+        assert!(status.fault_cause == ServoFaultCause::None);
+    }
+
+    #[test]
+    fn servo_rudder_status_fault() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x20).unwrap()),
+            // Fault, setpoint=1000 LE, actual position=1000 LE, fault cause=StallDuringMove
+            &[0x04, 0xE8, 0x03, 0xE8, 0x03, 0x01],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(status))) =
+            data
+        else {
+            panic!("Unexpected data type");
+        };
+        assert!(status.state == ServoState::Fault);
+        assert!(status.setpoint == 1000);
+        assert!(status.actual_position == 1000);
+        assert!(status.fault_cause == ServoFaultCause::StallDuringMove);
     }
 
     #[test]
