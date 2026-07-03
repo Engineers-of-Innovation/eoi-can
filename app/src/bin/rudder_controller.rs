@@ -10,7 +10,8 @@ use embassy_stm32::{
     dma,
     gpio::{Level, Output, Speed},
     i2c,
-    peripherals::{self, CAN1, I2C2},
+    peripherals::{self, CAN1, I2C2, UART5},
+    usart,
 };
 use embassy_time::Timer;
 use eoi_rust_firmware::app_type::AppType;
@@ -19,7 +20,7 @@ use eoi_rust_firmware::clock::clock_config;
 use eoi_rust_firmware::flow_sensor;
 use eoi_rust_firmware::steering_angle;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
-use eoi_rust_firmware::{cooling_pump, declare_app_type, motor_temperature};
+use eoi_rust_firmware::{cooling_pump, declare_app_type, motor_temperature, servo_rudder};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::RudderController);
@@ -31,8 +32,11 @@ bind_interrupts!(struct Irqs {
     CAN1_SCE => SceInterruptHandler<CAN1>;
     I2C2_EV  => i2c::EventInterruptHandler<I2C2>;
     I2C2_ER  => i2c::ErrorInterruptHandler<I2C2>;
+    UART5    => usart::InterruptHandler<UART5>;
     DMA1_CHANNEL4 => dma::InterruptHandler<peripherals::DMA1_CH4>;
     DMA1_CHANNEL5 => dma::InterruptHandler<peripherals::DMA1_CH5>;
+    DMA2_CHANNEL1 => dma::InterruptHandler<peripherals::DMA2_CH1>;
+    DMA2_CHANNEL2 => dma::InterruptHandler<peripherals::DMA2_CH2>;
 });
 
 #[embassy_executor::task]
@@ -118,4 +122,30 @@ async fn main(spawner: Spawner) {
         motor_temp_ntc,
         buffered.writer()
     )));
+
+    let mut tmc_uart_config = usart::Config::default();
+    tmc_uart_config.baudrate = servo_rudder::TMC_BAUD;
+    let (tmc_tx, tmc_rx) = usart::Uart::new(
+        p.UART5,
+        p.PD2,  // RX
+        p.PC12, // TX
+        p.DMA2_CH1,
+        p.DMA2_CH2,
+        Irqs,
+        tmc_uart_config,
+    )
+    .unwrap()
+    .split();
+
+    let (servo_step, servo_dir, servo_enable, servo_diag) =
+        servo_rudder::init(p.PC11, p.PC10, p.PB5, p.PB4);
+    spawner.spawn(unwrap!(servo_rudder::servo_control_task(
+        servo_step,
+        servo_dir,
+        servo_enable,
+        servo_diag,
+        tmc_tx,
+        tmc_rx
+    )));
+    spawner.spawn(unwrap!(servo_rudder::status_task(buffered.writer())));
 }

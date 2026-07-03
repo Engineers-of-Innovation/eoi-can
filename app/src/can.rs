@@ -5,10 +5,13 @@ use embassy_stm32::can::{
 };
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use eoi_can_decoder::can_frame::CanFrame as DecoderFrame;
-use eoi_can_decoder::{EoiBattery, EoiCanData, parse_eoi_can_data};
+use eoi_can_decoder::{
+    EoiBattery, EoiCanData, RudderControllerData, ServoData, parse_eoi_can_data,
+};
 use static_cell::StaticCell;
 
 use crate::cooling_pump::BMS_DISCHARGE_STATE;
+use crate::servo_rudder::{SERVO_COMMAND, SERVO_SETPOINT, SETPOINT_MAX, SETPOINT_MIN};
 
 static CAN: StaticCell<Can<'static>> = StaticCell::new();
 static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
@@ -56,10 +59,25 @@ pub async fn can_rx_task(rx: BufferedCanReceiver) {
                     ),
                 };
                 let decoder_frame = DecoderFrame::from_encoded(ec_id, frame.data());
-                if let Some(EoiCanData::EoiBattery(EoiBattery::TemperaturesAndStates(t))) =
-                    parse_eoi_can_data(&decoder_frame)
-                {
-                    BMS_DISCHARGE_STATE.signal(t.discharge_state);
+                match parse_eoi_can_data(&decoder_frame) {
+                    Some(EoiCanData::EoiBattery(EoiBattery::TemperaturesAndStates(t))) => {
+                        BMS_DISCHARGE_STATE.signal(t.discharge_state);
+                    }
+                    Some(EoiCanData::RudderController(RudderControllerData::Servo(
+                        ServoData::Setpoint(setpoint),
+                    ))) => {
+                        if (SETPOINT_MIN..=SETPOINT_MAX).contains(&setpoint) {
+                            SERVO_SETPOINT.signal(setpoint);
+                        } else {
+                            warn!("Servo setpoint {} out of range, rejected", setpoint);
+                        }
+                    }
+                    Some(EoiCanData::RudderController(RudderControllerData::Servo(
+                        ServoData::Command(command),
+                    ))) => {
+                        SERVO_COMMAND.signal(command);
+                    }
+                    _ => {}
                 }
 
                 trace!("CAN rx: {:02x}", frame.data());
