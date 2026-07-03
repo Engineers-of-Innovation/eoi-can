@@ -29,6 +29,8 @@ const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // Motor: 11HS12-0674D-PG14, 0.67 A/phase, 200 full-steps/rev, 13.73:1 gearbox.
 // Driver: 0.1 ohm external sense resistors, vsense=1 -> full scale ~1.06 A rms.
 // IRUN 13 -> ~0.47 A rms (0.67 A sine peak = rated phase current).
+// TODO(bench): raise IRUN (max 19 = rated rms heating) only if torque is
+// short under real load, watching motor temperature.
 const IRUN: u8 = 13;
 const IRUN_HOMING: u8 = 8;
 const IHOLD: u8 = 4;
@@ -38,25 +40,38 @@ const MRES_8_MICROSTEPS: u32 = 5;
 // CHOPCONF from all-zeroes would set toff=0 and disable the driver.
 const CHOPCONF_RESET: u32 = 0x1000_0053;
 
-// StallGuard: DIAG trips when SG_RESULT < 2*SGTHRS. Tune on the bench with
-// the SG_RESULT values logged during homing.
+// StallGuard: DIAG trips when SG_RESULT < 2*SGTHRS.
+// TODO(bench): tune with the "Homing SG_RESULT" defmt logs (lower = more
+// load): pick roughly half the unloaded value so a hand-stall trips DIAG
+// reliably without false positives during normal homing.
 const SGTHRS_HOMING: u32 = 60;
 const TCOOLTHRS_VAL: u32 = 0xF_FFFF;
 // Ignore DIAG for the first steps of a move (StallGuard is unreliable while
 // accelerating from standstill).
 const STALL_BLANK_STEPS: u32 = 32;
 
-// Full travel (setpoint 1000..2000) in microsteps; calibrate on hardware.
+// Full travel (setpoint 1000..2000) in microsteps.
+// TODO(bench): calibrate on the real mechanics: home, then drive slowly into
+// the far stop and take the position from the "Stall detected at position"
+// log message.
 const TRAVEL_STEPS: i32 = 20_000;
+// TODO(bench): verify the backoff clears the stop with enough margin that
+// normal moves to setpoint 1000 never re-touch it.
 const BACKOFF_STEPS: i32 = 200;
 const HOMING_BUDGET_PERCENT: u32 = 120;
-// Which DIR level moves toward the home stop; verify on hardware.
+// Which DIR level moves toward the home stop.
+// TODO(bench): verify before first homing; if wrong, the foil runs to the
+// far stop and faults with HomingTimeout.
 const HOME_DIR_LEVEL: Level = Level::Low;
 
 // Step rates are software-timed on the 32.768 kHz embassy tick (~30.5 us).
 const TICK_HZ: u64 = embassy_time::TICK_HZ;
 const START_DELAY_TICKS: u64 = TICK_HZ / 400; // ~400 Hz ramp start
+// TODO(bench): ~2 kHz cruise = ~33 deg/s at the foil shaft (8 microsteps,
+// 13.73:1 gearbox); drop MRES to 4 microsteps if the rudder must be faster.
 const MIN_DELAY_TICKS: u64 = TICK_HZ / 2000; // ~2 kHz cruise
+// TODO(bench): StallGuard needs enough speed for a usable SG_RESULT signal;
+// raise the homing rate if SG_RESULT sits near zero while running free.
 const HOMING_DELAY_TICKS: u64 = TICK_HZ / 400;
 const ACCEL_EVERY_N_STEPS: u32 = 4;
 const SG_SAMPLE_EVERY_STEPS: u32 = 40; // ~100 ms at homing speed
