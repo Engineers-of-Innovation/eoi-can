@@ -83,8 +83,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
     });
 
     // Start displaying the data
-    let mut display: SimulatorDisplay<BinaryColor> = SimulatorDisplay::new(Size::new(800, 480));
-    let output_settings = OutputSettingsBuilder::new().scale(2).max_fps(10).build();
+    let mut display: SimulatorDisplay<BinaryColor> = SimulatorDisplay::new(Size::new(
+        draw_display::DISPLAY_WIDTH,
+        draw_display::DISPLAY_HEIGHT,
+    ));
+    let output_settings = OutputSettingsBuilder::new().scale(1).max_fps(10).build();
     let mut window = Window::new(
         "Engineers of Innovation CAN Display Simulator",
         &output_settings,

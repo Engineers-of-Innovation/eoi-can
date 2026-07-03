@@ -41,7 +41,7 @@ You do **not** need to be a Rust expert to get started! This guide will help you
 - `eoi-can-display-firmware/` — Firmware for the CAN display
   - Connects to a eink display with our `RS485 to CAN` board
 - `eoi-can-display-framebuffer/` — Framebuffer-based display application
-  - Can be run on a linux machine with a standard Raspberry Pi display (800x480 pixels)
+  - Can be run on a linux machine with a standard Raspberry Pi display; the 792x272 rendering is centered in the framebuffer
 - `eoi-can-display-simulator/` — Simulator for the CAN display
   - Just runs on your computer, you only need to connect a CAN bus
 - `eoi-can-to-mqtt/` — Bridge for sending CAN data to MQTT

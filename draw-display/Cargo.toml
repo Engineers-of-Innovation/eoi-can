@@ -15,7 +15,7 @@ tokio = [ "dep:tokio" ]
 
 [dependencies]
 embedded-graphics = { workspace = true }
-tinybmp = { version = "0.6.0" }
+u8g2-fonts = "0.7"
 heapless = "0.8.0"
 defmt = { version = "0.3", optional = true }
 embassy-time = { version = "0.4" }

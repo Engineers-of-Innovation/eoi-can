@@ -1,6 +1,6 @@
 [package]
 name = "eoi-can-display-firmware"
-description = "Firmware for the EOI CAN display, which is a 2.9 inch e-paper display with CAN bus interface."
+description = "Firmware for the EOI CAN display, which is a 5.79 inch e-paper display (792x272) with CAN bus interface."
 version = "0.1.0"
 edition = "2021"
 
@@ -24,12 +24,10 @@ panic-probe = { version = "0.3", features = [ "print-defmt" ] }
 static_cell = { version = "2.0.0" }
 embedded-can = "0.4.1"
 embedded-hal = "1.0.0"
-embedded-hal-bus = "0.3.0"
+embedded-hal-bus = { version = "0.3.0", features = [ "async" ] }
 nb = "1.1.0"
-epd-waveshare = { git = "https://github.com/rust-embedded-community/epd-waveshare", rev = "8fc19ae69aa7b1243953935dd8b6c076950e6ee7" }
+epd-waveshare = { git = "https://github.com/fromeijn/epd-waveshare", rev = "738368cf953f72f47af6a43898126dcf88eb4084" }
 embedded-graphics = "0.8.1"
-profont = "0.7.0"
-arrform = "0.1.1"
 
 [profile.release]
 lto = true

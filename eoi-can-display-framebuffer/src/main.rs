@@ -1,5 +1,6 @@
 use clap::Parser;
 use embedded_can::Frame;
+use embedded_graphics::{pixelcolor::BinaryColor, prelude::*, primitives::Rectangle};
 use embedded_graphics_framebuffer::FrameBufferDisplay;
 use eoi_can_decoder::{can_collector, parse_eoi_can_data};
 use get_wifi_ip::get_wifi_ip;
@@ -74,8 +75,25 @@ async fn main() -> Result<(), core::convert::Infallible> {
     let mut display = FrameBufferDisplay::new();
     display.flush().unwrap();
 
+    // Center the 792x272 rendering in the (larger) framebuffer for
+    // backwards compatibility with the existing screen.
+    let fb_size = display.bounding_box().size;
+    let offset = Point::new(
+        (fb_size.width.saturating_sub(draw_display::DISPLAY_WIDTH) / 2) as i32,
+        (fb_size.height.saturating_sub(draw_display::DISPLAY_HEIGHT) / 2) as i32,
+    );
+    let clip_area = Rectangle::new(
+        Point::zero(),
+        Size::new(draw_display::DISPLAY_WIDTH, draw_display::DISPLAY_HEIGHT),
+    );
+    display.clear(BinaryColor::On.into()).unwrap();
+
     let mut display_data = draw_display::DisplayData::default();
-    draw_display::draw_display(&mut display, &display_data).unwrap();
+    draw_display::draw_display(
+        &mut display.translated(offset).clipped(&clip_area),
+        &display_data,
+    )
+    .unwrap();
     display.flush().unwrap();
 
     let mut display_battery_last_update = std::time::Instant::now();
@@ -111,7 +129,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
             }
         }
 
-        draw_display::draw_display(&mut display, &display_data).unwrap();
+        draw_display::draw_display(
+            &mut display.translated(offset).clipped(&clip_area),
+            &display_data,
+        )
+        .unwrap();
         display.flush().unwrap();
 
         tokio::time::sleep(Duration::from_millis(100)).await
