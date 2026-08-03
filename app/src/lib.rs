@@ -3,6 +3,7 @@
 pub mod app_type;
 pub mod can;
 pub mod clock;
+pub mod config;
 pub mod cooling_pump;
 pub mod flow_sensor;
 pub mod height_sensor;

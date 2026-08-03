@@ -13,6 +13,7 @@ Embedded firmware for the STM32L471 microcontroller. Contains two application bi
 ### Rudder Controller (`rudder-controller`)
 
 - Onboard temperature sensor via I2C
+- Steering angle sensor with persistent calibration (see below)
 - CAN bus communication
 
 ## Bootloader (`eoi-boot`)
@@ -34,11 +35,28 @@ Region    Address Range               Size   Description
 --------  --------------------------  -----  --------------------------
 BOOT      0x08000000 - 0x08013FFF     80K    Bootloader
 HEADER    0x08014000 - 0x080147FF     2K     Application metadata header
-APP       0x08014800 - 0x080FFFFF     942K   Application firmware
+APP       0x08014800 - 0x080FEFFF     938K   Application firmware
+CONFIG    0x080FF000 - 0x080FFFFF     4K     Emulated EEPROM (persistent config)
 RAM       0x20000000 - 0x20017FFF     96K    SRAM
 ```
 
 All partition boundaries are aligned to the STM32L4 flash page size (2K).
+
+The STM32L471 has no data EEPROM, so the CONFIG block emulates one. It sits
+outside the app partition, so the bootloader's erase stops short of it and a
+firmware update over CAN leaves stored configuration intact. It is also in
+flash bank 2 while code executes from bank 1, so erasing and programming it
+never stalls the CPU.
+
+The block is an append-only log of 16-byte slots, each carrying a magic,
+version and CRC32. The newest slot that validates wins on load; when all 256
+slots are used the block is erased and writing restarts at slot 0.
+
+Note: a bootloader flashed before the CONFIG block existed erases the full
+942K app partition and so wipes the block. That is safe — the configuration
+reads back as uninitialized, the affected outputs fall back to their zero state
+and set an error bit, and re-running calibration fixes it. Reflash the
+bootloader via a debug probe to avoid it.
 
 ## Bootloader Protocol
 
@@ -85,6 +103,93 @@ The bootloader communicates over CAN at 1 Mbps using standard 11-bit IDs.
 | 0x0D | ... | Padding (0xFF) to 2048 bytes |
 
 **Update flow:** GetState -> EraseApp -> WriteData x N on `0x032` (header + app, 8 bytes per frame) -> ValidateApp -> BootApp
+
+## Steering Angle Calibration
+
+The steering angle sensor is a potentiometer on ADC1. It has no fixed
+raw-to-angle mapping, so the three reference positions are calibrated on the
+vehicle and stored in the CONFIG block.
+
+Calibration is captured live — no values travel over the bus. Move the steering
+to a position, then send the matching command; the firmware averages readings
+over 200 ms and stores the result immediately, so a session can be interrupted
+and resumed. Hold the steering still for that 200 ms.
+
+**Reported position** on `0x213` is normalized against the calibrated travel and
+is piecewise-linear through the calibrated centre:
+
+| Steering        | Position |
+| --------------- | -------- |
+| Full left       | -1000    |
+| Centre          | 0        |
+| Full right      | +1000    |
+
+**Steering angle broadcast on `0x213`** (10 Hz):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 2 | Position, i16 LE (-1000..+1000), 0 when not calibrated |
+| 2 | 2 | Averaged raw ADC code, u16 LE (still 12-bit, 0..4095) |
+| 4 | 1 | Status bits (see below) |
+
+**Noise rejection.** The sensor is electrically noisy, so the ADC runs much
+faster than the 10 Hz report rate and the readings are averaged. Two layers,
+because either alone leaves a gap:
+
+- The ADC hardware averages 16 conversions per read and right-shifts back to the
+  same 12-bit scale. This suppresses white noise 4x, but the burst spans only
+  ~52 us, so it does nothing for interference slower than roughly 20 kHz.
+- 20 reads are spread evenly across each 100 ms reporting window (one every
+  5 ms) and box-averaged. Averaging over exactly one window puts nulls at 10 Hz
+  and every harmonic, which is what rejects periodic interference from the
+  stepper driver and cooling pump.
+
+Together that is 320 conversions per report for ~1 % ADC duty cycle, and about
+18x white-noise rejection. Group delay is half the window (50 ms), inherent to
+averaging over it. Calibration captures average 40 reads spread over 200 ms,
+so an endpoint is never set by a noisy moment.
+
+**Status bits** (byte 4 of `0x213`, byte 5 of `0x218`):
+
+| Bit | Name | Meaning |
+| --- | --- | --- |
+| 0 | CalValid | Calibration present and plausible; position is meaningful |
+| 1 | CalMissing | Nothing stored yet, or every stored record is corrupt |
+| 2 | CalInvalid | Stored but incomplete, or implausible (see rejection rules) |
+| 3 | OutOfRange | Raw reading is outside the calibrated travel; position clamped |
+| 4 | StorageError | Last write to the CONFIG block failed; sticky until one succeeds |
+
+Whenever CalValid is clear the reported position is held at 0 and the PB2 PWM
+output is parked at 50 % duty (centre), regardless of the sensor reading.
+
+**Calibration commands on `0x214`** (byte 0 = command, remaining bytes ignored):
+
+| Command | Name | Description |
+| --- | --- | --- |
+| 0x01 | CaptureLeft | Store the current reading as the full-left endpoint |
+| 0x02 | CaptureCenter | Store the current reading as the centre |
+| 0x03 | CaptureRight | Store the current reading as the full-right endpoint |
+| 0x04 | Clear | Discard the calibration and return to the uncalibrated safe state |
+
+**Calibration ack on `0x218`** (sent for every accepted command):
+
+| Offset | Size | Field |
+| --- | --- | --- |
+| 0 | 1 | Echoed command |
+| 1 | 1 | Result: 0=ok, 1=storage error, 2=stored but set not yet usable |
+| 2 | 2 | Captured raw ADC code, u16 LE (0 for Clear) |
+| 4 | 1 | Captured-endpoint bits: 0x01=left, 0x02=centre, 0x04=right |
+| 5 | 1 | Status bits (same encoding as `0x213` byte 4) |
+
+**A calibration is rejected** (CalInvalid, position forced to 0) when any of the
+three endpoints has not been captured, when a raw code exceeds 4095, when the
+centre does not lie strictly between the two endpoints, or when either
+half-travel is narrower than 100 ADC codes. Both wiring polarities are
+accepted: full-left may read either above or below full-right.
+
+**Calibration procedure:** steer fully left -> send `0x01`, centre -> send
+`0x02`, steer fully right -> send `0x03`. Order does not matter. The set becomes
+active on the next 10 Hz sample once all three are captured and plausible.
 
 ## Getting Started
 

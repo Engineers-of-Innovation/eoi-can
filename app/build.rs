@@ -15,12 +15,17 @@ fn main() {
         println!("cargo:rustc-link-arg-bins=-Tapp-type.x");
         println!("cargo:rerun-if-changed=../linker/app-type.x");
 
-        // When the "bootloader" feature is enabled, provide our own memory.x
-        // that places the application at the bootloader app offset (0x08014800).
-        // Without it, embassy-stm32's memory-x is used (full flash at 0x08000000).
-        if std::env::var("CARGO_FEATURE_BOOTLOADER").is_ok() {
-            std::fs::copy("../linker/app.x", out.join("memory.x")).unwrap();
-            println!("cargo:rerun-if-changed=../linker/app.x");
-        }
+        // Provide our own memory.x in place of embassy-stm32's memory-x. With
+        // the "bootloader" feature the application is placed at the bootloader
+        // app offset (0x08014800); without it, it starts at 0x08000000. Both
+        // reserve the emulated-EEPROM block at the top of flash so the linker
+        // can never place code over it.
+        let memory_x = if std::env::var("CARGO_FEATURE_BOOTLOADER").is_ok() {
+            "../linker/app.x"
+        } else {
+            "../linker/app-dev.x"
+        };
+        std::fs::copy(memory_x, out.join("memory.x")).unwrap();
+        println!("cargo:rerun-if-changed={memory_x}");
     }
 }

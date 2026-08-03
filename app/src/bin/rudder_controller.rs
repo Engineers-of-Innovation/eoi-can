@@ -20,7 +20,7 @@ use eoi_rust_firmware::clock::clock_config;
 use eoi_rust_firmware::flow_sensor;
 use eoi_rust_firmware::steering_angle;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
-use eoi_rust_firmware::{cooling_pump, declare_app_type, motor_temperature, servo_rudder};
+use eoi_rust_firmware::{config, cooling_pump, declare_app_type, motor_temperature, servo_rudder};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::RudderController);
@@ -102,6 +102,7 @@ async fn main(spawner: Spawner) {
     spawner.spawn(unwrap!(steering_angle::sample_task(
         steering_adc,
         steering_input,
+        config::ConfigStore::new(p.FLASH),
         buffered.writer()
     )));
     spawner.spawn(unwrap!(steering_angle::pwm_task(steering_pwm)));

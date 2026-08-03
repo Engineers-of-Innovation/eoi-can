@@ -12,6 +12,7 @@ use static_cell::StaticCell;
 
 use crate::cooling_pump::BMS_DISCHARGE_STATE;
 use crate::servo_rudder::{SERVO_COMMAND, SERVO_SETPOINT, SETPOINT_MAX, SETPOINT_MIN};
+use crate::steering_angle::{CAN_ID_STEERING_CAL_CMD, CalCommand, STEERING_CAL_COMMAND};
 
 static CAN: StaticCell<Can<'static>> = StaticCell::new();
 static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
@@ -48,6 +49,19 @@ pub async fn can_rx_task(rx: BufferedCanReceiver) {
                 {
                     info!("Reboot to bootloader requested via CAN");
                     cortex_m::peripheral::SCB::sys_reset();
+                }
+
+                // Steering angle calibration command
+                if let embassy_stm32::can::Id::Standard(id) = frame.id()
+                    && id.as_raw() == CAN_ID_STEERING_CAL_CMD.as_raw()
+                {
+                    match frame.data().first().copied().and_then(CalCommand::from_u8) {
+                        Some(command) => {
+                            info!("Steering calibration command: {:?}", command);
+                            STEERING_CAL_COMMAND.signal(command);
+                        }
+                        None => warn!("Unknown steering calibration command: {:02x}", frame.data()),
+                    }
                 }
 
                 let ec_id = match frame.id() {

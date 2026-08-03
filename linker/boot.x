@@ -9,4 +9,6 @@ __flash_start  = ORIGIN(FLASH);
 __header_start = 0x08014000;
 __header_end   = 0x08014800;
 __app_start    = 0x08014800;
-__app_end      = 0x08100000;
+/* Stops short of the 4K emulated-EEPROM block at 0x080FF000, so erasing the
+ * app partition for a firmware update leaves the stored configuration intact. */
+__app_end      = 0x080FF000;
