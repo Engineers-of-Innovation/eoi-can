@@ -1,19 +1,10 @@
 [target.'cfg(all(target_arch = "arm", target_os = "none"))']
 
-runner = [
-    "probe-rs",
-    "run",
-    "--chip",
-    "STM32L471RGTx",
-    "--connect-under-reset",
-    "--catch-reset",
-    "--catch-hardfault",
-    "--always-print-stacktrace",
-    "--log-format",
-    "{L} {t} {f}:{l} {s}",
-    "--preverify", # Do not flash if up-to-date
-    "--verify", # Verify after flashing also
-]
+# Dispatches to probe-rs (default, same flags as before) or, under WSL, to the
+# Windows-side J-Link Commander. Path is resolved relative to this file, so it
+# works from any directory in the workspace. See the script header for the
+# FLASH_BACKEND override.
+runner = "tools/flash-jlink.sh"
 
 linker = "flip-link"
 

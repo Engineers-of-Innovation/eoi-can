@@ -251,6 +251,21 @@ cargo run --release --bin rudder-controller
 
 This will compile, flash the firmware onto the chip, and show log output via defmt.
 
+`cargo run` goes through `tools/flash-jlink.sh`, which picks a backend
+automatically:
+
+| Platform | Backend | Notes |
+| --- | --- | --- |
+| Linux, macOS | `probe-rs` | Flashes and streams defmt logs |
+| WSL | Windows-side J-Link Commander | probe-rs cannot reach a USB probe from WSL; flashes and runs, but no log streaming |
+
+Force one with `FLASH_BACKEND=probe-rs` or `FLASH_BACKEND=jlink` — for example on
+WSL with a probe attached via `usbipd`:
+
+```sh
+FLASH_BACKEND=probe-rs cargo run --release --bin rudder-controller
+```
+
 ### 5. Flash via CAN bus (using bootloader)
 
 Once the bootloader is on the device, you can update the application over CAN without a debug probe.
