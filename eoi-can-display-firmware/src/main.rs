@@ -63,6 +63,51 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
     hash
 }
 
+/// Re-enable the bxCAN RX-FIFO and error interrupts.
+///
+/// Defensive against two embassy-stm32 0.2.0 quirks that leave interrupts off
+/// permanently:
+/// - the non-buffered RX ISR path clears `IER.FMPIE`, and the buffered path has
+///   no counterpart that sets it again;
+/// - the SCE handler clears `IER.ERRIE` on the first bus error, and only
+///   `try_read` (which panics in buffered mode) re-enables it.
+///
+/// Safe to call repeatedly. `FMPIE` is level-driven on `RFR.FMP != 0`, so if the
+/// hardware FIFO already holds frames the RX ISR fires as soon as this returns
+/// and drains them — no manual drain needed.
+fn rearm_can_rx_interrupts() {
+    embassy_stm32::pac::CAN1.ier().modify(|w| {
+        w.set_fmpie(0, true);
+        w.set_fmpie(1, true);
+        w.set_errie(true);
+    });
+}
+
+/// Log the bxCAN interrupt-enable, RX-FIFO and error state.
+///
+/// Used when no frames have arrived for a while, to distinguish "quiet bus" from
+/// "our RX interrupt is off" from "we are error-passive / bus-off".
+fn log_can_state() {
+    let can = embassy_stm32::pac::CAN1;
+    let ier = can.ier().read();
+    let rfr = can.rfr(0).read();
+    let esr = can.esr().read();
+    warn!(
+        "CAN state: fmpie0={} errie={} fifo0(fmp={} full={} fovr={}) esr(boff={} epvf={} ewgf={} lec={} tec={} rec={})",
+        ier.fmpie(0),
+        ier.errie(),
+        rfr.fmp(),
+        rfr.full(),
+        rfr.fovr(),
+        esr.boff(),
+        esr.epvf(),
+        esr.ewgf(),
+        esr.lec().to_bits(),
+        esr.tec(),
+        esr.rec(),
+    );
+}
+
 pub fn embassy_init() -> Peripherals {
     use embassy_stm32::rcc::{Pll, PllMul, PllPreDiv, PllRDiv, PllSource};
 
@@ -143,6 +188,11 @@ pub async fn can_receiver(
             SHARED_CAN_COLLECTOR.lock().await.insert(frame);
             output_led.toggle();
         } else if let Err(bus_error) = envelope {
+            // Unreachable in buffered mode: `BufferedCanRx::read` just awaits the
+            // channel and the RX ISR only ever sends `Ok`. Bus errors are
+            // surfaced by the RX-stall health check in `main` instead. Kept so
+            // the arm stays correct if this ever moves back to `CanRx`.
+            //
             // Compare the discriminant to avoid needing PartialEq
             let is_same_error = match last_bus_error {
                 Some(ref last) => {
@@ -150,9 +200,11 @@ pub async fn can_receiver(
                 }
                 None => false,
             };
-            if is_same_error {
+            // Log the first occurrence and suppress repeats of the same error.
+            if !is_same_error {
                 error!("CAN frame try read error: {}", bus_error);
             }
+            last_bus_error = Some(bus_error);
         }
     }
 }
@@ -192,14 +244,30 @@ async fn main(spawner: Spawner) {
     let can_standby = Output::new(p.PB7, Level::Low, Speed::Low);
     core::mem::forget(can_standby);
     let mut can = Can::new(p.CAN1, p.PB8, p.PB9, CanInterrupts);
+
+    // Switch the shared RxMode to Buffered *before* the peripheral can deliver a
+    // valid frame, i.e. before the real bitrate is programmed. `Can::new` writes
+    // MCR wholesale (clearing SLEEP and INRQ) and every `CanConfig::drop` leaves
+    // init mode, so the peripheral is already live and receiving by the time
+    // `set_bitrate` returns. A frame arriving while RxMode is still NonBuffered
+    // takes that ISR path, which clears IER.FMPIE0 ("disable interrupts until
+    // read") — and in Buffered mode nothing ever sets it again (the only code
+    // that does is `try_read`, which panics in Buffered mode). RX would then be
+    // dead for the rest of the boot while the hardware silently keeps ACKing and
+    // overwriting its 3-deep FIFO.
+    let (_, can_rx) = can.split();
+    let buffered_rx = can_rx.buffered(RX_BUF.init(RxBuf::new()));
+
     can.modify_filters()
         .enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
     can.modify_config().set_loopback(false).set_silent(false);
     can.set_bitrate(1_000_000);
     can.set_tx_fifo_scheduling(true);
     can.enable().await;
-    let (_, can_rx) = can.split();
-    let buffered_rx = can_rx.buffered(RX_BUF.init(RxBuf::new()));
+
+    // Belt and braces: the ordering above is what makes RX reliable, but this
+    // costs nothing and guarantees we start with the RX interrupts armed.
+    rearm_can_rx_interrupts();
 
     spawner.must_spawn(can_receiver(buffered_rx, led_blue));
 
@@ -245,6 +313,11 @@ async fn main(spawner: Spawner) {
     // identical content is pointless (and every refresh stresses the panel),
     // so we skip the refresh entirely when the rendered frame hasn't changed.
     let mut last_buffer_hash: Option<u64> = None;
+    // Consecutive loop iterations (1 s each) in which no CAN frame at all was
+    // collected. Used to detect a stalled RX path instead of silently rendering
+    // stale-value dashes forever.
+    const RX_STALL_ITERATIONS: u32 = 5;
+    let mut empty_snapshots: u32 = 0;
 
     info!("Starting main loop");
 
@@ -261,6 +334,26 @@ async fn main(spawner: Spawner) {
             }
             core::mem::take(&mut *can_collector)
         };
+
+        // Watch for a stalled RX path. Counted on the raw frame count rather than
+        // on `parsed_frames`, so a bus carrying only IDs we don't decode still
+        // counts as healthy.
+        if snapshot.iter().next().is_some() {
+            empty_snapshots = 0;
+        } else {
+            empty_snapshots = empty_snapshots.saturating_add(1);
+            // Retry every RX_STALL_ITERATIONS seconds rather than every second,
+            // while keeping the counter monotone so the reported duration is the
+            // real stall length.
+            if empty_snapshots % RX_STALL_ITERATIONS == 0 {
+                warn!(
+                    "No CAN frames received for {} s, re-arming RX interrupts",
+                    empty_snapshots
+                );
+                log_can_state();
+                rearm_can_rx_interrupts();
+            }
+        }
 
         let mut parsed_frames = 0_u32;
         snapshot.iter().for_each(|frame| {
