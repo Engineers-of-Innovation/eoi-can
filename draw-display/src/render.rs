@@ -7,7 +7,6 @@ use embedded_graphics::{
     },
     pixelcolor::BinaryColor,
     prelude::*,
-    primitives::{Line, PrimitiveStyle},
     text::{Alignment, Text},
 };
 use eoi_can_decoder::{BatteryState, ChargeState, DischargeState};
@@ -24,9 +23,13 @@ pub const DISPLAY_WIDTH: u32 = 792;
 pub const DISPLAY_HEIGHT: u32 = 272;
 
 const COL_W: i32 = DISPLAY_WIDTH as i32 / 3;
+/// Extra width given to the left column so its widest unit/label block
+/// ("motor") does not run into the next column. Taken from the right column,
+/// whose values are right-aligned with slack to spare before the screen edge.
+const COL_SHIFT: i32 = 24;
 const COL_LEFT: i32 = 0;
-const COL_MID: i32 = COL_W;
-const COL_RIGHT: i32 = 2 * COL_W;
+const COL_MID: i32 = COL_W + COL_SHIFT;
+const COL_RIGHT: i32 = 2 * COL_W + COL_SHIFT;
 
 /// Row centers for the 3-row columns (left, middle).
 const ROWS_3: [i32; 3] = [45, 136, 227];
@@ -36,7 +39,9 @@ const ROWS_4: [i32; 4] = [34, 102, 170, 238];
 /// Right-align anchor of the big value within a column, leaving room for the
 /// stacked unit/label block after it.
 const VALUE_RIGHT_3ROW: i32 = 200;
-const VALUE_RIGHT_4ROW: i32 = 190;
+/// Compensated for `COL_SHIFT` so the right column's content stays put while its
+/// origin moves right; it would otherwise be pushed against the screen edge.
+const VALUE_RIGHT_4ROW: i32 = 190 - COL_SHIFT;
 /// Gap between the big value and the stacked unit/label block.
 const BLOCK_GAP: i32 = 10;
 
@@ -180,12 +185,6 @@ where
 {
     display.clear(BinaryColor::On.into())?;
     let mut buf: String<16> = String::new();
-
-    for x in [COL_MID, COL_RIGHT] {
-        Line::new(Point::new(x, 0), Point::new(x, DISPLAY_HEIGHT as i32 - 1))
-            .into_styled(PrimitiveStyle::with_stroke(BinaryColor::Off.into(), 1))
-            .draw(display)?;
-    }
 
     // Left column: battery power in / motor / net. Currents leaving the
     // battery are negative on the bus, so net = in + motor + peripherals
@@ -400,5 +399,30 @@ mod tests {
         let mut buf: String<16> = String::new();
         assert_eq!(fmt_hms(&mut buf, Some((23, 55, 1))), "23:55:01");
         assert_eq!(fmt_hms(&mut buf, None), "--:--:--");
+    }
+
+    /// The unit/label block is the widest thing on the right of each column, so
+    /// it is what runs into the next one. Guards `COL_SHIFT` against font or
+    /// label changes: "motor" used to end exactly on the old column boundary.
+    #[test]
+    fn label_blocks_clear_the_next_column() {
+        const MIN_CLEARANCE: i32 = 8;
+
+        for (col_x, value_right, widest_label, next_edge) in [
+            (COL_LEFT, VALUE_RIGHT_3ROW, "motor", COL_MID),
+            (COL_MID, VALUE_RIGHT_3ROW, "TTE", COL_RIGHT),
+            (COL_RIGHT, VALUE_RIGHT_4ROW, "km/h", DISPLAY_WIDTH as i32),
+        ] {
+            let width = FONT_SMALL
+                .get_rendered_dimensions(widest_label, Point::zero(), VerticalPosition::Center)
+                .unwrap()
+                .advance
+                .x;
+            let block_right = col_x + value_right + BLOCK_GAP + width;
+            assert!(
+                block_right + MIN_CLEARANCE <= next_edge,
+                "{widest_label:?} ends at {block_right}, too close to {next_edge}"
+            );
+        }
     }
 }
