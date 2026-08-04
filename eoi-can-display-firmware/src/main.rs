@@ -169,28 +169,25 @@ async fn main(spawner: Spawner) {
 
     led_red.set_low();
 
-    let busy = Input::new(p.PA8, Pull::Down);
-    let dc = Output::new(p.PC9, Level::High, Speed::VeryHigh);
-    let reset = Output::new(p.PC8, Level::Low, Speed::VeryHigh);
+    let epd_busy = Input::new(p.PA8, Pull::Down);
+    let epd_pwr = Output::new(p.PB12, Level::High, Speed::High);
+    core::mem::forget(epd_pwr); // keep power on for display
+    let epd_dc = Output::new(p.PC9, Level::High, Speed::VeryHigh);
+    let epd_reset = Output::new(p.PC8, Level::Low, Speed::VeryHigh);
 
     let mut spi_config = spi::Config::default();
     spi_config.frequency = Hertz::mhz(2); // max 5 on display
-    // Async DMA SPI so the large framebuffer transfers yield to the executor
-    // (letting `can_receiver` run) instead of blocking it. SPI2 TX = DMA1_CH5,
-    // RX = DMA1_CH4 (both free; CAN1 uses no DMA).
-    let spi = spi::Spi::new(
-        p.SPI2,
-        p.PB13,
-        p.PB15,
-        p.PB14,
-        p.DMA1_CH5,
-        p.DMA1_CH4,
-        spi_config,
+                                          // Async DMA SPI so the large framebuffer transfers yield to the executor
+                                          // (letting `can_receiver` run) instead of blocking it. SPI2 TX = DMA1_CH5,
+                                          // RX = DMA1_CH4 (both free; CAN1 uses no DMA).
+    let epd_spi = spi::Spi::new(
+        p.SPI2, p.PB13, p.PB15, p.PB14, p.DMA1_CH5, p.DMA1_CH4, spi_config,
     );
 
-    let cs = Output::new(p.PC6, Level::High, Speed::VeryHigh);
+    let epd_cs = Output::new(p.PC6, Level::High, Speed::VeryHigh);
 
-    let mut spi_device = embedded_hal_bus::spi::ExclusiveDevice::new(spi, cs, Delay).unwrap();
+    let mut epd_spi_device =
+        embedded_hal_bus::spi::ExclusiveDevice::new(epd_spi, epd_cs, Delay).unwrap();
 
     let can_standby = Output::new(p.PB7, Level::Low, Speed::Low);
     core::mem::forget(can_standby);
@@ -210,9 +207,16 @@ async fn main(spawner: Spawner) {
 
     info!("Init display");
 
-    let mut epd = Epd5in79::new_async(&mut spi_device, busy, dc, reset, &mut Delay, Some(1000))
-        .await
-        .unwrap();
+    let mut epd = Epd5in79::new_async(
+        &mut epd_spi_device,
+        epd_busy,
+        epd_dc,
+        epd_reset,
+        &mut Delay,
+        Some(1000),
+    )
+    .await
+    .unwrap();
 
     info!("Init done");
 
@@ -222,7 +226,7 @@ async fn main(spawner: Spawner) {
     let mut display_data = draw_display::DisplayData::default();
     draw_display::draw_display(&mut display, &display_data).unwrap();
 
-    epd.update_and_display_frame_async(&mut spi_device, display.buffer(), &mut Delay)
+    epd.update_and_display_frame_async(&mut epd_spi_device, display.buffer(), &mut Delay)
         .await
         .unwrap();
 
@@ -276,32 +280,36 @@ async fn main(spawner: Spawner) {
         if last_buffer_hash == Some(buffer_hash) && ENABLE_SKIP_DISPLAY_UPDATE_IF_UNCHANGED {
             debug!("Display unchanged, skipping refresh");
         } else {
-            // led_green.set_low();
+            led_green.set_low();
             if quick_count >= FULL_REFRESH_EVERY {
                 info!("Updating display (full refresh)");
                 // Clean full refresh: re-init the panel (wake_up runs the
                 // standard init), then paint. This also rewrites the "old"
                 // RAM with the frame, re-establishing the baseline the
                 // following partial refreshes diff against.
-                epd.wake_up_async(&mut spi_device, &mut Delay)
+                epd.wake_up_async(&mut epd_spi_device, &mut Delay)
                     .await
                     .unwrap();
-                epd.update_and_display_frame_async(&mut spi_device, display.buffer(), &mut Delay)
-                    .await
-                    .unwrap();
+                epd.update_and_display_frame_async(
+                    &mut epd_spi_device,
+                    display.buffer(),
+                    &mut Delay,
+                )
+                .await
+                .unwrap();
                 quick_count = 0;
             } else {
                 info!("Updating display (quick refresh)");
                 // Differential partial refresh: only the pixels that changed
                 // versus the previous frame are driven.
-                epd.display_partial_async(&mut spi_device, display.buffer(), &mut Delay)
+                epd.display_partial_async(&mut epd_spi_device, display.buffer(), &mut Delay)
                     .await
                     .unwrap();
                 quick_count += 1;
             }
             last_buffer_hash = Some(buffer_hash);
             info!("Display updated");
-            // led_green.set_high();
+            led_green.set_high();
         }
 
         Timer::after_secs(1).await;
