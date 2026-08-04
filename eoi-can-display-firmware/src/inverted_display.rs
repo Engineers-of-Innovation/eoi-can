@@ -40,12 +40,13 @@ impl DrawTarget for EpdDisplay {
     where
         I: IntoIterator<Item = Pixel<Self::Color>>,
     {
-        self.0.draw_iter(pixels.into_iter().map(|Pixel(point, color)| {
-            let color = match color {
-                BinaryColor::On => Color::White,
-                BinaryColor::Off => Color::Black,
-            };
-            Pixel(point, color)
-        }))
+        self.0
+            .draw_iter(pixels.into_iter().map(|Pixel(point, color)| {
+                let color = match color {
+                    BinaryColor::On => Color::White,
+                    BinaryColor::Off => Color::Black,
+                };
+                Pixel(point, color)
+            }))
     }
 }

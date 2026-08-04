@@ -26,7 +26,7 @@ embedded-can = "0.4.1"
 embedded-hal = "1.0.0"
 embedded-hal-bus = { version = "0.3.0", features = [ "async" ] }
 nb = "1.1.0"
-epd-waveshare = { git = "https://github.com/fromeijn/epd-waveshare", rev = "738368cf953f72f47af6a43898126dcf88eb4084" }
+epd-waveshare = { git = "https://github.com/fromeijn/epd-waveshare", rev = "6ec511e9656fad59c2256713ed1ecb451e346ddb" }
 embedded-graphics = "0.8.1"
 
 [profile.release]

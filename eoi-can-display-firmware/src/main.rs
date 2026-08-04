@@ -16,7 +16,7 @@ use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, spi, Peripherals};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Delay, Timer};
+use embassy_time::{Delay, Duration, Ticker, Timer};
 use eoi_can_decoder::can_collector::CanCollector;
 use eoi_can_decoder::can_frame::CanFrame;
 use static_cell::StaticCell;
@@ -34,15 +34,9 @@ use epd_waveshare::epd5in79::Epd5in79;
 mod inverted_display;
 use inverted_display::EpdDisplay;
 
-/// Software RX buffer size for the buffered CAN receiver. The buffered driver's
-/// ISR drains the 3-deep bxCAN hardware FIFO into this channel independently of
-/// the executor. `can_receiver` then drains the channel into the collector.
-///
-/// The display refresh's long BUSY-pin wait is async (it yields), so
-/// `can_receiver` keeps draining throughout it. The only windows where the
-/// channel must buffer on its own are the blocking SPI framebuffer transfers
-/// (~200-400 ms total per refresh). This size gives ample headroom for that;
-/// bump it if `Dropped frames` climbs under sustained heavy bus load.
+/// The refresh's BUSY wait is async, so `can_receiver` keeps draining through
+/// it; this only has to cover the blocking SPI framebuffer transfers. Bump it if
+/// `Dropped frames` climbs under sustained heavy bus load.
 const CAN_RX_BUF_SIZE: usize = 256;
 
 static SHARED_CAN_COLLECTOR: Mutex<ThreadModeRawMutex, CanCollector> =
@@ -52,8 +46,6 @@ static RX_BUF: StaticCell<RxBuf<CAN_RX_BUF_SIZE>> = StaticCell::new();
 
 const ENABLE_SKIP_DISPLAY_UPDATE_IF_UNCHANGED: bool = true;
 
-/// FNV-1a 64-bit hash, used to detect when the rendered framebuffer is
-/// unchanged so we can skip an unnecessary panel refresh.
 fn fnv1a_hash(data: &[u8]) -> u64 {
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for &byte in data {
@@ -63,8 +55,6 @@ fn fnv1a_hash(data: &[u8]) -> u64 {
     hash
 }
 
-/// Re-enable the bxCAN RX-FIFO and error interrupts.
-///
 /// Defensive against two embassy-stm32 0.2.0 quirks that leave interrupts off
 /// permanently:
 /// - the non-buffered RX ISR path clears `IER.FMPIE`, and the buffered path has
@@ -83,10 +73,8 @@ fn rearm_can_rx_interrupts() {
     });
 }
 
-/// Log the bxCAN interrupt-enable, RX-FIFO and error state.
-///
-/// Used when no frames have arrived for a while, to distinguish "quiet bus" from
-/// "our RX interrupt is off" from "we are error-passive / bus-off".
+/// Distinguishes "quiet bus" from "our RX interrupt is off" from "we are
+/// error-passive / bus-off".
 fn log_can_state() {
     let can = embassy_stm32::pac::CAN1;
     let ier = can.ier().read();
@@ -200,7 +188,6 @@ pub async fn can_receiver(
                 }
                 None => false,
             };
-            // Log the first occurrence and suppress repeats of the same error.
             if !is_same_error {
                 error!("CAN frame try read error: {}", bus_error);
             }
@@ -228,10 +215,11 @@ async fn main(spawner: Spawner) {
     let epd_reset = Output::new(p.PC8, Level::Low, Speed::VeryHigh);
 
     let mut spi_config = spi::Config::default();
-    spi_config.frequency = Hertz::mhz(2); // max 5 on display
-                                          // Async DMA SPI so the large framebuffer transfers yield to the executor
-                                          // (letting `can_receiver` run) instead of blocking it. SPI2 TX = DMA1_CH5,
-                                          // RX = DMA1_CH4 (both free; CAN1 uses no DMA).
+    // Above the <=2 MHz every Waveshare reference for this panel uses; verified
+    // on this hardware. Drop back to 2 if output ever tears or corrupts.
+    spi_config.frequency = Hertz::mhz(4);
+    // DMA so the framebuffer transfers yield to the executor instead of blocking
+    // it. SPI2 TX = DMA1_CH5, RX = DMA1_CH4, both free (CAN1 uses no DMA).
     let epd_spi = spi::Spi::new(
         p.SPI2, p.PB13, p.PB15, p.PB14, p.DMA1_CH5, p.DMA1_CH4, spi_config,
     );
@@ -242,19 +230,13 @@ async fn main(spawner: Spawner) {
         embedded_hal_bus::spi::ExclusiveDevice::new(epd_spi, epd_cs, Delay).unwrap();
 
     let can_standby = Output::new(p.PB7, Level::Low, Speed::Low);
-    core::mem::forget(can_standby);
+    core::mem::forget(can_standby); // hold the transceiver out of standby
     let mut can = Can::new(p.CAN1, p.PB8, p.PB9, CanInterrupts);
 
-    // Switch the shared RxMode to Buffered *before* the peripheral can deliver a
-    // valid frame, i.e. before the real bitrate is programmed. `Can::new` writes
-    // MCR wholesale (clearing SLEEP and INRQ) and every `CanConfig::drop` leaves
-    // init mode, so the peripheral is already live and receiving by the time
-    // `set_bitrate` returns. A frame arriving while RxMode is still NonBuffered
-    // takes that ISR path, which clears IER.FMPIE0 ("disable interrupts until
-    // read") — and in Buffered mode nothing ever sets it again (the only code
-    // that does is `try_read`, which panics in Buffered mode). RX would then be
-    // dead for the rest of the boot while the hardware silently keeps ACKing and
-    // overwriting its 3-deep FIFO.
+    // Must switch RxMode to Buffered *before* the bitrate is programmed: the
+    // peripheral is already live by then, and a frame arriving while RxMode is
+    // still NonBuffered takes an ISR path that clears IER.FMPIE0 — which nothing
+    // sets again in Buffered mode. RX would be dead for the rest of the boot.
     let (_, can_rx) = can.split();
     let buffered_rx = can_rx.buffered(RX_BUF.init(RxBuf::new()));
 
@@ -265,8 +247,7 @@ async fn main(spawner: Spawner) {
     can.set_tx_fifo_scheduling(true);
     can.enable().await;
 
-    // Belt and braces: the ordering above is what makes RX reliable, but this
-    // costs nothing and guarantees we start with the RX interrupts armed.
+    // Redundant given the ordering above, but free.
     rearm_can_rx_interrupts();
 
     spawner.must_spawn(can_receiver(buffered_rx, led_blue));
@@ -298,35 +279,31 @@ async fn main(spawner: Spawner) {
         .await
         .unwrap();
 
-    // The loop refreshes quickly (differential partial refresh, ~0.5 s) and
-    // periodically does a clean full refresh to clear the ghosting that fast
-    // mode accumulates. Start the counter at the threshold so the first loop
-    // iteration (the first paint of real CAN data) is a full refresh, then
-    // switches to fast mode.
-    //
-    // FULL_REFRESH_EVERY: number of quick refreshes between clean full
-    // refreshes (~every 1 min at the 1 s cadence below). Tune if ghosting
-    // appears too early or the full-refresh flash is too frequent.
+    // The quick refresh drives every pixel, but only a mode-1 full refresh clears
+    // the ghosting that mode 2 accumulates. Starting at the threshold makes the
+    // first paint of real CAN data a full refresh.
     const FULL_REFRESH_EVERY: u32 = 60;
     let mut quick_count: u32 = FULL_REFRESH_EVERY;
-    // Hash of the last frame actually pushed to the panel. Refreshing
-    // identical content is pointless (and every refresh stresses the panel),
-    // so we skip the refresh entirely when the rendered frame hasn't changed.
+    // Skipping identical frames spares the panel a drive cycle.
     let mut last_buffer_hash: Option<u64> = None;
-    // Consecutive loop iterations (1 s each) in which no CAN frame at all was
-    // collected. Used to detect a stalled RX path instead of silently rendering
-    // stale-value dashes forever.
+    // Detects a stalled RX path instead of rendering stale-value dashes forever.
+    // Iterations, not seconds — the loop period is work-bound.
     const RX_STALL_ITERATIONS: u32 = 5;
     let mut empty_snapshots: u32 = 0;
+
+    // A floor on the loop period, not a delay added to it: the refresh alone
+    // exceeds this, so every tick is already overdue and the loop runs work-bound.
+    // The floor matters only when the frame is unchanged and the refresh is
+    // skipped, where it stops the loop spinning on the CAN collector lock.
+    const MIN_LOOP_PERIOD: Duration = Duration::from_millis(500);
+    let mut ticker = Ticker::every(MIN_LOOP_PERIOD);
 
     info!("Starting main loop");
 
     loop {
         info!("Decoding CAN data");
-        // Take the collected frames out under the lock and release it
-        // immediately, so the high-priority `can_receiver` task is blocked on the
-        // shared collector for as short as possible. `mem::take` leaves an empty
-        // collector behind for the receiver to keep filling while we decode.
+        // `mem::take` leaves an empty collector for `can_receiver` to keep filling
+        // while we decode, so it is blocked on the lock for as short as possible.
         let snapshot = {
             let mut can_collector = SHARED_CAN_COLLECTOR.lock().await;
             if can_collector.get_dropped_frames() > 0 {
@@ -335,19 +312,17 @@ async fn main(spawner: Spawner) {
             core::mem::take(&mut *can_collector)
         };
 
-        // Watch for a stalled RX path. Counted on the raw frame count rather than
-        // on `parsed_frames`, so a bus carrying only IDs we don't decode still
-        // counts as healthy.
+        // Counted on raw frames rather than `parsed_frames`, so a bus carrying only
+        // IDs we don't decode still counts as healthy.
         if snapshot.iter().next().is_some() {
             empty_snapshots = 0;
         } else {
             empty_snapshots = empty_snapshots.saturating_add(1);
-            // Retry every RX_STALL_ITERATIONS seconds rather than every second,
-            // while keeping the counter monotone so the reported duration is the
-            // real stall length.
+            // Monotone counter, so the reported count is the real stall length
+            // rather than resetting on every retry.
             if empty_snapshots % RX_STALL_ITERATIONS == 0 {
                 warn!(
-                    "No CAN frames received for {} s, re-arming RX interrupts",
+                    "No CAN frames received for {} loop iterations, re-arming RX interrupts",
                     empty_snapshots
                 );
                 log_can_state();
@@ -376,10 +351,8 @@ async fn main(spawner: Spawner) {
             led_green.set_low();
             if quick_count >= FULL_REFRESH_EVERY {
                 info!("Updating display (full refresh)");
-                // Clean full refresh: re-init the panel (wake_up runs the
-                // standard init), then paint. This also rewrites the "old"
-                // RAM with the frame, re-establishing the baseline the
-                // following partial refreshes diff against.
+                // wake_up re-runs the standard init, which the mode-1 waveform
+                // needs after a run of differential refreshes.
                 epd.wake_up_async(&mut epd_spi_device, &mut Delay)
                     .await
                     .unwrap();
@@ -393,9 +366,7 @@ async fn main(spawner: Spawner) {
                 quick_count = 0;
             } else {
                 info!("Updating display (quick refresh)");
-                // Differential partial refresh: only the pixels that changed
-                // versus the previous frame are driven.
-                epd.display_partial_async(&mut epd_spi_device, display.buffer(), &mut Delay)
+                epd.display_refresh_all_async(&mut epd_spi_device, display.buffer(), &mut Delay)
                     .await
                     .unwrap();
                 quick_count += 1;
@@ -405,6 +376,6 @@ async fn main(spawner: Spawner) {
             led_green.set_high();
         }
 
-        Timer::after_secs(1).await;
+        ticker.next().await;
     }
 }
