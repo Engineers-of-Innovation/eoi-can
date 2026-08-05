@@ -1,11 +1,9 @@
-use core::sync::atomic::{AtomicI16, Ordering};
-
 use defmt::*;
 use embassy_futures::select::{Either, select};
 use embassy_stm32::Peri;
 use embassy_stm32::adc::{Adc, AdcConfig, Averaging, SampleTime};
 use embassy_stm32::can::{BufferedCanSender, Frame, StandardId};
-use embassy_stm32::gpio::{Level, Output, Speed};
+use embassy_stm32::gpio::{Input, Pull};
 use embassy_stm32::peripherals::{ADC1, PB1, PB2};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
@@ -44,6 +42,10 @@ pub const STATUS_CAL_INVALID: u8 = 1 << 2;
 pub const STATUS_OUT_OF_RANGE: u8 = 1 << 3;
 /// The last write to persistent storage failed; sticky until the next success.
 pub const STATUS_STORAGE_ERROR: u8 = 1 << 4;
+/// The presence pin on the sensor connector reads high, so no sensor is
+/// plugged in. Independent of the calibration bits: a stored calibration stays
+/// valid while the sensor is unplugged.
+pub const STATUS_NOT_CONNECTED: u8 = 1 << 5;
 
 // Calibration command results, reported in byte 1 of CAN_ID_STEERING_CAL_ACK.
 const CAL_RESULT_OK: u8 = 0;
@@ -70,15 +72,6 @@ const SAMPLE_PERIOD_MS: u64 = 100;
 // Group delay is half the window, 50 ms, inherent to averaging over it.
 const OVERSAMPLE_PERIOD_MS: u64 = 5;
 const OVERSAMPLES_PER_REPORT: u32 = (SAMPLE_PERIOD_MS / OVERSAMPLE_PERIOD_MS) as u32;
-
-// 1 Hz software PWM, 1 % duty resolution.
-const PWM_PERIOD_MS: u64 = 1000;
-const PWM_TICK_MS: u64 = 10;
-const PWM_STEPS: u64 = PWM_PERIOD_MS / PWM_TICK_MS;
-
-/// Latest normalized position, shared between the sample task and the PWM
-/// task. Held at 0 (centre) whenever the calibration is not usable.
-static LATEST_POSITION: AtomicI16 = AtomicI16::new(0);
 
 /// Calibration command from the CAN receive task.
 pub static STEERING_CAL_COMMAND: Signal<CriticalSectionRawMutex, CalCommand> = Signal::new();
@@ -118,8 +111,8 @@ impl CalCommand {
 pub fn init(
     adc1: Peri<'static, ADC1>,
     input_pin: Peri<'static, PB1>,
-    pwm_pin: Peri<'static, PB2>,
-) -> (Adc<'static, ADC1>, Peri<'static, PB1>, Output<'static>) {
+    presence_pin: Peri<'static, PB2>,
+) -> (Adc<'static, ADC1>, Peri<'static, PB1>, Input<'static>) {
     // Hardware oversampling: each read runs 16 conversions and returns their
     // sum right-shifted by 4, so the result stays on the same 12-bit scale and
     // calibration codes stored by earlier firmware remain comparable.
@@ -131,8 +124,11 @@ pub fn init(
             ..Default::default()
         },
     );
-    let pwm = Output::new(pwm_pin, Level::Low, Speed::Low);
-    (adc, input_pin, pwm)
+    // This pin on the sensor connector used to drive an LED. It is now a
+    // presence detect input instead: the sensor pulls it to ground, so with the
+    // internal pull-up a high reading means the connector is empty.
+    let presence = Input::new(presence_pin, Pull::Up);
+    (adc, input_pin, presence)
 }
 
 /// Signed distance from centre to each endpoint, or `None` when the
@@ -201,7 +197,13 @@ async fn capture_raw(adc: &mut Adc<'static, ADC1>, input: &mut Peri<'static, PB1
 /// Bits 0..2 are mutually exclusive: valid, or stored-but-unusable, or nothing
 /// stored at all. `any_captured` distinguishes the latter two — a cleared or
 /// never-written block reads back with no endpoints captured.
-fn status_bits(any_captured: bool, spans_ok: bool, out_of_range: bool, storage_error: bool) -> u8 {
+fn status_bits(
+    any_captured: bool,
+    spans_ok: bool,
+    out_of_range: bool,
+    storage_error: bool,
+    not_connected: bool,
+) -> u8 {
     let mut status = 0;
     if spans_ok {
         status |= STATUS_CAL_VALID;
@@ -216,6 +218,9 @@ fn status_bits(any_captured: bool, spans_ok: bool, out_of_range: bool, storage_e
     if storage_error {
         status |= STATUS_STORAGE_ERROR;
     }
+    if not_connected {
+        status |= STATUS_NOT_CONNECTED;
+    }
     status
 }
 
@@ -223,6 +228,7 @@ fn status_bits(any_captured: bool, spans_ok: bool, out_of_range: bool, storage_e
 pub async fn sample_task(
     mut adc: Adc<'static, ADC1>,
     mut input: Peri<'static, PB1>,
+    presence: Input<'static>,
     mut store: ConfigStore,
     mut can_tx: BufferedCanSender,
 ) {
@@ -271,8 +277,8 @@ pub async fn sample_task(
                     cal_spans.is_some(),
                     out_of_range,
                     storage_error,
+                    presence.is_high(),
                 );
-                LATEST_POSITION.store(position, Ordering::Relaxed);
 
                 report_count += 1;
                 if report_count.is_multiple_of(debug_every_n_reports) {
@@ -339,14 +345,14 @@ pub async fn sample_task(
                     }
                 };
 
-                // The new calibration takes effect on the next sample tick;
-                // park at centre in the meantime if it is not usable.
-                if !spans_ok {
-                    LATEST_POSITION.store(0, Ordering::Relaxed);
-                }
-
                 let captured_le = captured.to_le_bytes();
-                let status = status_bits(cal.captured != 0, spans_ok, false, storage_error);
+                let status = status_bits(
+                    cal.captured != 0,
+                    spans_ok,
+                    false,
+                    storage_error,
+                    presence.is_high(),
+                );
                 let frame = Frame::new_data(
                     CAN_ID_STEERING_CAL_ACK,
                     &[
@@ -372,28 +378,6 @@ pub async fn sample_task(
                 sum = 0;
                 count = 0;
             }
-        }
-    }
-}
-
-#[embassy_executor::task]
-pub async fn pwm_task(mut pwm: Output<'static>) {
-    loop {
-        // Map -POSITION_FULL_SCALE..+POSITION_FULL_SCALE to 0..PWM_STEPS, so
-        // centre — including the uncalibrated safe state — is 50 % duty.
-        let position = LATEST_POSITION.load(Ordering::Relaxed) as i64;
-        let full_scale = POSITION_FULL_SCALE as i64;
-        let high_steps =
-            ((position + full_scale) as u64 * PWM_STEPS / (2 * full_scale) as u64).min(PWM_STEPS);
-        let low_steps = PWM_STEPS - high_steps;
-
-        if high_steps > 0 {
-            pwm.set_high();
-            Timer::after(Duration::from_millis(high_steps * PWM_TICK_MS)).await;
-        }
-        if low_steps > 0 {
-            pwm.set_low();
-            Timer::after(Duration::from_millis(low_steps * PWM_TICK_MS)).await;
         }
     }
 }

@@ -34,6 +34,15 @@ enum Command {
     Reboot,
     /// Read the current device state
     State,
+    /// Write the flashable image (2048-byte header + app) to a file, for
+    /// programming at 0x08014000 with a debug probe. Does not touch the CAN bus.
+    Image {
+        /// Path to the ELF firmware file
+        elf_file: String,
+        /// Where to write the image (default: <elf_file>.img)
+        #[arg(short, long)]
+        output: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -49,6 +58,13 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
+
+    // `image` is a local ELF -> binary conversion for probe flashing, so it must
+    // not require a CAN interface to exist.
+    if let Command::Image { elf_file, output } = &cli.command {
+        return write_image(elf_file, output.as_deref());
+    }
+
     let client = CanClient::connect(&cli.interface).await?;
 
     match cli.command {
@@ -74,8 +90,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Command::Flash { elf_file, no_start } => {
             flash(&client, &elf_file, no_start).await?;
         }
+        // Handled above, before the CAN connection.
+        Command::Image { .. } => unreachable!(),
     }
 
+    Ok(())
+}
+
+/// Turn an application ELF into the blob the bootloader expects to find in
+/// flash: the 2048-byte header followed by the raw app binary. Written as one
+/// file so a debug probe can program it at HEADER (0x08014000) in a single
+/// step, which keeps the header's CRC and the app it describes in sync.
+fn write_image(elf_file: &str, output: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
+    let firmware = FirmwareImage::from_elf_file(elf_file)?;
+    let path = output.map_or_else(|| format!("{elf_file}.img"), str::to_owned);
+    std::fs::write(&path, &firmware.data)?;
+    log::info!(
+        "Wrote {} ({} bytes: 2048 header + {} app, app_type={:?}) — flash at 0x08014000",
+        path,
+        firmware.data.len(),
+        firmware.app_size,
+        firmware.app_type,
+    );
     Ok(())
 }
 

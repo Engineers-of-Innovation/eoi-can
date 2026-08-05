@@ -98,14 +98,15 @@ async fn main(spawner: Spawner) {
         cooling_pump_enable
     )));
 
-    let (steering_adc, steering_input, steering_pwm) = steering_angle::init(p.ADC1, p.PB1, p.PB2);
+    let (steering_adc, steering_input, steering_presence) =
+        steering_angle::init(p.ADC1, p.PB1, p.PB2);
     spawner.spawn(unwrap!(steering_angle::sample_task(
         steering_adc,
         steering_input,
+        steering_presence,
         config::ConfigStore::new(p.FLASH),
         buffered.writer()
     )));
-    spawner.spawn(unwrap!(steering_angle::pwm_task(steering_pwm)));
 
     let adc2 = flow_sensor::init_adc2(p.ADC2);
 

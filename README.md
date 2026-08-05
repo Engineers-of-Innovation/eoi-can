@@ -158,9 +158,17 @@ so an endpoint is never set by a noisy moment.
 | 2 | CalInvalid | Stored but incomplete, or implausible (see rejection rules) |
 | 3 | OutOfRange | Raw reading is outside the calibrated travel; position clamped |
 | 4 | StorageError | Last write to the CONFIG block failed; sticky until one succeeds |
+| 5 | NotConnected | Presence pin on the sensor connector reads high; no sensor plugged in |
 
-Whenever CalValid is clear the reported position is held at 0 and the PB2 PWM
-output is parked at 50 % duty (centre), regardless of the sensor reading.
+Whenever CalValid is clear the reported position is held at 0, regardless of
+the sensor reading.
+
+**Sensor presence.** PB2 on the sensor connector is an input with an internal
+pull-up, rather than the LED feedback output it used to drive. The sensor pulls
+the pin to ground, so a high reading means the connector is empty and
+NotConnected is set. It is sampled once per report and is independent of the
+calibration bits: a stored calibration stays valid while the sensor is
+unplugged.
 
 **Calibration commands on `0x214`** (byte 0 = command, remaining bytes ignored):
 
