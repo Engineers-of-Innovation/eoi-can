@@ -6,3 +6,6 @@ screenshot.png
 flamegraph.svg
 perf.data*
 .env
+
+# Python bytecode from support/ scripts
+__pycache__/

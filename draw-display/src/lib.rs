@@ -12,7 +12,7 @@ use eoi_can_decoder::{
     GnssDateTime, HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData,
     ThrottleErrors, VescData,
 };
-use mppt_layout::{position_of, MpptKind, LAYOUT};
+use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
 
 const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
@@ -91,6 +91,11 @@ pub struct DisplayData {
     pub throttle_value: DisplayValue<f32>,
     pub throttle_errors: DisplayValue<ThrottleErrors>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; MPPT_PANEL_COUNT], // (Power, Voltage, Current), indexed by boat-position - 1
+    /// Hottest temperature each MPPT reports, in °C, indexed by ID strap -- not by
+    /// boat position, so a unit reports regardless of whether `LAYOUT` places it.
+    /// GaN units report a board and a heat sink temperature; this keeps the higher
+    /// of the two. Legacy MPPTs have no strap and are not covered.
+    pub mppt_temperatures: [DisplayValue<i8>; GAN_STRAP_COUNT],
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
     pub ip_address: DisplayValue<Ipv4Addr>,
@@ -184,19 +189,23 @@ impl DisplayData {
             },
             EoiCanData::Mppt(mppt_data) => {
                 let node = mppt_data.node_id();
-                let (channel, power) = match mppt_data.inner() {
-                    MpptInfo::Channel0(MpptChannel::Power(p)) => (0u8, p),
-                    MpptInfo::Channel1(MpptChannel::Power(p)) => (1u8, p),
-                    MpptInfo::Channel2(MpptChannel::Power(p)) => (2u8, p),
-                    MpptInfo::Channel3(MpptChannel::Power(p)) => (3u8, p),
-                    _ => return,
+                let channel_power = match mppt_data.inner() {
+                    MpptInfo::Channel0(MpptChannel::Power(p)) => Some((0u8, p)),
+                    MpptInfo::Channel1(MpptChannel::Power(p)) => Some((1u8, p)),
+                    MpptInfo::Channel2(MpptChannel::Power(p)) => Some((2u8, p)),
+                    MpptInfo::Channel3(MpptChannel::Power(p)) => Some((3u8, p)),
+                    // Legacy MPPTs report a node temperature, but they have no ID
+                    // strap to name them by, so it is not surfaced.
+                    _ => None,
                 };
-                if let Some(pos) = position_of(MpptKind::Legacy { node, channel }) {
-                    self.mppt_panel_info[pos as usize - 1].update((
-                        power.voltage_in * power.current_in,
-                        power.voltage_in,
-                        power.current_in,
-                    ));
+                if let Some((channel, power)) = channel_power {
+                    if let Some(pos) = position_of(MpptKind::Legacy { node, channel }) {
+                        self.mppt_panel_info[pos as usize - 1].update((
+                            power.voltage_in * power.current_in,
+                            power.voltage_in,
+                            power.current_in,
+                        ));
+                    }
                 }
             }
             EoiCanData::Gnss(gnss) => match gnss {
@@ -222,14 +231,25 @@ impl DisplayData {
             },
             EoiCanData::GanMppt(gan_data) => {
                 let node = gan_data.node_id();
-                if let GanMpptPacket::Power(power) = gan_data.inner() {
-                    if let Some(pos) = position_of(MpptKind::Gan { node }) {
-                        self.mppt_panel_info[pos as usize - 1].update((
-                            power.input_voltage * power.input_current,
-                            power.input_voltage,
-                            power.input_current,
-                        ));
+                match gan_data.inner() {
+                    GanMpptPacket::Power(power) => {
+                        if let Some(pos) = position_of(MpptKind::Gan { node }) {
+                            self.mppt_panel_info[pos as usize - 1].update((
+                                power.input_voltage * power.input_current,
+                                power.input_voltage,
+                                power.input_current,
+                            ));
+                        }
                     }
+                    GanMpptPacket::Status(status) => {
+                        // Indexed by strap: every MPPT on the bus reports, whether
+                        // or not LAYOUT gives it a boat position. The heat sink
+                        // usually leads the board, so take whichever is hotter.
+                        if let Some(slot) = self.mppt_temperatures.get_mut(node as usize) {
+                            slot.update(status.board_temp.max(status.heat_sink_temp));
+                        }
+                    }
+                    _ => {}
                 }
             }
             EoiCanData::Temperature(temp) => match temp {
@@ -247,5 +267,38 @@ impl DisplayData {
         for (index, value) in values.iter().enumerate() {
             self.battery_cell_voltages[offset + index].update(*value);
         }
+    }
+
+    /// The hottest MPPT currently reporting, and how to name it. `None` while no
+    /// MPPT has sent a temperature.
+    pub fn hottest_mppt(&self) -> Option<(MpptId, i8)> {
+        self.mppt_temperatures
+            .iter()
+            .enumerate()
+            .filter_map(|(strap, value)| value.get().map(|t| (MpptId::of_strap(strap as u8), *t)))
+            .max_by_key(|(_, t)| *t)
+    }
+
+    /// The hottest of the battery's four pack thermistors, in °C.
+    pub fn hottest_battery_temperature(&self) -> Option<i8> {
+        self.battery_temperatures
+            .iter()
+            .filter_map(|value| value.get().copied())
+            .max()
+    }
+}
+
+/// How an MPPT is named on screen: the side and 0-based position its ID strap
+/// encodes -- `F0`-`F7` forward, `R0`-`R7` aft.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MpptId {
+    pub side: Side,
+    pub position: u8,
+}
+
+impl MpptId {
+    fn of_strap(strap: u8) -> Self {
+        let (side, position) = gan_side_and_position(strap);
+        Self { side, position }
     }
 }

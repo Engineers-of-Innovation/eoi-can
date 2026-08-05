@@ -3,7 +3,45 @@
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MpptKind {
     Legacy { node: u8, channel: u8 },
+    // `Gan`'s node is the ID strap (0-15), not the CAN node number -- see
+    // `gan_side_and_position`.
     Gan { node: u8 },
+}
+
+/// Which side of the boat a GaN MPPT sits on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Side {
+    Front,
+    Rear,
+}
+
+/// Number of GaN MPPT ID straps, and so the number of MPPTs the boat can carry:
+/// R0-R7 and F0-F7.
+pub const GAN_STRAP_COUNT: usize = 16;
+
+/// The side and 0-based position a GaN MPPT's ID strap encodes.
+///
+/// A GaN MPPT's CAN ID is `(node << 4) | packet` with `node = 64 + strap`. Within
+/// the strap, bit 3 selects the side (1 = Front, 0 = Rear) and bits 0-2 the
+/// position:
+///
+/// | MPPT | Node | CAN IDs | | MPPT | Node | CAN IDs |
+/// | --- | --- | --- | --- | --- | --- | --- |
+/// | R0 | 64 | `0x400`-`0x402` | | F0 | 72 | `0x480`-`0x482` |
+/// | R7 | 71 | `0x470`-`0x472` | | F7 | 79 | `0x4F0`-`0x4F2` |
+///
+/// Within each block: +0 Power, +1 Status, +2 Sweep.
+///
+/// The baseboards sit outside this scheme -- `0x4E6` Front and `0x4EE` Rear. They
+/// share node numbers with the position-6 MPPTs but use packet ids outside 0-2, so
+/// they never decode as MPPT data and cannot be confused with one.
+pub const fn gan_side_and_position(strap: u8) -> (Side, u8) {
+    let side = if strap & 0b1000 != 0 {
+        Side::Front
+    } else {
+        Side::Rear
+    };
+    (side, strap & 0b111)
 }
 
 /// Order = physical position on the boat. Index 0 = bow-most (position 1),
