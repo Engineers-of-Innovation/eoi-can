@@ -15,9 +15,17 @@ Embedded firmware for the STM32L471 microcontroller. Contains two application bi
 - Onboard temperature sensor via I2C
 - CAN bus communication
 
+### Dashboard (`dashboard`)
+
+Same board as the height sensor controller, with a Waveshare 5.79" e-paper display (792x272) on SPI2 instead of the RS-485 height sensors.
+
+The application binary is not in this repo yet — it currently lives in the `eoi-can` repo as `eoi-can-display-firmware` and will be moved here. Only the bootloader side (app type `0x03`) is supported so far, so a dashboard board can be given a bootloader today and the application flashed over CAN once it has been ported.
+
 ## Bootloader (`eoi-boot`)
 
 CAN-based bootloader that lives in the first 80K of flash. Allows firmware updates over CAN bus without a debug probe.
+
+The bootloader is compiled for exactly one board variant — select it with a cargo feature (`rudder-controller`, `height-sensor-controller` or `dashboard`). It refuses to boot an application whose header app type doesn't match.
 
 - Validates application on boot (header magic + CRC32)
 - Auto-boots the application after 2 seconds if no CAN commands received
@@ -69,7 +77,7 @@ The bootloader communicates over CAN at 1 Mbps using standard 11-bit IDs.
 | 0x01 | State | state: u8 | 0=WaitingNoApp, 1=WaitingWithApp, 2=Flashing |
 | 0x02 | EraseOk | - | Erase complete |
 | 0x03 | WriteAck | offset: u32 LE | Total bytes written so far |
-| 0x04 | ValidateResult | result: u8 | 0=valid, 1=bad magic, 2=bad length, 3=bad CRC |
+| 0x04 | ValidateResult | result: u8 | 0=valid, 1=bad magic, 2=bad length, 3=bad CRC, 4=wrong app type |
 | 0x05 | BootAck | - | Will boot in 500ms |
 | 0x06 | RebootAck | - | Will reboot |
 | 0xFF | Error | code: u8 | Error response |
@@ -82,7 +90,8 @@ The bootloader communicates over CAN at 1 Mbps using standard 11-bit IDs.
 | 0x04 | 1 | Header version (currently 1) |
 | 0x05 | 4 | App length (LE u32) |
 | 0x09 | 4 | App CRC32-ISCSI (LE u32) |
-| 0x0D | ... | Padding (0xFF) to 2048 bytes |
+| 0x0D | 1 | App type: 0x01=rudder controller, 0x02=height sensor controller, 0x03=dashboard |
+| 0x0E | ... | Padding (0xFF) to 2048 bytes |
 
 **Update flow:** GetState -> EraseApp -> WriteData x N on `0x032` (header + app, 8 bytes per frame) -> ValidateApp -> BootApp
 
@@ -120,8 +129,10 @@ cargo build --release --bin rudder-controller
 cargo build --release --bin height-sensor-controller --features bootloader
 cargo build --release --bin rudder-controller --features bootloader
 
-# Bootloader
-cargo build --release -p eoi-boot
+# Bootloader (exactly one board variant feature must be enabled)
+cargo build --release -p eoi-boot --features height-sensor-controller
+cargo build --release -p eoi-boot --features rudder-controller
+cargo build --release -p eoi-boot --features dashboard
 
 # Flash tool (host-side, must be built from its directory)
 cd flash-tool && cargo build && cd ..
@@ -131,10 +142,10 @@ cd flash-tool && cargo build && cd ..
 
 Connect a debug probe (e.g. ST-Link) to the STM32L471 board.
 
-Flash the bootloader first (only needed once):
+Flash the bootloader first (only needed once), with the feature matching the board:
 
 ```sh
-cargo run --release -p eoi-boot
+cargo run --release -p eoi-boot --features height-sensor-controller
 ```
 
 Then flash the application:

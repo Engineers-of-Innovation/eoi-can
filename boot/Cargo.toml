@@ -11,6 +11,7 @@ path = "src/main.rs"
 # Exactly one of these must be enabled. They match the app's [[bin]] names.
 rudder-controller = []
 height-sensor-controller = []
+dashboard = []
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }

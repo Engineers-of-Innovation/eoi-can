@@ -4,14 +4,22 @@
 mod bootloader;
 mod flash;
 
-#[cfg(all(feature = "rudder-controller", feature = "height-sensor-controller"))]
+#[cfg(any(
+    all(feature = "rudder-controller", feature = "height-sensor-controller"),
+    all(feature = "rudder-controller", feature = "dashboard"),
+    all(feature = "height-sensor-controller", feature = "dashboard"),
+))]
 compile_error!(
-    "exactly one of the `rudder-controller` / `height-sensor-controller` features must be enabled, not both"
+    "exactly one of the `rudder-controller` / `height-sensor-controller` / `dashboard` features must be enabled, not several"
 );
 
-#[cfg(not(any(feature = "rudder-controller", feature = "height-sensor-controller")))]
+#[cfg(not(any(
+    feature = "rudder-controller",
+    feature = "height-sensor-controller",
+    feature = "dashboard"
+)))]
 compile_error!(
-    "one of the `rudder-controller` / `height-sensor-controller` features must be enabled"
+    "one of the `rudder-controller` / `height-sensor-controller` / `dashboard` features must be enabled"
 );
 
 #[cfg(feature = "rudder-controller")]
@@ -20,6 +28,9 @@ pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
 #[cfg(feature = "height-sensor-controller")]
 pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
     eoi_boot_api::header::AppType::HeightSensorController;
+#[cfg(feature = "dashboard")]
+pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
+    eoi_boot_api::header::AppType::Dashboard;
 
 use core::cell::RefCell;
 
