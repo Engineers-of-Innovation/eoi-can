@@ -45,6 +45,10 @@ const RUDDER: Device = Device {
     id: "eoi_rudder",
     name: "Rudder",
 };
+const MOTOR: Device = Device {
+    id: "eoi_motor",
+    name: "Motor",
+};
 const HEIGHT_SENSORS: Device = Device {
     id: "eoi_height_sensors",
     name: "Height Sensors",
@@ -357,6 +361,7 @@ pub fn entities() -> Vec<HaEntity> {
     add_vesc(&mut v);
     add_throttle(&mut v);
     add_rudder(&mut v);
+    add_motor(&mut v);
     add_height_sensors(&mut v);
     add_gnss(&mut v);
     add_boat_location(&mut v);
@@ -1125,6 +1130,80 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
     );
 }
 
+/// The standalone motor NTC node, `0x219`. Its own device, since it is its own board
+/// rather than a reading the rudder controller or the VESC happens to carry.
+fn add_motor(v: &mut Vec<HaEntity>) {
+    let mut v = scoped(v, MOTOR);
+    v.push(
+        sensor(
+            "motor_temperature",
+            "Motor Temperature",
+            "Temperature.MotorNtc.temperature",
+        )
+        .temperature(),
+    );
+    for (object_id, name, field, problem) in [
+        (
+            "motor_ntc_sensor_open",
+            "Motor NTC Sensor Open",
+            "sensor_open",
+            true,
+        ),
+        (
+            "motor_ntc_sensor_short",
+            "Motor NTC Sensor Short",
+            "sensor_short",
+            true,
+        ),
+        (
+            "motor_ntc_out_of_range",
+            "Motor NTC Out Of Range",
+            "out_of_range",
+            true,
+        ),
+        // Not a problem: it clears itself a few seconds after the node powers up.
+        (
+            "motor_ntc_settling",
+            "Motor NTC Settling",
+            "settling",
+            false,
+        ),
+        (
+            "motor_ntc_acquisition_error",
+            "Motor NTC Acquisition Error",
+            "acquisition_error",
+            true,
+        ),
+        (
+            "motor_ntc_previous_tx_failed",
+            "Motor NTC Previous Tx Failed",
+            "previous_tx_failed",
+            true,
+        ),
+    ] {
+        let entity = binary_sensor(
+            object_id,
+            name,
+            &format!("Temperature.MotorNtc.status.{field}"),
+        )
+        .diagnostic();
+        v.push(if problem {
+            entity.device_class("problem")
+        } else {
+            entity
+        });
+    }
+    v.push(
+        sensor(
+            "motor_ntc_frame_counter",
+            "Motor NTC Frame Counter",
+            "Temperature.MotorNtc.frame_counter",
+        )
+        .diagnostic()
+        .icon("mdi:counter"),
+    );
+}
+
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
     let mut v = scoped(v, HEIGHT_SENSORS);
     for (variant, label, disabled_by_default) in [
@@ -1675,6 +1754,11 @@ mod tests {
             // Temperature
             EoiCanData::Temperature(TemperatureData::HeightSensorsController(0.0)),
             EoiCanData::Temperature(TemperatureData::RudderController(0.0)),
+            EoiCanData::Temperature(TemperatureData::MotorNtc(MotorNtc {
+                temperature: Some(0.0),
+                status: MotorNtcStatus::default(),
+                frame_counter: Some(0),
+            })),
             // GNSS
             EoiCanData::Gnss(GnssData::GnssStatus(GnssStatus {
                 fix: 0,

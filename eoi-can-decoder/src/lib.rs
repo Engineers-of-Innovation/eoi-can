@@ -706,6 +706,61 @@ impl From<u8> for HeightSensorState {
 pub enum TemperatureData {
     HeightSensorsController(f32),
     RudderController(f32),
+    MotorNtc(MotorNtc),
+}
+
+/// The standalone motor NTC node, `0x219` -- an STM32G491 on CANable 2.5 hardware
+/// with a 10 kΩ NTC, transmit only, once per second. It replaces reading the motor
+/// NTC through the VESC or the rudder controller's `0x217`.
+///
+/// `temperature` is `None` when the frame carried the node's invalid sentinel, which
+/// it always does for an open sensor, a short, or a failed acquisition. `OutOfRange`
+/// and `Settling` leave a usable reading -- clamped and still converging
+/// respectively -- so those come through as a value with the flag set beside it.
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MotorNtc {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub temperature: Option<f32>,
+    pub status: MotorNtcStatus,
+    /// Increments once per transmission and wraps, so a gap means frames were lost.
+    /// Absent on a two-byte build of the node, which sends no counter.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame_counter: Option<u8>,
+}
+
+/// Status flags from byte 2 of `0x219`, matching `eSensorStatus` in the node's
+/// firmware.
+#[derive(Debug, Default, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct MotorNtcStatus {
+    /// The divider tap sits at the bias rail: the NTC is disconnected.
+    pub sensor_open: bool,
+    /// The divider tap sits at ground: the NTC is shorted.
+    pub sensor_short: bool,
+    /// The reading fell outside -40..+150 °C and is clamped to the nearest limit.
+    pub out_of_range: bool,
+    /// The node's filter has not seen enough updates yet. Clears a few seconds
+    /// after the node powers up.
+    pub settling: bool,
+    /// The node's ADC or DMA delivered no samples this cycle.
+    pub acquisition_error: bool,
+    /// The *previous* frame went unacknowledged and was cancelled, so it is a
+    /// statement about a frame that is already gone rather than about this reading.
+    pub previous_tx_failed: bool,
+}
+
+impl From<u8> for MotorNtcStatus {
+    fn from(value: u8) -> Self {
+        Self {
+            sensor_open: value & 0x01 != 0,
+            sensor_short: value & 0x02 != 0,
+            out_of_range: value & 0x04 != 0,
+            settling: value & 0x08 != 0,
+            acquisition_error: value & 0x10 != 0,
+            previous_tx_failed: value & 0x20 != 0,
+        }
+    }
 }
 
 pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData> {
@@ -790,6 +845,21 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x211 => Some(EoiCanData::Temperature(TemperatureData::RudderController(
             bytes_le_to_i16(data.get(0..2)?)? as f32 / 100.0,
         ))),
+        0x219 => {
+            let raw_temperature = bytes_le_to_i16(data.get(0..2)?)?;
+            Some(EoiCanData::Temperature(TemperatureData::MotorNtc(
+                MotorNtc {
+                    // Decidegrees here, unlike 0x217's centidegrees.
+                    temperature: (raw_temperature != i16::MIN)
+                        .then(|| raw_temperature as f32 / 10.0),
+                    // The node can be built to send temperature only. Reading no
+                    // status byte as all-clear is safe, because the fault it would
+                    // have reported is already in the sentinel above.
+                    status: MotorNtcStatus::from(data.get(2).copied().unwrap_or(0)),
+                    frame_counter: data.get(3).copied(),
+                },
+            )))
+        }
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -1421,6 +1491,83 @@ mod tests {
         };
         assert!(motor.temperature.is_none());
         assert!(motor.raw_adc == 4095);
+    }
+
+    fn motor_ntc(data: &[u8]) -> MotorNtc {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x219).unwrap()),
+            data,
+        );
+        let Some(EoiCanData::Temperature(TemperatureData::MotorNtc(ntc))) =
+            parse_eoi_can_data(&can_frame)
+        else {
+            panic!("Unexpected data type");
+        };
+        ntc
+    }
+
+    #[test]
+    fn motor_ntc_reading() {
+        // 235 dd (0x00EB LE) = 23.5 °C, status clear, counter 0x42.
+        let ntc = motor_ntc(&[0xEB, 0x00, 0x00, 0x42]);
+        assert!(ntc.temperature == Some(23.5));
+        assert!(ntc.status == MotorNtcStatus::default());
+        assert!(ntc.frame_counter == Some(0x42));
+    }
+
+    #[test]
+    fn motor_ntc_below_zero() {
+        // -125 dd (0xFF83 LE) = -12.5 °C. Decidegrees, so a sign error would land
+        // three orders of magnitude out rather than merely looking odd.
+        assert!(motor_ntc(&[0x83, 0xFF, 0x00, 0x00]).temperature == Some(-12.5));
+    }
+
+    #[test]
+    fn motor_ntc_open_sensor_has_no_reading() {
+        // Sentinel 0x8000 LE with SensorOpen set: no temperature, fault named.
+        let ntc = motor_ntc(&[0x00, 0x80, 0x01, 0x07]);
+        assert!(ntc.temperature.is_none());
+        assert!(ntc.status.sensor_open);
+        assert!(!ntc.status.sensor_short);
+    }
+
+    #[test]
+    fn motor_ntc_keeps_usable_readings_that_carry_a_flag() {
+        // OutOfRange clamps and Settling converges, but both leave a real number,
+        // so the flag must not swallow the reading.
+        let clamped = motor_ntc(&[0x70, 0xFE, 0x04, 0x00]); // -400 dd = -40.0 °C, the low clamp
+        assert!(clamped.temperature == Some(-40.0));
+        assert!(clamped.status.out_of_range);
+
+        let settling = motor_ntc(&[0xEB, 0x00, 0x08, 0x00]);
+        assert!(settling.temperature == Some(23.5));
+        assert!(settling.status.settling);
+    }
+
+    #[test]
+    fn motor_ntc_decodes_every_status_bit() {
+        let all = motor_ntc(&[0x00, 0x80, 0x3F, 0x00]);
+        assert!(
+            all.status
+                == MotorNtcStatus {
+                    sensor_open: true,
+                    sensor_short: true,
+                    out_of_range: true,
+                    settling: true,
+                    acquisition_error: true,
+                    previous_tx_failed: true,
+                }
+        );
+    }
+
+    #[test]
+    fn motor_ntc_accepts_a_two_byte_build() {
+        // The node can be built to send temperature only. That still decodes, with
+        // no status and no counter to report.
+        let ntc = motor_ntc(&[0xEB, 0x00]);
+        assert!(ntc.temperature == Some(23.5));
+        assert!(ntc.status == MotorNtcStatus::default());
+        assert!(ntc.frame_counter.is_none());
     }
 
     #[test]

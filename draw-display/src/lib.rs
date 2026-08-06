@@ -87,7 +87,18 @@ pub struct DisplayData {
     pub motor_duty_cycle: DisplayValue<f32>,
     pub motor_rpm: DisplayValue<i32>,
     pub motor_fet_temperature: DisplayValue<f32>,
-    pub motor_temperature: DisplayValue<f32>,
+    /// The VESC's own motor NTC input, from status message 4. Recorded because the
+    /// VESC still sends it, but **not shown**: the reading is broken on this boat,
+    /// which is why the standalone node below exists.
+    pub vesc_motor_temperature: DisplayValue<f32>,
+    /// The standalone motor NTC node, `0x219` -- the motor temperature the display
+    /// shows.
+    ///
+    /// Nested `Option` on purpose. The outer one is the node's liveness, the inner
+    /// one is whether the reading it sent was usable, and the display needs both:
+    /// silence and a reported fault are different facts even though they draw the
+    /// same dashes.
+    pub motor_ntc_temperature: DisplayValue<Option<f32>>,
     pub throttle_value: DisplayValue<f32>,
     pub throttle_errors: DisplayValue<ThrottleErrors>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; MPPT_PANEL_COUNT], // (Power, Voltage, Current), indexed by boat-position - 1
@@ -177,7 +188,7 @@ impl DisplayData {
                 } => {
                     self.motor_battery_current.update(total_input_current);
                     self.motor_fet_temperature.update(fet_temp);
-                    self.motor_temperature.update(motor_temp);
+                    self.vesc_motor_temperature.update(motor_temp);
                 }
                 VescData::StatusMessage5 {
                     input_voltage,
@@ -259,6 +270,12 @@ impl DisplayData {
                 TemperatureData::RudderController(value) => {
                     self.temperature_rudder_controller.update(value);
                 }
+                TemperatureData::MotorNtc(ntc) => {
+                    // Store the frame's verdict, fault included, so hearing from the
+                    // node counts as fresh data even when it has no reading to give.
+                    // The status flags say why, which the display has no room for.
+                    self.motor_ntc_temperature.update(ntc.temperature);
+                }
             },
         }
     }
@@ -277,6 +294,16 @@ impl DisplayData {
             .enumerate()
             .filter_map(|(strap, value)| value.get().map(|t| (MpptId::of_strap(strap as u8), *t)))
             .max_by_key(|(_, t)| *t)
+    }
+
+    /// Motor temperature in °C, from the standalone `0x219` node.
+    ///
+    /// The VESC's own reading is deliberately not a fallback. It is broken, so
+    /// falling back to it would replace honest dashes with a wrong number -- and a
+    /// wrong motor temperature is worse than none, since this is what the
+    /// over-temperature icon is decided on.
+    pub fn motor_temperature(&self) -> Option<f32> {
+        self.motor_ntc_temperature.get().copied().flatten()
     }
 
     /// The hottest of the battery's four pack thermistors, in °C.

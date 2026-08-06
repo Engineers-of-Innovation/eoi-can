@@ -37,6 +37,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x215 | FlowSensorIn | Rudder Controller |
 | 0x216 | FlowSensorOut | Rudder Controller |
 | 0x217 | MotorTemperature | Rudder Controller |
+| 0x219 | MotorNtc | Motor NTC Sensor |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
@@ -165,6 +166,31 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | TemperatureHeightSensorsController | 0x210 | 2 | 0–1 | Temperature | i16 | LE | Centidegrees Celsius |
 | TemperatureRudderController | 0x211 | 2 | 0–1 | Temperature | i16 | LE | Centidegrees Celsius |
 
+## Motor NTC Sensor
+
+A standalone node — STM32G491 on CANable 2.5 hardware with a 10 kΩ NTC on the motor,
+transmit only, never receives. It supersedes reading the motor NTC through the VESC,
+whose own reading is broken, and is what the display shows as `Motor`.
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| MotorNtc | 0x219 | 4 | 0–1 | Temperature | i16 | LE | Decidegrees Celsius — note, not the centidegrees 0x210–0x217 use. `0x8000` (`-32768`) is the explicit invalid sentinel: no reading, see the status byte. Valid readings are clamped to -40.0…+150.0 °C. Sent every 1 s ±5 %, from the node's internal LSI. |
+| | | | 2 | Status | u8 | | Bit flags, see below. |
+| | | | 3 | Frame counter | u8 | | Increments once per transmission and wraps. A gap means frames never reached the bus. The node can be built with DLC 2, which omits this byte and the status byte. |
+
+Status bits in byte 2:
+
+| Bit | Name | Meaning | Temperature |
+| --- | --- | --- | --- |
+| 0 | SensorOpen | NTC disconnected; the divider tap sits at the bias rail | sentinel |
+| 1 | SensorShort | NTC shorted; the divider tap sits at ground | sentinel |
+| 2 | OutOfRange | Reading fell outside -40…+150 °C | clamped, still usable |
+| 3 | Settling | The node's filter has not seen enough updates; clears a few seconds after power-up | usable, still converging |
+| 4 | AcquisitionError | The node's ADC or DMA delivered no samples this cycle | sentinel |
+| 5 | PrevTxFailed | The *previous* frame was not acknowledged within 10 ms and was cancelled | unaffected |
+
+Source and DBC: `boat-fw/can-motor-temperature` on git.engineersofinnovation.nl.
+
 ## VESC Motor Controller
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
@@ -177,7 +203,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | VescStatusMessage3 | 0x0F09 | 8 | 0–3 | Watt hours used | u32 | BE | raw / 10000 = Wh |
 | | | | 4–7 | Watt hours generated | u32 | BE | raw / 10000 = Wh |
 | VescStatusMessage4 | 0x1009 | 8 | 0–1 | FET temperature | i16 | BE | raw / 10 = °C |
-| | | | 2–3 | Motor temperature | i16 | BE | raw / 10 = °C |
+| | | | 2–3 | Motor temperature | i16 | BE | raw / 10 = °C. **Broken on this boat** — the motor temperature comes from `MotorNtc` (0x219) instead. |
 | | | | 4–5 | Total input current | i16 | BE | raw / 10 = A |
 | | | | 6–7 | Current PID position | i16 | BE | raw / 50 |
 | VescStatusMessage5 | 0x1B09 | 8 | 0–3 | Tachometer | i32 | BE | Counts |

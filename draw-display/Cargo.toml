@@ -22,3 +22,7 @@ embassy-time = { version = "0.4" }
 tokio = { version = "1.43.0", features = [ "full" ], optional = true }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
 mppt-layout = { path = "../mppt-layout" }
+
+[dev-dependencies]
+# Only to hand-build CAN frames in tests, so the decode path is covered end to end.
+embedded-can = { workspace = true }

@@ -1005,7 +1005,7 @@ where
     fmt_mppt_label(&mut mppt_label, hottest_mppt.map(|(id, _)| id));
 
     let temps: [(Option<f32>, &str); 4] = [
-        (data.motor_temperature.get().copied(), "Motor"),
+        (data.motor_temperature(), "Motor"),
         (data.motor_fet_temperature.get().copied(), "Driver"),
         (
             hottest_mppt.map(|(_, celsius)| celsius as f32),
@@ -1115,9 +1115,8 @@ fn icon_conditions(data: &DisplayData) -> [bool; ICON_COUNT as usize] {
         .is_some_and(|soc| *soc < LOW_SOC_PERCENT);
 
     let over_temperature = data
-        .motor_temperature
-        .get()
-        .is_some_and(|t| *t > MOTOR_TEMP_LIMIT)
+        .motor_temperature()
+        .is_some_and(|t| t > MOTOR_TEMP_LIMIT)
         || data
             .motor_fet_temperature
             .get()
@@ -1622,7 +1621,7 @@ mod tests {
             d.battery_charge_state.update(ChargeState::FetOn);
             d.battery_discharge_state.update(DischargeState::On);
             d.battery_state_of_charge.update(LOW_SOC_PERCENT + 1.0);
-            d.motor_temperature.update(MOTOR_TEMP_LIMIT - 1.0);
+            d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT - 1.0));
             d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT - 1.0);
             d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT - 1);
             d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT - 1);
@@ -1647,7 +1646,7 @@ mod tests {
         ] {
             let mut d = healthy();
             match name {
-                "motor" => d.motor_temperature.update(MOTOR_TEMP_LIMIT + 0.1),
+                "motor" => d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT + 0.1)),
                 "driver" => d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT + 0.1),
                 "mppt" => d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT + 1),
                 _ => d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT + 1),
@@ -1666,6 +1665,56 @@ mod tests {
             ..Default::default()
         });
         assert!(icon_conditions(&d)[THROTTLE], "throttle error missed");
+    }
+
+    /// The VESC also reports a motor temperature and it is broken, so the Motor cell
+    /// must never pick it up -- not as a fallback and not while the node is quiet.
+    #[test]
+    fn motor_temperature_comes_only_from_the_standalone_node() {
+        let mut d = DisplayData::default();
+        assert_eq!(d.motor_temperature(), None, "nothing reporting");
+
+        d.vesc_motor_temperature.update(58.7);
+        assert_eq!(
+            d.motor_temperature(),
+            None,
+            "the VESC's broken reading leaked into the Motor cell"
+        );
+
+        d.motor_ntc_temperature.update(Some(61.4));
+        assert_eq!(d.motor_temperature(), Some(61.4), "the node should show");
+
+        d.motor_ntc_temperature.update(None);
+        assert_eq!(
+            d.motor_temperature(),
+            None,
+            "a node fault should show dashes"
+        );
+    }
+
+    /// The frames themselves, so the ID and scaling are covered end to end and not
+    /// only through a hand-set field.
+    #[test]
+    fn motor_ntc_frames_reach_the_motor_cell() {
+        use embedded_can::{Id, StandardId};
+        use eoi_can_decoder::can_frame::CanFrame;
+        use eoi_can_decoder::parse_eoi_can_data;
+
+        let ingest = |d: &mut DisplayData, bytes: &[u8]| {
+            let frame =
+                CanFrame::from_encoded(Id::Standard(StandardId::new(0x219).unwrap()), bytes);
+            d.ingest_eoi_can_data(parse_eoi_can_data(&frame).expect("0x219 should decode"));
+        };
+
+        let mut d = DisplayData::default();
+        ingest(&mut d, &[0xEB, 0x00, 0x00, 0x01]); // 235 dd
+        assert_eq!(d.motor_temperature(), Some(23.5));
+
+        ingest(&mut d, &[0x00, 0x80, 0x01, 0x02]); // sentinel, sensor open
+        assert_eq!(d.motor_temperature(), None);
+
+        ingest(&mut d, &[0xEB, 0x00, 0x08, 0x03]); // settling, but a real reading
+        assert_eq!(d.motor_temperature(), Some(23.5));
     }
 
     /// The icon strip is deliberately wider than the centre column, so what matters

@@ -552,6 +552,31 @@ fn flatten_temperature(t: &TemperatureData, out: &mut Vec<(String, String)>) {
         TemperatureData::RudderController(v) => {
             out.push(("temperature.rudder_controller".into(), fmt_f(*v)));
         }
+        TemperatureData::MotorNtc(ntc) => {
+            // A faulted frame emits no temperature column at all, so a gap in the CSV
+            // is a fault rather than a frame that never arrived -- the status columns
+            // beside it are still there to say which fault.
+            if let Some(v) = ntc.temperature {
+                out.push(("temperature.motor_ntc".into(), fmt_f(v)));
+            }
+            let s = &ntc.status;
+            for (name, flag) in [
+                ("sensor_open", s.sensor_open),
+                ("sensor_short", s.sensor_short),
+                ("out_of_range", s.out_of_range),
+                ("settling", s.settling),
+                ("acquisition_error", s.acquisition_error),
+                ("previous_tx_failed", s.previous_tx_failed),
+            ] {
+                out.push((format!("temperature.motor_ntc.{name}"), flag.to_string()));
+            }
+            if let Some(counter) = ntc.frame_counter {
+                out.push((
+                    "temperature.motor_ntc.frame_counter".into(),
+                    counter.to_string(),
+                ));
+            }
+        }
     }
 }
 
