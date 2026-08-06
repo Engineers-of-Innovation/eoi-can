@@ -320,7 +320,7 @@ async fn main(spawner: Spawner) {
             empty_snapshots = empty_snapshots.saturating_add(1);
             // Monotone counter, so the reported count is the real stall length
             // rather than resetting on every retry.
-            if empty_snapshots % RX_STALL_ITERATIONS == 0 {
+            if empty_snapshots.is_multiple_of(RX_STALL_ITERATIONS) {
                 warn!(
                     "No CAN frames received for {} loop iterations, re-arming RX interrupts",
                     empty_snapshots
