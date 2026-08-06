@@ -80,7 +80,7 @@ is rarely hit in practice — the stock Inconsolata set is nowhere near it
 
 The speed's whole numerals are not a font at all. They are bitmaps, rasterised by
 [`support/ttf-digits-to-raw.py`](../../support/ttf-digits-to-raw.py) into
-`../assets/speed105.raw`, which sidesteps the u8g2 bit fields entirely: 105 px
+`../assets/speed115.raw`, which sidesteps the u8g2 bit fields entirely: 115 px
 digits where a font caps out at 76. See [`../assets/README.md`](../assets/README.md).
 
 The routes not taken, if a *font* ever needs to be bigger:

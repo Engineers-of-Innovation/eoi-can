@@ -1,18 +1,19 @@
 #!/usr/bin/env python3
 """Convert icon PNGs into raw 1-bit bitmaps for `embedded_graphics::image::ImageRaw`.
 
-Scales the greyscale source down to the target size *before* thresholding: the
-icons are 168x168 and the display draws them at 48x48, and reducing 1-bit art by
-3.5x drops thin strokes and breaks up edges.
+Scales down to the target size and thresholds: the icons are 168x168 and the
+display draws them at 48x48. The threshold is deliberately forgiving, because
+reducing by 3.5x leaves a thin stroke covering only a fraction of an output pixel.
 
 Bit order is MSB-first with each row padded to a whole byte, which is what
 `ImageRaw::<BinaryColor>` expects. A set bit is `BinaryColor::On`, and this
 project clears the display to `On` and draws ink as `Off` -- so a bit is **0**
 where the icon is black and 1 for background.
 
-Usage: png-to-raw.py <size> <out-dir> <source.png>...
+Usage: png-to-raw.py <size> <out-dir> <master.png>...
    eg: support/png-to-raw.py 48 draw-display/assets \\
-           draw-display/assets/source/*.png
+           draw-display/assets/batt.png draw-display/assets/low.png \\
+           draw-display/assets/temp.png draw-display/assets/throttle.png
 """
 import os
 import sys

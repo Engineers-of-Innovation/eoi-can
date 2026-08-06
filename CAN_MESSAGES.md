@@ -144,7 +144,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| GnssStatus | 0x200 | 3 | 0 | Fix | u8 | | 0=No fix, 1=3D fix |
+| GnssStatus | 0x200 | 3 | 0 | Fix | u8 enum | | 0=No fix, 1=3D fix, 2=2D fix |
 | | | | 1 | Satellites | u8 | | Count |
 | | | | 2 | Satellites used | u8 | | Count |
 | GnssSpeedAndHeading | 0x201 | 8 | 0–3 | Speed | f32 | LE | km/h |

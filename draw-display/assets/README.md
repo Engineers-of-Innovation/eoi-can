@@ -9,32 +9,38 @@ Warning icons for the 5.79" panel, alongside [`../fonts`](../fonts).
 | `temp` | over-temperature |
 | `throttle` | throttle |
 
-Three forms of each, only one of which is compiled in:
+Two forms of each, one of which is compiled in:
 
 | Files | What they are |
 | --- | --- |
 | `*48.raw` | **what `render.rs` includes** — 48x48 1-bit bitmaps, 288 B each |
-| `*.png` | the same art 1-bit at full 168x168, as a human-viewable reference |
-| `source/*.png` | the greyscale originals, the input the converter scales from |
+| `*.png` | **the master art** — 1-bit at 48x48, what the converter reads |
 
 The panel has no greyscale and no antialiasing, so anything not already pure black
 or white gets hard-thresholded by the driver regardless — deciding it here makes
 what ships explicit rather than leaving it to the panel.
 
-## Why the greyscale originals are kept
+## Edit the PNGs, at display size
 
-They are the better input for the display-sized bitmaps. The art is 168x168 and is
-drawn at 48x48, and reducing *1-bit* art by 3.5x aliases badly: thin strokes drop
-out and edges break up. Scaling the greyscale source first and thresholding at the
-target size keeps the shapes. `source/` is ~20 kB and is compiled into nothing.
+The masters are 48x48 — the size they are drawn at — so the converter does no
+scaling and no meaningful thresholding, and `*.png` to `*48.raw` round-trips
+byte-identically. Every pixel you set is a pixel on the panel.
+
+They began as 168x168 greyscale stock art, thresholded and reduced. That history is
+gone: editing large and reducing loses the detail again on every pass, which is
+exactly the wrong loop for 48x48 line art.
+
+If a different size is ever needed, redraw at that size rather than scaling these.
 
 ## Embedding
 
-`support/png-to-raw.py` turns `source/*.png` into the `*48.raw` blobs `render.rs`
-includes, one 48x48 bitmap per icon at 288 B. Regenerate with:
+`support/png-to-raw.py` turns the 1-bit `*.png` masters into the `*48.raw` blobs
+`render.rs` includes, one 48x48 bitmap per icon at 288 B. Regenerate with:
 
 ```sh
-support/png-to-raw.py 48 draw-display/assets draw-display/assets/source/*.png
+support/png-to-raw.py 48 draw-display/assets \
+  draw-display/assets/batt.png draw-display/assets/low.png \
+  draw-display/assets/temp.png draw-display/assets/throttle.png
 ```
 
 Two details the converter handles, both of which bit when they were not:
@@ -42,23 +48,22 @@ Two details the converter handles, both of which bit when they were not:
 - **A set bit is `BinaryColor::On`, which is this display's *background*** — the
   panel is cleared to `On` and ink is drawn as `Off`. So the converter clears the
   bits where the icon has ink, not the other way round.
-- **It scales with an area average, not Lanczos, and thresholds well above the
-  midpoint.** The battery icon's bottom border is a thin line in the 168px source
-  covering only part of a 48px output pixel; a midpoint cut broke it into dashes,
-  and Lanczos ringing added speckle around the hard edges. The stock watermark
-  (grey 244-254) is flattened to white first so it cannot tint the average of the
-  pixels it overlaps.
+- **It scales with an area average and thresholds well above the midpoint.** That
+  matters only when the input is larger than the target, as it was when these came
+  from 168x168 stock art: a thin line covering part of an output pixel was broken
+  into dashes by a midpoint cut, and Lanczos ringing speckled the hard edges. At
+  48x48 in, the scale is a no-op and the threshold is exact.
 
 ## The speed's numerals
 
-`speed105.raw` is not an icon. It holds the speed's whole numbers — `0`-`9` and
-`-` — as 86x105 cells on a common baseline, built by
+`speed115.raw` is not an icon. It holds the speed's whole numbers — `0`-`9` and
+`-` — as 95x115 cells on a common baseline, built by
 [`support/ttf-digits-to-raw.py`](../../support/ttf-digits-to-raw.py) from the same
 IBM Plex Sans the fonts use:
 
 ```sh
-support/ttf-digits-to-raw.py /path/to/IBMPlexSans.ttf 500 105 \
-  draw-display/assets/speed105.raw
+support/ttf-digits-to-raw.py /path/to/IBMPlexSans.ttf 500 115 \
+  draw-display/assets/speed115.raw
 ```
 
 They are bitmaps because u8g2-fonts caps a font at a 63 px advance, which is 76 px

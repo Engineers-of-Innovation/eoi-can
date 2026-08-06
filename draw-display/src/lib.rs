@@ -65,7 +65,7 @@ impl<T> Default for DisplayValue<T> {
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
-    pub gnss_fix: DisplayValue<bool>,
+    pub gnss_fix: DisplayValue<GnssFix>,
     pub battery_state_of_charge: DisplayValue<f32>,
     pub battery_time_to_empty: DisplayValue<u16>,
     pub battery_cell_voltages: [DisplayValue<f32>; 14],
@@ -214,7 +214,7 @@ impl DisplayData {
                 }
                 GnssData::GnssDateTime(data) => self.time.update(data),
                 GnssData::GnssStatus(data) => {
-                    self.gnss_fix.update(data.fix != 0);
+                    self.gnss_fix.update(GnssFix::from_code(data.fix));
                 }
                 GnssData::GnssLatitude(_) => {}
                 GnssData::GnssLongitude(_) => {}
@@ -285,6 +285,28 @@ impl DisplayData {
             .iter()
             .filter_map(|value| value.get().copied())
             .max()
+    }
+}
+
+/// GNSS fix quality, from byte 0 of `0x200`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GnssFix {
+    None,
+    /// Latitude and longitude only.
+    Fix2D,
+    Fix3D,
+}
+
+impl GnssFix {
+    /// Codes are as `CAN_MESSAGES.md` documents them: 1 is 3D and 2 is 2D, which
+    /// looks backwards but keeps 1 meaning what it always did. Anything else is
+    /// treated as no fix rather than guessed at.
+    fn from_code(code: u8) -> Self {
+        match code {
+            1 => Self::Fix3D,
+            2 => Self::Fix2D,
+            _ => Self::None,
+        }
     }
 }
 

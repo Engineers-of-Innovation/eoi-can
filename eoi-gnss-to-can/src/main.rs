@@ -62,7 +62,13 @@ async fn main() {
         let data: GPSData = gps.current_data().unwrap();
         debug!("{data:#?}");
 
-        let fix: u8 = matches!(data.mode, gpsd_client::Fix::Fix3D) as u8;
+        // 1 stays 3D so existing logs and decoders keep their meaning; 2D is added
+        // alongside rather than renumbering.
+        let fix: u8 = match data.mode {
+            gpsd_client::Fix::Fix3D => 1,
+            gpsd_client::Fix::Fix2D => 2,
+            gpsd_client::Fix::None => 0,
+        };
         let datetime: DateTime<Utc> = data.time.parse().expect("Invalid ISO8601 format");
         let datetime: DateTime<Local> = datetime.with_timezone(&Local);
         let hour: u8 = datetime.hour().try_into().unwrap();

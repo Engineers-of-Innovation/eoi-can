@@ -14,7 +14,7 @@ use u8g2_fonts::{
     FontRenderer,
 };
 
-use crate::{built_info, DisplayData, MpptId, Side};
+use crate::{built_info, DisplayData, GnssFix, MpptId, Side};
 
 pub const DISPLAY_WIDTH: u32 = 792;
 pub const DISPLAY_HEIGHT: u32 = 272;
@@ -52,10 +52,6 @@ impl Cell {
 
     const fn center_x(&self) -> i32 {
         self.x + self.w / 2
-    }
-
-    const fn center_y(&self) -> i32 {
-        self.y + self.h / 2
     }
 
     /// Split into columns proportional to `weights`. The last column absorbs
@@ -151,9 +147,19 @@ const SCREEN: Cell = Cell {
     h: DISPLAY_HEIGHT as i32,
 };
 
-/// Height of the full-width bottom row holding the three times. Sized for the
-/// 38px clock plus air; `times_fit_the_bottom_row` guards it against the fonts.
-const ROW_BOTTOM_H: i32 = 64;
+/// Height of the full-width bottom row holding the three times. Setting it also
+/// sets where the band above ends, and so how far down the icons, temperatures and
+/// in/out rows sit.
+const ROW_BOTTOM_H: i32 = 58;
+
+/// Tallest thing in a time block: the two-line label, not the digits.
+const TIME_BLOCK_H: i32 = 2 * SMALL_CAP_H + STACK_LABEL_GAP;
+/// Air left under the times.
+const TIME_BOTTOM_GAP: i32 = 4;
+/// The times hang off the bottom of the screen rather than sitting centred in their
+/// row, which puts them as low as they can go and leaves the band above roomier.
+const TIME_CENTER_Y: i32 = SCREEN.bottom() - TIME_BOTTOM_GAP - TIME_BLOCK_H / 2;
+const TIME_TOP_Y: i32 = TIME_CENTER_Y - TIME_BLOCK_H / 2;
 
 /// Everything above the bottom row: the three metric columns. The boundary is not
 /// drawn -- the bands read as separate on spacing alone -- but it still positions
@@ -162,13 +168,6 @@ const BAND_TOP: Cell = Cell {
     h: SCREEN.h - ROW_BOTTOM_H,
     ..SCREEN
 };
-/// The three times, spanning the full width.
-const ROW_BOTTOM: Cell = Cell {
-    y: BAND_TOP.bottom(),
-    h: ROW_BOTTOM_H,
-    ..SCREEN
-};
-
 /// 35 / 30 / 35 split: the centre column is narrower, the outer two carry the
 /// wider power and temperature values.
 const TOP_COLS: [Cell; 3] = BAND_TOP.cols([35, 30, 35]);
@@ -215,6 +214,10 @@ const BIG_PCT_W: i32 = 63;
 /// sign lands on the same edge as the temperatures below it.
 const SOC_PCT_X: i32 = RIGHT_INNER.right() - BIG_PCT_W;
 const SOC_VALUE_RIGHT: i32 = SOC_PCT_X - BLOCK_GAP;
+/// Left edge of the widest state of charge, "100". The nearest thing in the right
+/// column to the speed, and so what actually bounds it -- the column inset is a
+/// long way left of any ink.
+const SOC_VALUE_LEFT: i32 = SOC_VALUE_RIGHT - 3 * NET_DIGIT_W;
 /// The sign sits on the same bottom edge as the digits, as the speed's tenth does.
 const SOC_PCT_CENTER_Y: i32 = HEADLINE_VALUE_Y + NET_DIGIT_H / 2 - BIG_DIGIT_H / 2;
 
@@ -230,20 +233,21 @@ const TEMP_UNIT_GAP: i32 = 4;
 const TEMP_FIELD_W: i32 = 3 * MID_DIGIT_W;
 /// Gap between a temperature and its label. Independent of `STACK_LABEL_GAP` --
 /// this one separates a value from a label, not two label lines.
-const TEMP_LABEL_GAP: i32 = 5;
+const TEMP_LABEL_GAP: i32 = 7;
 /// Height of one temperature: value over label.
 const TEMP_BLOCK_H: i32 = MID_DIGIT_H + TEMP_LABEL_GAP + SMALL_CAP_H;
 /// Gap between the two rows of the grid.
-const TEMP_ROW_GAP: i32 = 12;
-/// Air left between the grid and the bottom row under it.
-const TEMP_BOTTOM_GAP: i32 = 4;
+const TEMP_ROW_GAP: i32 = 20;
+/// Air between the grid and the times under it. Measured against the times for the
+/// same reason the icons are: the band boundary is not drawn.
+const TEMP_BOTTOM_GAP: i32 = 18;
 
 /// Four temperatures in a 2x2 grid: motor and driver, then the hottest MPPT and
 /// the hottest battery thermistor. Pinned to the bottom of the column rather than
 /// centred in the space below the headline, so it sits at the bottom of the band.
 const TEMP_GRID: Cell = Cell {
     x: RIGHT_INNER.x,
-    y: BAND_TOP.bottom() - TEMP_BOTTOM_GAP - (2 * TEMP_BLOCK_H + TEMP_ROW_GAP),
+    y: TIME_TOP_Y - TEMP_BOTTOM_GAP - (2 * TEMP_BLOCK_H + TEMP_ROW_GAP),
     w: RIGHT_INNER.w,
     h: 2 * TEMP_BLOCK_H + TEMP_ROW_GAP,
 };
@@ -290,8 +294,31 @@ const NET_UNIT_RIGHT: i32 = LEFT_INNER.right() - NET_DIGIT_W;
 const _: () = assert!(HEADLINE_VALUE_Y + NET_DIGIT_H / 2 < HEADLINE_LABEL_Y - SMALL_CAP_H / 2);
 const _: () = assert!(HEADLINE_LABEL_Y + SMALL_CAP_H / 2 <= LEFT_BODY.y);
 
-/// Power in and power out, one row each.
-const IN_OUT_ROWS: [Cell; 2] = LEFT_BODY.rows();
+/// Height of one in/out row: the value, or its two-line label, whichever is taller.
+const IN_OUT_BLOCK_H: i32 = if MID_DIGIT_H > 2 * SMALL_CAP_H + STACK_LABEL_GAP {
+    MID_DIGIT_H
+} else {
+    2 * SMALL_CAP_H + STACK_LABEL_GAP
+};
+/// Value centres of the temperature grid's two rows.
+const TEMP_VALUE_CENTERS: [i32; 2] = [
+    TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0],
+    TEMP_ROWS[1].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0],
+];
+
+/// How far a label sits under its value, taken from the temperature grid so the
+/// in/out rows match it exactly rather than by eye.
+const TEMP_LABEL_OFFSET: i32 = TEMP_ROWS[0]
+    .stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[1]
+    - TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0];
+
+/// The in/out pair takes its y from the temperatures opposite, so the two columns
+/// line up on both lines and stay lined up when the grid moves.
+const IN_OUT_CENTERS: [i32; 2] = TEMP_VALUE_CENTERS;
+
+// The pair has to sit clear of the headline above and inside the body.
+const _: () = assert!(IN_OUT_CENTERS[0] - IN_OUT_BLOCK_H / 2 >= LEFT_BODY.y);
+const _: () = assert!(IN_OUT_CENTERS[1] + IN_OUT_BLOCK_H / 2 <= LEFT_BODY.bottom());
 
 /// Metrics of `FONT_MID`, pinned by `font_metrics_match_the_layout`.
 const MID_DIGIT_H: i32 = 29;
@@ -301,11 +328,15 @@ const MID_MINUS_W: i32 = 16;
 /// can reach. The values are left-aligned and shorter ones simply leave a gap, so
 /// that both stacked labels sit at the same x instead of tracking the digits.
 const POWER_FIELD_W: i32 = MID_MINUS_W + 4 * MID_DIGIT_W;
-/// Where both in/out label blocks start. The values are right-aligned against it,
-/// so digits sit next to their label whatever their length.
-const IN_OUT_LABEL_X: i32 = POWER_LEFT_X + POWER_FIELD_W + BLOCK_GAP;
-/// Right edge the in/out values are aligned on.
-const IN_OUT_VALUE_RIGHT: i32 = POWER_LEFT_X + POWER_FIELD_W;
+/// Advance of "W" in `FONT_SMALL`, pinned by `font_metrics_match_the_layout`.
+const SMALL_W_W: i32 = 18;
+/// Right edge of an in/out reading: value, unit, and the label under them all end
+/// here, the same shape as a temperature.
+const IN_OUT_RIGHT: i32 = POWER_LEFT_X + POWER_FIELD_W + TEMP_UNIT_GAP + SMALL_W_W;
+/// Two-line labels are gone: the unit drops beside the digits and the name goes
+/// underneath, matching the temperature grid opposite.
+const POWER_IN_LABEL: &str = "Power In";
+const POWER_OUT_LABEL: &str = "Power Out";
 /// Vertical gap between the two lines of a stacked unit/label block.
 const STACK_LABEL_GAP: i32 = 6;
 
@@ -317,14 +348,14 @@ const STACK_LABEL_GAP: i32 = 6;
 /// Uniform cells mean the "--" placeholder is exactly as wide as a real "14", so
 /// the block never shifts. `speed_glyphs_match_their_cells` checks the blob.
 const SPEED_GLYPH_ORDER: &str = "0123456789-";
-const SPEED_GLYPHS: &[u8] = include_bytes!("../assets/speed105.raw");
+const SPEED_GLYPHS: &[u8] = include_bytes!("../assets/speed115.raw");
 const SPEED_GLYPH_ROW_BYTES: usize = (SPEED_DIGIT_W as usize).div_ceil(8);
 const SPEED_GLYPH_BYTES: usize = SPEED_GLYPH_ROW_BYTES * SPEED_DIGIT_H as usize;
 
 /// Cell size of those bitmaps, and the metrics of `FONT_SMALL`. Hardcoded so the
 /// speed layout is const; the tests fail if either drifts.
-const SPEED_DIGIT_H: i32 = 105;
-const SPEED_DIGIT_W: i32 = 86;
+const SPEED_DIGIT_H: i32 = 115;
+const SPEED_DIGIT_W: i32 = 95;
 const SPEED_DOT_W: i32 = 10;
 const SMALL_CAP_H: i32 = 14;
 /// Gap between the speed and the fix/unit line under it.
@@ -338,7 +369,7 @@ const SPEED_DOT_GAP: i32 = 8;
 /// out so `SPEED_DOT_GAP` means what it says. The digit figure is the *narrowest*
 /// bearing of any digit -- '1' and '4' reach furthest right -- so the gap holds for
 /// the worst case rather than the average.
-const SPEED_DIGIT_BEARING: i32 = 5;
+const SPEED_DIGIT_BEARING: i32 = 6;
 const BIG_DOT_BEARING: i32 = 5;
 const BIG_DIGIT_BEARING: i32 = 3;
 /// Metrics of `FONT_BIG`, which draws the right column and both the speed's dot
@@ -347,8 +378,9 @@ const BIG_DIGIT_H: i32 = 49;
 const BIG_DIGIT_W: i32 = 40;
 /// Two whole digits, the dot, and the tenth.
 const SPEED_BLOCK_W: i32 = 2 * SPEED_DIGIT_W + SPEED_DOT_W + BIG_DIGIT_W + 2 * SPEED_DOT_GAP;
-/// Nudges the whole speed right of the column centre.
-const SPEED_SHIFT: i32 = 8;
+/// Nudges the whole speed right of the column centre -- digits, dot, tenth and the
+/// fix/unit line under them, since all of those derive from the block.
+const SPEED_SHIFT: i32 = 6;
 const SPEED_BLOCK_X: i32 = COL_MID.center_x() - SPEED_BLOCK_W / 2 + SPEED_SHIFT;
 
 /// Nudges the whole numbers alone, independently of the dot and tenth beside them.
@@ -363,11 +395,10 @@ const SPEED_DEC_X: i32 =
     SPEED_DOT_X + BIG_DOT_BEARING + SPEED_DOT_W + SPEED_DOT_GAP - BIG_DIGIT_BEARING;
 
 // The speed is wider than the centre column and that is fine -- no rule is drawn
-// there. What it must not do is reach its neighbours' content, so bound it against
-// them: the net power's right edge on one side, the right column's inset on the
-// other.
+// there. What it must not do is reach its neighbours' ink: the net power's right
+// edge on one side, the state of charge's left on the other.
 const _: () = assert!(SPEED_BLOCK_X >= NET_VALUE_RIGHT + 8);
-const _: () = assert!(SPEED_BLOCK_X + SPEED_BLOCK_W <= RIGHT_INNER.x - 8);
+const _: () = assert!(SPEED_BLOCK_X + SPEED_BLOCK_W <= SOC_VALUE_LEFT - 8);
 // Ink must not touch ink: the dot starts after the digits end, and the tenth after
 // the dot. Compared on ink edges, not cell edges -- the bearings are the point.
 const _: () = assert!(SPEED_INT_RIGHT - SPEED_DIGIT_BEARING < SPEED_DOT_X + BIG_DOT_BEARING);
@@ -395,26 +426,30 @@ const ICON_SIZE: i32 = 48;
 const ICON_GAP: i32 = 16;
 const ICON_COUNT: i32 = 4;
 const ICON_STRIP_W: i32 = ICON_COUNT * ICON_SIZE + (ICON_COUNT - 1) * ICON_GAP;
-const ICON_STRIP_X: i32 = COL_MID.center_x() - ICON_STRIP_W / 2;
-/// Air between the icon strip and the bottom row under it.
-const ICON_BOTTOM_GAP: i32 = 2;
-/// The strip rests at the bottom of the band; `SPEED_LIFT` is what makes room.
-const ICON_STRIP_Y: i32 = BAND_TOP.bottom() - ICON_BOTTOM_GAP - ICON_SIZE;
+/// Nudges the strip right of the column centre.
+const ICON_SHIFT: i32 = 4;
+const ICON_STRIP_X: i32 = COL_MID.center_x() - ICON_STRIP_W / 2 + ICON_SHIFT;
+/// Air between the icon strip and the times under it. Measured against the times
+/// rather than the band boundary, which is not drawn and so is not what the eye
+/// reads the strip as sitting above.
+const ICON_BOTTOM_GAP: i32 = 16;
+/// `SPEED_LIFT` is what makes room for the strip.
+const ICON_STRIP_Y: i32 = TIME_TOP_Y - ICON_BOTTOM_GAP - ICON_SIZE;
 /// Bottom of the speed's fix/unit line -- the top of the space below the speed.
 const ICON_BAND_TOP: i32 = SPEED_INFO_Y + SMALL_CAP_H / 2;
 
 // The strip has to fit under the fix/unit line without crossing into the times.
 const _: () = assert!(ICON_STRIP_Y >= ICON_BAND_TOP);
-const _: () = assert!(ICON_STRIP_Y + ICON_SIZE < BAND_TOP.bottom());
+const _: () = assert!(ICON_STRIP_Y + ICON_SIZE < TIME_TOP_Y);
 
 /// The build stamp sits at the very top of the centre column, above the speed.
 /// `FONT_4X6` is 6px tall, so a baseline here puts it flush with the screen edge.
 const VERSION_BASELINE_Y: i32 = 6;
 
-/// The line under the speed: fix state on the left, unit on the right.
-const SPEED_INFO: Cell = COL_MID.inset(COL_PAD_X, 0);
-/// The fix state sits a digit in from the column edge.
-const SPEED_FIX_X: i32 = SPEED_INFO.x + SPEED_DIGIT_W;
+/// The fix state starts under the last whole digit -- the one always on screen,
+/// whether the speed reads 9 or 29. Anchoring to the first digit instead would move
+/// the label every time the speed crossed 10 km/h.
+const SPEED_FIX_X: i32 = SPEED_INT_RIGHT - SPEED_DIGIT_W + SPEED_DIGIT_BEARING;
 /// The unit right-aligns on the tenth's ink above it rather than on the column, so
 /// the two read as one column of content. Plex's digits are symmetric, so the same
 /// bearing trims both sides of the cell.
@@ -576,9 +611,56 @@ where
     Ok(())
 }
 
-/// One cell of the temperature grid. The degree sign ends on the cell's right
-/// edge, the digits are right-aligned before it, and the label is right-aligned
-/// underneath -- so the whole block hangs off the right of the column.
+/// A value with its unit beside it and its name underneath, all ending on `right`.
+///
+/// The shape both the temperature grid and the power in/out rows use, so the two
+/// columns read the same way: digits right-aligned, unit sitting on the digits'
+/// bottom edge rather than centred on them, label right-aligned below.
+#[allow(clippy::too_many_arguments)]
+fn draw_reading<D, C>(
+    display: &mut D,
+    buf: &mut String<16>,
+    right: i32,
+    value: Option<f32>,
+    unit: &str,
+    unit_w: i32,
+    label: &str,
+    value_y: i32,
+    label_y: i32,
+) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = C>,
+    C: PixelColor + From<BinaryColor>,
+{
+    let unit_x = right - unit_w;
+
+    draw_text(
+        display,
+        &FONT_MID,
+        HorizontalAlignment::Right,
+        unit_x - TEMP_UNIT_GAP,
+        value_y,
+        fmt_f32(buf, value, 0, "--"),
+    )?;
+    draw_text(
+        display,
+        &FONT_SMALL,
+        HorizontalAlignment::Left,
+        unit_x,
+        value_y + MID_DIGIT_H / 2 - SMALL_CAP_H / 2,
+        unit,
+    )?;
+    draw_text(
+        display,
+        &FONT_SMALL,
+        HorizontalAlignment::Right,
+        right,
+        label_y,
+        label,
+    )
+}
+
+/// One cell of the temperature grid.
 fn draw_temperature<D, C>(
     display: &mut D,
     cell: Cell,
@@ -591,33 +673,16 @@ where
     C: PixelColor + From<BinaryColor>,
 {
     let [value_y, label_y] = cell.stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP);
-    let unit_x = cell.right() - SMALL_DEG_C_W;
-    let value_right = unit_x - TEMP_UNIT_GAP;
-
-    draw_text(
+    draw_reading(
         display,
-        &FONT_MID,
-        HorizontalAlignment::Right,
-        value_right,
-        value_y,
-        fmt_f32(buf, value, 0, "--"),
-    )?;
-    // The sign sits on the digits' bottom edge, as the speed's tenth does.
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Left,
-        unit_x,
-        value_y + MID_DIGIT_H / 2 - SMALL_CAP_H / 2,
-        "°C",
-    )?;
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Right,
+        buf,
         cell.right(),
-        label_y,
+        value,
+        "°C",
+        SMALL_DEG_C_W,
         label,
+        value_y,
+        label_y,
     )
 }
 
@@ -673,7 +738,7 @@ where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
-    let center_y = ROW_BOTTOM.center_y();
+    let center_y = TIME_CENTER_Y;
 
     // Each group centred in its own slot, so a narrower "--" stays put.
     for (index, group) in groups.iter().enumerate() {
@@ -772,17 +837,13 @@ fn fmt_mppt_label(buf: &mut String<16>, id: Option<MpptId>) {
     }
 }
 
-/// Describe the GNSS fix state.
-///
-/// Only two of the three states are reachable today: `DisplayData::gnss_fix` is
-/// a bool, and the sender (`eoi-gnss-to-can`) already collapses gpsd's mode with
-/// `matches!(data.mode, Fix::Fix3D)`, so a 2D fix goes on the wire as 0 and is
-/// indistinguishable from no fix. Showing "2D fix" needs a wider encoding for
-/// byte 0 of 0x200 plus a matching change in the sender.
-fn fmt_gnss_fix(fix: Option<bool>) -> &'static str {
+/// Describe the GNSS fix state. `None` is nothing received rather than no fix --
+/// the receiver being silent is a different thing from it reporting no lock.
+fn fmt_gnss_fix(fix: Option<GnssFix>) -> &'static str {
     match fix {
-        Some(true) => "3D fix",
-        Some(false) => "No fix",
+        Some(GnssFix::Fix3D) => "3D fix",
+        Some(GnssFix::Fix2D) => "2D fix",
+        Some(GnssFix::None) => "No fix",
         None => "---",
     }
 }
@@ -853,17 +914,21 @@ where
         "W",
     )?;
 
-    for (row, power, label) in [(0, power_in, "in"), (1, power_out, "out")] {
-        let cell = IN_OUT_ROWS[row];
-        draw_text(
+    for (row, power, label) in [
+        (0, power_in, POWER_IN_LABEL),
+        (1, power_out, POWER_OUT_LABEL),
+    ] {
+        draw_reading(
             display,
-            &FONT_MID,
-            HorizontalAlignment::Right,
-            IN_OUT_VALUE_RIGHT,
-            cell.center_y(),
-            fmt_f32(&mut buf, power, 0, "----"),
+            &mut buf,
+            IN_OUT_RIGHT,
+            power,
+            "W",
+            SMALL_W_W,
+            label,
+            IN_OUT_CENTERS[row],
+            IN_OUT_CENTERS[row] + TEMP_LABEL_OFFSET,
         )?;
-        draw_stacked_label(display, IN_OUT_LABEL_X, cell.center_y(), "W", label)?;
     }
 
     // Centre column: the headline speed, with the GNSS fix state and the unit on
@@ -993,6 +1058,12 @@ const ICONS: [&[u8]; ICON_COUNT as usize] = [
 ///
 /// Positions are fixed, so an inactive icon leaves its slot empty rather than the
 /// others sliding along -- a warning should always appear in the same place.
+/// Left edge of the whole-number cells for a value of this many characters. They
+/// are right-aligned, so a shorter value starts further right.
+fn speed_whole_left(whole: &str) -> i32 {
+    SPEED_INT_RIGHT - whole.chars().count() as i32 * SPEED_DIGIT_W
+}
+
 /// The speed's whole numbers, blitted from `SPEED_GLYPHS` and right-aligned on
 /// `SPEED_INT_RIGHT`. Every cell is the same width, so the digits line up and the
 /// dashes stand in without changing the block's size.
@@ -1001,9 +1072,8 @@ where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
-    let count = whole.chars().count() as i32;
     let top = SPEED_CENTER_Y - SPEED_DIGIT_H / 2;
-    let mut x = SPEED_INT_RIGHT - count * SPEED_DIGIT_W;
+    let mut x = speed_whole_left(whole);
 
     let mut target = display.color_converted::<BinaryColor>();
     for ch in whole.chars() {
@@ -1239,9 +1309,26 @@ mod tests {
 
     #[test]
     fn fmt_gnss_fix_covers_every_state() {
-        assert_eq!(fmt_gnss_fix(Some(true)), "3D fix");
-        assert_eq!(fmt_gnss_fix(Some(false)), "No fix");
+        assert_eq!(fmt_gnss_fix(Some(GnssFix::Fix3D)), "3D fix");
+        assert_eq!(fmt_gnss_fix(Some(GnssFix::Fix2D)), "2D fix");
+        assert_eq!(fmt_gnss_fix(Some(GnssFix::None)), "No fix");
+        // Nothing received at all, which is not the same as a reported no-fix.
         assert_eq!(fmt_gnss_fix(None), "---");
+
+        // The label is anchored to the last whole digit, so it does not move with the
+        // value. Every label it can show has to clear the unit beside it.
+        for label in ["3D fix", "2D fix", "No fix", "---"] {
+            let right = SPEED_FIX_X + width(&FONT_SMALL, label);
+            assert!(
+                right < SPEED_UNIT_RIGHT - width(&FONT_SMALL, "km/h"),
+                "{label:?} ends at {right}, into the unit"
+            );
+        }
+        // It sits under the digits, so it starts after the widest value's left edge.
+        assert!(
+            SPEED_FIX_X > speed_whole_left("-0"),
+            "the fix label starts left of the widest speed"
+        );
     }
 
     /// Width of `text` as `font` will render it.
@@ -1267,8 +1354,7 @@ mod tests {
     #[test]
     fn grid_splits_tile_their_parent() {
         assert_eq!(BAND_TOP.y, SCREEN.y);
-        assert_eq!(ROW_BOTTOM.bottom(), SCREEN.bottom());
-        assert_eq!(BAND_TOP.bottom(), ROW_BOTTOM.y);
+        assert_eq!(BAND_TOP.bottom() + ROW_BOTTOM_H, SCREEN.bottom());
 
         for (name, cells) in [("top columns", TOP_COLS.as_slice())] {
             assert_eq!(cells[0].x, 0, "{name} start at the left edge");
@@ -1334,6 +1420,11 @@ mod tests {
             width(&FONT_BIG, "%"),
             BIG_PCT_W,
             "FONT_BIG percent advance changed; update BIG_PCT_W"
+        );
+        assert_eq!(
+            width(&FONT_SMALL, "W"),
+            SMALL_W_W,
+            "FONT_SMALL \"W\" advance changed; update SMALL_W_W"
         );
         assert_eq!(
             width(&FONT_SMALL, "°C"),
@@ -1425,20 +1516,25 @@ mod tests {
             "the net power anchor is past its column"
         );
 
-        // The in/out values are right-aligned against their labels.
+        // The reserved in/out field must hold a minus and four digits, or a long
+        // value would run into the unit beside it.
         let widest_in_out = width(&FONT_MID, "-2000");
-
-        // The reserved in/out field must actually hold a minus and four digits, or
-        // long values would run into the label block that follows it.
         assert!(
             widest_in_out <= POWER_FIELD_W,
             "\"-2000\" is {widest_in_out}px, wider than the {POWER_FIELD_W}px reserved"
         );
-        let label_right = IN_OUT_LABEL_X + width(&FONT_SMALL, "out");
+        // Value, unit and label all end on IN_OUT_RIGHT and grow leftwards from it.
         assert!(
-            label_right <= LEFT_INNER.right(),
-            "in/out labels end at {label_right}, past the column"
+            IN_OUT_RIGHT <= LEFT_INNER.right(),
+            "in/out readings end at {IN_OUT_RIGHT}, past the column"
         );
+        for label in [POWER_IN_LABEL, POWER_OUT_LABEL] {
+            let left = IN_OUT_RIGHT - width(&FONT_SMALL, label);
+            assert!(
+                left >= COL_LEFT.x,
+                "{label:?} starts at {left}, off the left of the screen"
+            );
+        }
 
         // Right column: the state of charge and its percent sign are right-aligned
         // as a pair. "State of Charge" shares the label line with nothing else, so
@@ -1590,12 +1686,13 @@ mod tests {
             );
         }
 
-        // Centred on the column it sits under, even though it overhangs it.
+        // Centred on the column it sits under, plus its deliberate nudge, even
+        // though it overhangs the column either side.
         let strip_center = ICON_STRIP_X + ICON_STRIP_W / 2;
+        let expected = COL_MID.center_x() + ICON_SHIFT;
         assert!(
-            (strip_center - COL_MID.center_x()).abs() <= 1,
-            "the strip centres on {strip_center}, not the column centre {}",
-            COL_MID.center_x()
+            (strip_center - expected).abs() <= 1,
+            "the strip centres on {strip_center}, not {expected}"
         );
 
         // On screen, and clear of the fix/unit line and the badge -- the vertical
@@ -1668,9 +1765,9 @@ mod tests {
             "speed starts at {block_left}, into the net power ending at {NET_VALUE_RIGHT}"
         );
         assert!(
-            block_right < RIGHT_INNER.x,
-            "speed ends at {block_right}, into the right column starting at {}",
-            RIGHT_INNER.x
+            block_right < SOC_VALUE_LEFT,
+            "speed ends at {block_right}, into the state of charge starting at \
+             {SOC_VALUE_LEFT}"
         );
 
         // The bearings the dot spacing is computed from must match the artwork, or
@@ -1708,15 +1805,10 @@ mod tests {
             assert_eq!(x, bearing, "FONT_BIG {name} left bearing changed");
         }
 
-        // Fix state and unit share the line under the speed. They must not meet, and
-        // the unit has to line up with the tenth above it.
-        let fix_right = SPEED_FIX_X + width(&FONT_SMALL, "No fix");
-        let unit_left = SPEED_UNIT_RIGHT - width(&FONT_SMALL, "km/h");
-        assert!(
-            fix_right + 12 <= unit_left,
-            "fix state ends at {fix_right}, too close to the unit at {unit_left}"
-        );
-        const { assert!(SPEED_FIX_X >= COL_MID.x && SPEED_UNIT_RIGHT < RIGHT_INNER.x) };
+        // The fix label and unit share the line under the speed; the label's
+        // clearance is checked where it sits furthest right, in
+        // `fmt_gnss_fix_covers_every_state`.
+        const { assert!(SPEED_UNIT_RIGHT < SOC_VALUE_LEFT) };
     }
 
     /// Shrinking the top band or raising a font size must not push ink out of a
@@ -1743,14 +1835,8 @@ mod tests {
             );
         }
         assert!(
-            TEMP_GRID.bottom() < BAND_TOP.bottom(),
-            "the temperature grid reaches the bottom row at {}",
-            BAND_TOP.bottom()
-        );
-        let bottom_gap = BAND_TOP.bottom() - TEMP_GRID.bottom();
-        assert!(
-            bottom_gap <= 12,
-            "the temperature grid sits {bottom_gap}px above the bottom row, not near it"
+            TEMP_GRID.bottom() < TIME_TOP_Y,
+            "the temperature grid reaches the times at {TIME_TOP_Y}"
         );
 
         // "Net Power" is right-justified and pulled left of the value's edge; it may
@@ -1770,14 +1856,16 @@ mod tests {
         // The in/out values and their two-line label blocks must fit their rows.
         let mid_h = digit_height(&FONT_MID);
         let stacked_h = 2 * SMALL_CAP_H + STACK_LABEL_GAP;
-        for (i, row) in IN_OUT_ROWS.iter().enumerate() {
-            assert!(
-                mid_h <= row.h && stacked_h <= row.h,
-                "in/out row {i} is {}px, too short for a {mid_h}px value and a \
-                 {stacked_h}px label block",
-                row.h
-            );
-        }
+        assert!(
+            mid_h <= IN_OUT_BLOCK_H && stacked_h <= IN_OUT_BLOCK_H,
+            "an in/out block is {IN_OUT_BLOCK_H}px, too short for a {mid_h}px value \
+             and a {stacked_h}px label block"
+        );
+        // The point of pinning them together: read across and both rows line up.
+        assert_eq!(
+            IN_OUT_CENTERS, TEMP_VALUE_CENTERS,
+            "the in/out rows no longer line up with the temperatures"
+        );
         assert!(
             LEFT_BODY.bottom() <= BAND_TOP.bottom(),
             "in/out rows run past the band into the times"
@@ -1791,10 +1879,22 @@ mod tests {
     /// time plus its label.
     #[test]
     fn times_fit_the_bottom_row() {
-        let time_h = digit_height(&FONT_MID);
+        // The times hang off the bottom of the screen, so what bounds them is the
+        // screen edge below and the band above -- not a row they sit inside.
+        let time_top = TIME_CENTER_Y - TIME_BLOCK_H / 2;
+        let time_bottom = TIME_CENTER_Y + TIME_BLOCK_H / 2;
         assert!(
-            time_h < ROW_BOTTOM_H,
-            "a time is {time_h}px tall in a {ROW_BOTTOM_H}px row"
+            time_bottom <= SCREEN.bottom(),
+            "the times end at {time_bottom}, off the bottom of the screen"
+        );
+        assert!(
+            time_top > BAND_TOP.bottom(),
+            "the times start at {time_top}, up into the band ending at {}",
+            BAND_TOP.bottom()
+        );
+        assert!(
+            digit_height(&FONT_MID) <= TIME_BLOCK_H,
+            "the digits are taller than the block they are centred in"
         );
 
         // The whole point of the slotted layout: the block is the same width
@@ -1809,13 +1909,6 @@ mod tests {
             width(&FONT_MID, "--:--:--") < width(&FONT_MID, "23:59:59"),
             "dashes are no longer narrower than digits, so the slotted layout is \
              guarding nothing"
-        );
-
-        // A two-line label has to fit the row's height.
-        let two_lines_h = 2 * SMALL_CAP_H + STACK_LABEL_GAP;
-        assert!(
-            two_lines_h <= ROW_BOTTOM_H,
-            "a two-line label is {two_lines_h}px in a {ROW_BOTTOM_H}px row"
         );
 
         // The blocks are anchored rather than cell-divided, so what matters is that
