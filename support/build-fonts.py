@@ -42,10 +42,6 @@ ASCII_MAP = "32-126,176"
 #   mode (2), which the stock Inconsolata _mn fonts use, gives punctuation a full
 #   digit cell; in a proportional face that reads as "- 2019" and "17: 42: 23".
 SPECS = [
-    # Speed, the headline value. Drawn in three pieces around a fixed dot, so
-    # what has to fit the 237 px centre column is 3 digit advances plus the dot
-    # and its gaps -- 234 px at this size. Deliberately tight.
-    ("plex_speed76_tn", "0", 76, DIGITS, DIGIT_MAP, 0),
     # Net power: between the speed and the plain values, and wide enough for
     # "-2000" in the left column.
     ("plex_net58_tn",   "0", 58, DIGITS, DIGIT_MAP, 0),

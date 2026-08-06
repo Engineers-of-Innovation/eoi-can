@@ -5,7 +5,6 @@ Pre-rasterised u8g2 font blobs for the 5.79" panel, included by
 
 | Blob | Digit height | Advance | Size | Used for |
 | --- | --- | --- | --- | --- |
-| `plex_speed76_tn` | 76 px | 63 px | 1596 B | speed: whole numbers only |
 | `plex_net58_tn` | 58 px | 48 px | 1172 B | net power, the left column's headline |
 | `plex_big49_tn` | 49 px | 40 px | 1096 B | state of charge, the speed's dot and tenth, `%` |
 | `plex_mid30_tn` | 29 px | 24 px | 567 B | all three times, power in/out, temperatures |
@@ -18,7 +17,7 @@ must ship alongside these blobs.
 
 The value fonts carry ` -.:0123456789`, plus `%` for `plex_big49_tn`, which draws
 the state of charge's sign. The label font carries printable ASCII plus U+00B0 for
-`°C`. 6273 B total, all in flash — blobs are decoded straight to the draw target,
+`°C`. 4677 B total, all in flash — blobs are decoded straight to the draw target,
 so they cost no RAM.
 
 A glyph a font is asked to draw but does not have panics through `map_font_err`,
@@ -27,7 +26,7 @@ exactly this.
 
 Weight does not affect advances or glyph heights, only stroke thickness, so
 changing it needs no layout changes. Every other property does: `render.rs`
-hardcodes `SPEED_DIGIT_H`, `SPEED_DIGIT_W`, `SPEED_DOT_W`, `NET_DIGIT_H`,
+hardcodes `SPEED_DOT_W`, `NET_DIGIT_H`,
 `NET_DIGIT_W`, `NET_MINUS_W`, `BIG_DIGIT_H`, `BIG_DIGIT_W`, `MID_DIGIT_H`,
 `MID_DIGIT_W`, `MID_COLON_W`, `SMALL_CAP_H`, `SMALL_DIGIT_W`, `SMALL_DEG_C_W` and
 the label widths so
@@ -71,25 +70,30 @@ digits — at 79 px digits, `0` reported an advance of 89 and `1` reported 83.
 the bits it allocated, and gave 6 bits (max 63) to a 64 px-wide glyph.
 
 `build-fonts.py` checks both and refuses to write a font that would be corrupt,
-so a too-large target fails loudly instead. This is also why the stock
-Inconsolata fonts stop at `inb63`.
+so a too-large target fails loudly instead.
 
-### Getting past it
+Only 22 of the 1994 bundled fonts carry any field wider than 7 bits, so the limit
+is rarely hit in practice — the stock Inconsolata set is nowhere near it
+(`inb63_mn` is 82 px tall with an advance of only 51).
 
-The cap is on *advance*, not height, so a narrower face fits more height under
-the same limit. Plex Sans has a `wdth` axis (75–100) that has not been used here:
+### The speed went around it
 
-| `wdth` | max digit height at advance ≤ 63 |
-| --- | --- |
-| 100 (current) | 76 px |
-| 90 | 79 px |
-| 85 | 80 px |
-| 75 | 84 px |
+The speed's whole numerals are not a font at all. They are bitmaps, rasterised by
+[`support/ttf-digits-to-raw.py`](../../support/ttf-digits-to-raw.py) into
+`../assets/speed105.raw`, which sidesteps the u8g2 bit fields entirely: 105 px
+digits where a font caps out at 76. See [`../assets/README.md`](../assets/README.md).
 
-Using it means teaching `ttf2bdf.py` and `build-fonts.py` to pass a width along
-with the weight, and accepting condensed digits. The alternatives are patching
-`read_unsigned` in a vendored copy of the crate, which removes the limit
-entirely, or drawing the speed from `ImageRaw` bitmaps instead of a font.
+The routes not taken, if a *font* ever needs to be bigger:
+
+- **`logisoso*_tn`**, already bundled, reaches 92 px at an advance of 59 — taller
+  *and* narrower than Plex Sans manages under the limit, verified tabular and
+  rendering correctly for every glyph. It is a different typeface, which is the
+  only reason it is not used.
+- **Plex Sans has a `wdth` axis (75–100)** that has not been used here. Narrower
+  fits more height under the same advance cap: 79 px at `wdth` 90, 84 px at 75.
+  It means teaching `ttf2bdf.py` and `build-fonts.py` to pass a width.
+- **Patching `read_unsigned`** in a vendored copy of the crate removes the limit
+  outright.
 
 ## Regenerating
 

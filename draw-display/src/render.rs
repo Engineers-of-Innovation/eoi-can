@@ -309,41 +309,70 @@ const IN_OUT_VALUE_RIGHT: i32 = POWER_LEFT_X + POWER_FIELD_W;
 /// Vertical gap between the two lines of a stacked unit/label block.
 const STACK_LABEL_GAP: i32 = 6;
 
-/// Metrics of `FONT_SPEED` and `FONT_SMALL`, hardcoded so the speed layout is
-/// const. `font_metrics_match_the_layout` fails if a regenerated blob no longer
-/// matches, which is the only way these can go stale.
-const SPEED_DIGIT_H: i32 = 76;
-const SPEED_DIGIT_W: i32 = 63;
+/// The speed's whole numbers are bitmaps, not a font: u8g2-fonts cannot decode a
+/// bit field wider than 7, which caps a font at a 63px advance and so at 76px
+/// digits for this face. `support/ttf-digits-to-raw.py` rasterises them instead,
+/// every glyph in a cell of the same size on a common baseline.
+///
+/// Uniform cells mean the "--" placeholder is exactly as wide as a real "14", so
+/// the block never shifts. `speed_glyphs_match_their_cells` checks the blob.
+const SPEED_GLYPH_ORDER: &str = "0123456789-";
+const SPEED_GLYPHS: &[u8] = include_bytes!("../assets/speed105.raw");
+const SPEED_GLYPH_ROW_BYTES: usize = (SPEED_DIGIT_W as usize).div_ceil(8);
+const SPEED_GLYPH_BYTES: usize = SPEED_GLYPH_ROW_BYTES * SPEED_DIGIT_H as usize;
+
+/// Cell size of those bitmaps, and the metrics of `FONT_SMALL`. Hardcoded so the
+/// speed layout is const; the tests fail if either drifts.
+const SPEED_DIGIT_H: i32 = 105;
+const SPEED_DIGIT_W: i32 = 86;
 const SPEED_DOT_W: i32 = 10;
 const SMALL_CAP_H: i32 = 14;
 /// Gap between the speed and the fix/unit line under it.
 const SPEED_STACK_GAP: i32 = 12;
 
-/// Air either side of the decimal point.
+/// Visible air between the speed's digits and the dot, and between the dot and the
+/// tenth. Measured ink-to-ink: each glyph carries side bearings inside its cell or
+/// advance, so positioning on those alone leaves a gap roughly twice this wide.
 const SPEED_DOT_GAP: i32 = 8;
+/// Blank columns inside a digit cell, and inside `FONT_BIG`'s glyphs. Subtracted
+/// out so `SPEED_DOT_GAP` means what it says. The digit figure is the *narrowest*
+/// bearing of any digit -- '1' and '4' reach furthest right -- so the gap holds for
+/// the worst case rather than the average.
+const SPEED_DIGIT_BEARING: i32 = 5;
+const BIG_DOT_BEARING: i32 = 5;
+const BIG_DIGIT_BEARING: i32 = 3;
 /// Metrics of `FONT_BIG`, which draws the right column and both the speed's dot
 /// and its tenth. Pinned by `font_metrics_match_the_layout`.
 const BIG_DIGIT_H: i32 = 49;
 const BIG_DIGIT_W: i32 = 40;
 /// Two whole digits, the dot, and the tenth.
 const SPEED_BLOCK_W: i32 = 2 * SPEED_DIGIT_W + SPEED_DOT_W + BIG_DIGIT_W + 2 * SPEED_DOT_GAP;
-const SPEED_BLOCK_X: i32 = COL_MID.center_x() - SPEED_BLOCK_W / 2;
+/// Nudges the whole speed right of the column centre.
+const SPEED_SHIFT: i32 = 8;
+const SPEED_BLOCK_X: i32 = COL_MID.center_x() - SPEED_BLOCK_W / 2 + SPEED_SHIFT;
 
-/// Nudges the whole-number part towards the dot, tightening the pair.
-const SPEED_INT_NUDGE: i32 = 5;
-/// Right edge of the whole-number part: it grows leftwards from here, so the dot
+/// Nudges the whole numbers alone, independently of the dot and tenth beside them.
+const SPEED_INT_SHIFT: i32 = 2;
+/// Right edge of the whole-number cells: they grow leftwards from here, so the dot
 /// never moves as the speed crosses 10 km/h.
-const SPEED_INT_RIGHT: i32 = SPEED_BLOCK_X + 2 * SPEED_DIGIT_W + SPEED_INT_NUDGE;
-/// Left edge of the statically drawn dot, unaffected by the nudge.
-const SPEED_DOT_X: i32 = SPEED_BLOCK_X + 2 * SPEED_DIGIT_W + SPEED_DOT_GAP;
-/// Left edge of the tenth digit.
-const SPEED_DEC_X: i32 = SPEED_DOT_X + SPEED_DOT_W + SPEED_DOT_GAP;
+const SPEED_INT_RIGHT: i32 = SPEED_BLOCK_X + 2 * SPEED_DIGIT_W + SPEED_INT_SHIFT;
+/// The dot and the tenth hang off the digits rather than off the block, so the gap
+/// between them is set by `SPEED_DOT_GAP` alone.
+const SPEED_DOT_X: i32 = SPEED_INT_RIGHT - SPEED_DIGIT_BEARING + SPEED_DOT_GAP - BIG_DOT_BEARING;
+const SPEED_DEC_X: i32 =
+    SPEED_DOT_X + BIG_DOT_BEARING + SPEED_DOT_W + SPEED_DOT_GAP - BIG_DIGIT_BEARING;
 
-// The block is const, so its fit is a compile-time check. Deliberately tight: the
-// column boundaries are not drawn, so a little overhang costs nothing.
-const _: () = assert!(SPEED_BLOCK_W <= COL_MID.w);
-// The nudge must not push the whole numbers into the dot.
-const _: () = assert!(SPEED_INT_NUDGE < SPEED_DOT_GAP);
+// The speed is wider than the centre column and that is fine -- no rule is drawn
+// there. What it must not do is reach its neighbours' content, so bound it against
+// them: the net power's right edge on one side, the right column's inset on the
+// other.
+const _: () = assert!(SPEED_BLOCK_X >= NET_VALUE_RIGHT + 8);
+const _: () = assert!(SPEED_BLOCK_X + SPEED_BLOCK_W <= RIGHT_INNER.x - 8);
+// Ink must not touch ink: the dot starts after the digits end, and the tenth after
+// the dot. Compared on ink edges, not cell edges -- the bearings are the point.
+const _: () = assert!(SPEED_INT_RIGHT - SPEED_DIGIT_BEARING < SPEED_DOT_X + BIG_DOT_BEARING);
+const _: () =
+    assert!(SPEED_DOT_X + BIG_DOT_BEARING + SPEED_DOT_W <= SPEED_DEC_X + BIG_DIGIT_BEARING);
 
 /// Centre column: the speed, with the fix state and unit on a line beneath.
 const MID_STACK: [i32; 2] = COL_MID
@@ -384,8 +413,12 @@ const VERSION_BASELINE_Y: i32 = 6;
 
 /// The line under the speed: fix state on the left, unit on the right.
 const SPEED_INFO: Cell = COL_MID.inset(COL_PAD_X, 0);
-/// The fix state sits a digit in from the column edge, mirroring the unit opposite.
+/// The fix state sits a digit in from the column edge.
 const SPEED_FIX_X: i32 = SPEED_INFO.x + SPEED_DIGIT_W;
+/// The unit right-aligns on the tenth's ink above it rather than on the column, so
+/// the two read as one column of content. Plex's digits are symmetric, so the same
+/// bearing trims both sides of the cell.
+const SPEED_UNIT_RIGHT: i32 = SPEED_DEC_X + BIG_DIGIT_W - BIG_DIGIT_BEARING;
 
 // The stack is pure const arithmetic, so it can be checked at compile time: the
 // speed must not overlap the line beneath it, and that line must stay inside the
@@ -491,14 +524,11 @@ macro_rules! plex_font {
     };
 }
 
-plex_font!(PlexSpeed76, "plex_speed76_tn.u8g2font");
 plex_font!(PlexNet58, "plex_net58_tn.u8g2font");
 plex_font!(PlexBig49, "plex_big49_tn.u8g2font");
 plex_font!(PlexMid30, "plex_mid30_tn.u8g2font");
 plex_font!(PlexSmall14, "plex_small14_tf.u8g2font");
 
-/// The headline speed in the centre column.
-const FONT_SPEED: FontRenderer = FontRenderer::new::<PlexSpeed76>();
 /// Net power, the left column's headline.
 const FONT_NET: FontRenderer = FontRenderer::new::<PlexNet58>();
 /// The right column's values.
@@ -843,30 +873,16 @@ where
     // the whole numbers.
     let mut speed_buf: String<8> = String::new();
     let (whole, tenth) = split_speed(&mut speed_buf, data.speed_kmh.get().copied());
-    for (font, align, x, y, text) in [
-        (
-            &FONT_SPEED,
-            HorizontalAlignment::Right,
-            SPEED_INT_RIGHT,
-            SPEED_CENTER_Y,
-            whole,
-        ),
-        (
+    draw_speed_whole(display, whole)?;
+    for (x, text) in [(SPEED_DOT_X, "."), (SPEED_DEC_X, tenth)] {
+        draw_text(
+            display,
             &FONT_BIG,
             HorizontalAlignment::Left,
-            SPEED_DOT_X,
+            x,
             SPEED_DEC_CENTER_Y,
-            ".",
-        ),
-        (
-            &FONT_BIG,
-            HorizontalAlignment::Left,
-            SPEED_DEC_X,
-            SPEED_DEC_CENTER_Y,
-            tenth,
-        ),
-    ] {
-        draw_text(display, font, align, x, y, text)?;
+            text,
+        )?;
     }
     draw_text(
         display,
@@ -880,7 +896,7 @@ where
         display,
         &FONT_SMALL,
         HorizontalAlignment::Right,
-        SPEED_INFO.right(),
+        SPEED_UNIT_RIGHT,
         SPEED_INFO_Y,
         "km/h",
     )?;
@@ -977,6 +993,35 @@ const ICONS: [&[u8]; ICON_COUNT as usize] = [
 ///
 /// Positions are fixed, so an inactive icon leaves its slot empty rather than the
 /// others sliding along -- a warning should always appear in the same place.
+/// The speed's whole numbers, blitted from `SPEED_GLYPHS` and right-aligned on
+/// `SPEED_INT_RIGHT`. Every cell is the same width, so the digits line up and the
+/// dashes stand in without changing the block's size.
+fn draw_speed_whole<D, C>(display: &mut D, whole: &str) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = C>,
+    C: PixelColor + From<BinaryColor>,
+{
+    let count = whole.chars().count() as i32;
+    let top = SPEED_CENTER_Y - SPEED_DIGIT_H / 2;
+    let mut x = SPEED_INT_RIGHT - count * SPEED_DIGIT_W;
+
+    let mut target = display.color_converted::<BinaryColor>();
+    for ch in whole.chars() {
+        // Every character `split_speed` can emit is in the blob; anything else
+        // would be a bug here rather than bad data, so skipping is enough.
+        if let Some(index) = SPEED_GLYPH_ORDER.find(ch) {
+            let start = index * SPEED_GLYPH_BYTES;
+            let raw = ImageRaw::<BinaryColor>::new(
+                &SPEED_GLYPHS[start..start + SPEED_GLYPH_BYTES],
+                SPEED_DIGIT_W as u32,
+            );
+            Image::new(&raw, Point::new(x, top)).draw(&mut target)?;
+        }
+        x += SPEED_DIGIT_W;
+    }
+    Ok(())
+}
+
 /// Which icons the current data raises, in strip order.
 ///
 /// The battery and throttle conditions are what the inverted `BAT!`/`THR!` badge
@@ -1250,26 +1295,6 @@ mod tests {
     /// stack. Pin every metric the layout assumes to what the fonts measure.
     #[test]
     fn font_metrics_match_the_layout() {
-        assert_eq!(
-            digit_height(&FONT_SPEED),
-            SPEED_DIGIT_H,
-            "FONT_SPEED digit height changed; update SPEED_DIGIT_H"
-        );
-        assert_eq!(
-            width(&FONT_SPEED, "0"),
-            SPEED_DIGIT_W,
-            "FONT_SPEED digit advance changed; update SPEED_DIGIT_W"
-        );
-
-        // Digits must be tabular, or the right-aligned whole part shuffles.
-        for d in ["1", "4", "7", "9"] {
-            assert_eq!(
-                width(&FONT_SPEED, d),
-                SPEED_DIGIT_W,
-                "FONT_SPEED digit {d:?} is not the same width as '0'"
-            );
-        }
-
         // The dot is drawn in FONT_BIG, matching the tenth beside it.
         let dot = FONT_BIG
             .get_rendered_dimensions(".", Point::zero(), VerticalPosition::Center)
@@ -1602,42 +1627,96 @@ mod tests {
         );
     }
 
-    /// The speed block is sized for two whole digits; the pieces must land inside
-    /// the centre column and in the right order. Tight is fine here -- the column
-    /// boundaries are not drawn -- but nothing may cross into a neighbour's content.
+    /// The speed's whole numbers come from a blob of fixed-size cells, so the blob
+    /// has to agree with the cell geometry the layout computes from. A mismatch
+    /// would render the digits at the wrong height or slice them apart mid-glyph.
     #[test]
-    fn speed_pieces_land_inside_the_centre_column() {
+    fn speed_glyphs_match_their_cells() {
+        assert_eq!(
+            SPEED_GLYPHS.len(),
+            SPEED_GLYPH_ORDER.chars().count() * SPEED_GLYPH_BYTES,
+            "the speed blob holds {} bytes, not the {} that {} cells of {}x{} need \
+             -- regenerate with support/ttf-digits-to-raw.py",
+            SPEED_GLYPHS.len(),
+            SPEED_GLYPH_ORDER.chars().count() * SPEED_GLYPH_BYTES,
+            SPEED_GLYPH_ORDER.chars().count(),
+            SPEED_DIGIT_W,
+            SPEED_DIGIT_H
+        );
+
+        // Every character `split_speed` can produce must be in the blob, or it would
+        // silently vanish from the display.
+        for ch in "0123456789-".chars() {
+            assert!(
+                SPEED_GLYPH_ORDER.contains(ch),
+                "{ch:?} can reach the speed but has no glyph"
+            );
+        }
+    }
+
+    /// The speed is wider than the centre column, which is fine with no rules drawn.
+    /// What matters is that it clears the content either side of it, and that its
+    /// pieces sit in the right order.
+    #[test]
+    fn speed_pieces_clear_their_neighbours() {
         // Left edge of the widest whole part, right edge of the tenth.
         let block_left = SPEED_INT_RIGHT - 2 * SPEED_DIGIT_W;
         let block_right = SPEED_DEC_X + BIG_DIGIT_W;
 
         assert!(
-            block_left >= COL_MID.x,
-            "speed starts at {block_left}, left of its column at {}",
-            COL_MID.x
+            block_left > NET_VALUE_RIGHT,
+            "speed starts at {block_left}, into the net power ending at {NET_VALUE_RIGHT}"
         );
         assert!(
-            block_right <= COL_MID.right(),
-            "speed ends at {block_right}, right of its column at {}",
-            COL_MID.right()
+            block_right < RIGHT_INNER.x,
+            "speed ends at {block_right}, into the right column starting at {}",
+            RIGHT_INNER.x
         );
 
-        // Pieces in order, and the dot actually between them.
-        const { assert!(SPEED_INT_RIGHT < SPEED_DOT_X) };
-        const { assert!(SPEED_DOT_X + SPEED_DOT_W <= SPEED_DEC_X) };
+        // The bearings the dot spacing is computed from must match the artwork, or
+        // SPEED_DOT_GAP stops meaning ink-to-ink air.
+        let row = SPEED_GLYPH_BYTES / SPEED_DIGIT_H as usize;
+        let tightest = (0..10)
+            .map(|d| {
+                let glyph = &SPEED_GLYPHS[d * SPEED_GLYPH_BYTES..(d + 1) * SPEED_GLYPH_BYTES];
+                let right = (0..SPEED_DIGIT_W as usize)
+                    .rfind(|x| {
+                        (0..SPEED_DIGIT_H as usize)
+                            .any(|y| glyph[y * row + x / 8] >> (7 - (x % 8)) & 1 == 0)
+                    })
+                    .expect("every digit has ink");
+                SPEED_DIGIT_W - 1 - right as i32
+            })
+            .min()
+            .unwrap();
+        assert_eq!(
+            tightest, SPEED_DIGIT_BEARING,
+            "the narrowest digit bearing is {tightest}px, not the {SPEED_DIGIT_BEARING}px \
+             recorded -- the dot would sit closer to some digits than SPEED_DOT_GAP"
+        );
+        for (name, glyph, bearing) in [
+            ("dot", ".", BIG_DOT_BEARING),
+            ("digit", "0", BIG_DIGIT_BEARING),
+        ] {
+            let x = FONT_BIG
+                .get_rendered_dimensions(glyph, Point::zero(), VerticalPosition::Center)
+                .unwrap()
+                .bounding_box
+                .expect("glyph renders")
+                .top_left
+                .x;
+            assert_eq!(x, bearing, "FONT_BIG {name} left bearing changed");
+        }
 
-        // Fix state and unit share the line under the speed, both nudged a digit in
-        // from their column edges. They must not meet, and neither may escape.
+        // Fix state and unit share the line under the speed. They must not meet, and
+        // the unit has to line up with the tenth above it.
         let fix_right = SPEED_FIX_X + width(&FONT_SMALL, "No fix");
-        let unit_left = SPEED_INFO.right() - width(&FONT_SMALL, "km/h");
+        let unit_left = SPEED_UNIT_RIGHT - width(&FONT_SMALL, "km/h");
         assert!(
             fix_right + 12 <= unit_left,
             "fix state ends at {fix_right}, too close to the unit at {unit_left}"
         );
-        assert!(
-            SPEED_FIX_X >= COL_MID.x && SPEED_INFO.right() <= COL_MID.right(),
-            "the speed's info line escapes the centre column"
-        );
+        const { assert!(SPEED_FIX_X >= COL_MID.x && SPEED_UNIT_RIGHT < RIGHT_INNER.x) };
     }
 
     /// Shrinking the top band or raising a font size must not push ink out of a

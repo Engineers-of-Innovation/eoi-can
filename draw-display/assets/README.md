@@ -49,6 +49,24 @@ Two details the converter handles, both of which bit when they were not:
   (grey 244-254) is flattened to white first so it cannot tint the average of the
   pixels it overlaps.
 
+## The speed's numerals
+
+`speed105.raw` is not an icon. It holds the speed's whole numbers — `0`-`9` and
+`-` — as 86x105 cells on a common baseline, built by
+[`support/ttf-digits-to-raw.py`](../../support/ttf-digits-to-raw.py) from the same
+IBM Plex Sans the fonts use:
+
+```sh
+support/ttf-digits-to-raw.py /path/to/IBMPlexSans.ttf 500 105 \
+  draw-display/assets/speed105.raw
+```
+
+They are bitmaps because u8g2-fonts caps a font at a 63 px advance, which is 76 px
+digits for this face — see [`../fonts/README.md`](../fonts/README.md). Uniform
+cells mean the `--` placeholder is exactly as wide as a real `14`, so the block
+never shifts. `render.rs` positions the dot and tenth from the cell's side
+bearings, so `SPEED_DOT_GAP` is ink-to-ink air rather than box-to-box.
+
 ## When each icon shows
 
 `icon_conditions` in `render.rs`, checked by
