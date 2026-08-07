@@ -81,7 +81,7 @@ async fn main(spawner: Spawner) {
     let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
     let buffered = init_can(can, p.PB7).await;
 
-    spawner.spawn(unwrap!(can_rx_task(buffered.reader())));
+    spawner.spawn(unwrap!(can_rx_task(buffered.reader(), MY_APP_TYPE)));
 
     let i2c = i2c::I2c::new(
         p.I2C2,

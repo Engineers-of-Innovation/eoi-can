@@ -2,8 +2,10 @@ mod can_client;
 mod elf_image;
 
 use can_client::{CanClient, ValidationResult};
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
 use elf_image::FirmwareImage;
+use eoi_boot_api::header::AppType;
+use eoi_boot_api::protocol::board_address;
 
 #[derive(Parser)]
 #[command(name = "eoi-flash-tool", about = "Flash firmware to EoI boards via CAN bus")]
@@ -12,12 +14,46 @@ struct Cli {
     #[arg(short, long, default_value = "can0")]
     interface: String,
 
+    /// Board to address. Required for every command except `scan`; for `flash`
+    /// it defaults to the board the ELF was built for.
+    #[arg(short, long)]
+    board: Option<Board>,
+
     #[command(subcommand)]
     command: Command,
 }
 
+/// The boards on the bus. Names match the firmware binary names.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum Board {
+    RudderController,
+    HeightSensorController,
+    Dashboard,
+}
+
+impl From<Board> for AppType {
+    fn from(b: Board) -> Self {
+        match b {
+            Board::RudderController => AppType::RudderController,
+            Board::HeightSensorController => AppType::HeightSensorController,
+            Board::Dashboard => AppType::Dashboard,
+        }
+    }
+}
+
+/// Name of the firmware binary for an app type, for human-facing output.
+fn board_name(t: AppType) -> &'static str {
+    match t {
+        AppType::RudderController => "rudder-controller",
+        AppType::HeightSensorController => "height-sensor-controller",
+        AppType::Dashboard => "dashboard",
+    }
+}
+
 #[derive(Subcommand)]
 enum Command {
+    /// List every board answering on the bus, with its bootloader state
+    Scan,
     /// Flash an ELF firmware file (erase + write + validate + boot)
     Flash {
         /// Path to the ELF firmware file
@@ -49,12 +85,53 @@ async fn main() {
 
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let client = CanClient::connect(&cli.interface).await?;
+
+    // `scan` is the only command that is not addressed to one board.
+    if let Command::Scan = cli.command {
+        return scan(&cli.interface).await;
+    }
+
+    // `flash` takes its target from the ELF; everything else must be told.
+    let (target, firmware): (AppType, Option<FirmwareImage>) = match (&cli.command, cli.board) {
+        (Command::Flash { elf_file, .. }, board) => {
+            log::info!("Parsing ELF file: {}", elf_file);
+            let firmware = FirmwareImage::from_elf_file(elf_file)?;
+            if let Some(board) = board {
+                let requested: AppType = board.into();
+                if requested != firmware.app_type {
+                    return Err(format!(
+                        "--board {} does not match the ELF, which was built for {}",
+                        board_name(requested),
+                        board_name(firmware.app_type)
+                    )
+                    .into());
+                }
+            }
+            (firmware.app_type, Some(firmware))
+        }
+        (_, Some(board)) => (board.into(), None),
+        (_, None) => {
+            return Err("this command needs --board <BOARD> to say which board to address; \
+                        run `scan` to see what is on the bus"
+                .into());
+        }
+    };
+
+    let addr = board_address(target);
+    log::info!(
+        "Target: {} (cmd 0x{:03X}, resp 0x{:03X}, data 0x{:03X})",
+        board_name(target),
+        addr.cmd,
+        addr.resp,
+        addr.data
+    );
+    let client = CanClient::connect(&cli.interface, target).await?;
 
     match cli.command {
+        Command::Scan => unreachable!("handled above"),
         Command::State => {
             let state = client.get_state().await?;
-            log::info!("Device state: {}", state);
+            log::info!("Device state: {}", state.state);
         }
         Command::Erase => {
             log::info!("Erasing application...");
@@ -71,22 +148,37 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             client.reboot().await?;
             log::info!("Reboot command sent");
         }
-        Command::Flash { elf_file, no_start } => {
-            flash(&client, &elf_file, no_start).await?;
+        Command::Flash { no_start, .. } => {
+            let firmware = firmware.expect("parsed above for the Flash arm");
+            flash(&client, firmware, target, no_start).await?;
         }
     }
 
     Ok(())
 }
 
+async fn scan(interface: &str) -> Result<(), Box<dyn std::error::Error>> {
+    log::info!("Scanning {interface} for bootloaders...");
+    let found = CanClient::discover(interface).await?;
+    if found.is_empty() {
+        println!("No bootloaders answered. Boards running their application do not reply —");
+        println!("use `--board <BOARD> reboot` to bring one into the bootloader.");
+        return Ok(());
+    }
+    println!("{:<26} STATE", "BOARD");
+    for d in found {
+        let name = d.app_type.map(board_name).unwrap_or("unknown");
+        println!("{:<26} {}", name, d.state);
+    }
+    Ok(())
+}
+
 async fn flash(
     client: &CanClient,
-    elf_file: &str,
+    firmware: FirmwareImage,
+    target: AppType,
     no_start: bool,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // Parse ELF file
-    log::info!("Parsing ELF file: {}", elf_file);
-    let firmware = FirmwareImage::from_elf_file(elf_file)?;
     log::info!(
         "Firmware: app_type={:?}, {} bytes app + 2048 bytes header = {} bytes total",
         firmware.app_type,
@@ -94,18 +186,38 @@ async fn flash(
         firmware.data.len()
     );
 
-    // If app is running (no bootloader response), reboot into bootloader first
+    // If app is running (no bootloader response), reboot into bootloader first.
+    // The reboot goes to this board's command ID, so other boards keep running.
     log::info!("Reading device state...");
-    match client.get_state().await {
-        Ok(state) => log::info!("Device state: {}", state),
+    let device = match client.get_state().await {
+        Ok(device) => {
+            log::info!("Device state: {}", device.state);
+            device
+        }
         Err(_) => {
             log::info!("No bootloader response, sending reboot command...");
             // Send reboot — the app will reset, bootloader starts and waits 2s
             let _ = client.reboot().await;
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-            let state = client.get_state().await?;
-            log::info!("Device state after reboot: {}", state);
+            let device = client.get_state().await?;
+            log::info!("Device state after reboot: {}", device.state);
+            device
         }
+    };
+
+    // Confirm identity BEFORE erasing. The erase is the destructive step, so a
+    // mismatch has to fail here rather than being caught by validation after the
+    // working application is already gone.
+    if let Some(reported) = device.app_type
+        && reported != target
+    {
+        return Err(format!(
+            "Board answering on {}'s address reports app type {} — refusing to erase. \
+             Its bootloader was built for the wrong board.",
+            board_name(target),
+            board_name(reported)
+        )
+        .into());
     }
 
     // Erase

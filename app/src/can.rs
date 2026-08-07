@@ -30,16 +30,22 @@ pub async fn init_can(
     can.buffered(TX_BUF.init(TxBuf::new()), RX_BUF.init(RxBuf::new()))
 }
 
+use eoi_boot_api::header::AppType;
 use eoi_boot_api::protocol;
 
-/// Reset into the bootloader if this frame is the host's REBOOT command.
+/// Reset into the bootloader if this frame is the host's REBOOT command *for this
+/// board*.
 ///
 /// Every application must call this on each received frame — it is the only way
 /// the flash tool can get a running app back into the bootloader, so without it
 /// OTA updates are one-way.
-pub fn handle_bootloader_reboot(frame: &embassy_stm32::can::Frame) {
+///
+/// The command ID is derived from `app_type`, so rebooting one board leaves the
+/// others running. Applications still use an accept-all hardware filter (the
+/// dashboard needs the whole bus), so this check is what scopes the reset.
+pub fn handle_bootloader_reboot(frame: &embassy_stm32::can::Frame, app_type: AppType) {
     if let embassy_stm32::can::Id::Standard(id) = frame.id()
-        && id.as_raw() == protocol::CAN_ID_HOST_TO_DEVICE
+        && id.as_raw() == protocol::board_address(app_type).cmd
         && frame.data().first() == Some(&protocol::msg::REBOOT)
     {
         info!("Reboot to bootloader requested via CAN");
@@ -48,12 +54,12 @@ pub fn handle_bootloader_reboot(frame: &embassy_stm32::can::Frame) {
 }
 
 #[embassy_executor::task]
-pub async fn can_rx_task(rx: BufferedCanReceiver) {
+pub async fn can_rx_task(rx: BufferedCanReceiver, app_type: AppType) {
     loop {
         match rx.receive().await {
             Ok(envelope) => {
                 let frame = &envelope.frame;
-                handle_bootloader_reboot(frame);
+                handle_bootloader_reboot(frame, app_type);
 
                 let ec_id = match frame.id() {
                     embassy_stm32::can::Id::Standard(s) => embedded_can::Id::Standard(

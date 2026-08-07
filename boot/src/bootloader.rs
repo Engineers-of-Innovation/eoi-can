@@ -2,20 +2,23 @@ use defmt::*;
 use embassy_stm32::can::{BufferedCan, Frame, Id, StandardId};
 use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_sync::blocking_mutex::raw::RawMutex;
-use embassy_time::{Duration, Timer, with_timeout};
+use embassy_time::{Duration, Instant, Timer, with_deadline};
 use embedded_storage::nor_flash::{NorFlash, ReadNorFlash};
 
-use crate::EXPECTED_APP_TYPE;
 use crate::flash::FlashLayout;
+use crate::{BOARD_ADDRESS, EXPECTED_APP_TYPE, std_id};
 use eoi_boot_api::header::{HeaderError, HeaderInfo, ValidationResult};
 use eoi_boot_api::protocol;
 
-const CAN_ID_HOST_TO_DEVICE: StandardId =
-    unsafe { StandardId::new_unchecked(protocol::CAN_ID_HOST_TO_DEVICE) };
-const CAN_ID_DEVICE_TO_HOST: StandardId =
-    unsafe { StandardId::new_unchecked(protocol::CAN_ID_DEVICE_TO_HOST) };
-const CAN_ID_WRITE_DATA: StandardId =
-    unsafe { StandardId::new_unchecked(protocol::CAN_ID_WRITE_DATA) };
+/// Broadcast the host uses to enumerate the bus. Answered on `CAN_ID_RESPONSE`,
+/// never on a shared ID, so no two nodes ever transmit the same identifier.
+const CAN_ID_DISCOVERY: StandardId = std_id(protocol::CAN_ID_DISCOVERY);
+const CAN_ID_COMMAND: StandardId = std_id(BOARD_ADDRESS.cmd);
+const CAN_ID_RESPONSE: StandardId = std_id(BOARD_ADDRESS.resp);
+const CAN_ID_WRITE_DATA: StandardId = std_id(BOARD_ADDRESS.data);
+
+/// How long to wait for the host before auto-booting a valid application.
+const BOOT_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
 #[repr(u8)]
@@ -64,31 +67,43 @@ where
     }
 
     pub async fn run(&mut self) -> ! {
+        // Absolute deadline, not a per-frame timeout: a frame must not be able to
+        // postpone auto-boot indefinitely. Only host traffic addressed to this
+        // board extends it — see the `CAN_ID_COMMAND`/`CAN_ID_WRITE_DATA` arms.
+        let mut boot_deadline = Instant::now() + BOOT_WINDOW;
+
+        // Announce ourselves once so a host that is already listening sees us
+        // without having to poll.
+        self.send_state().await;
+
         loop {
-            // Send current state
-            self.send_state().await;
-
-            // Wait for a CAN frame with timeout
-            let result = with_timeout(Duration::from_secs(2), self.can.read()).await;
-
-            match result {
+            match with_deadline(boot_deadline, self.can.read()).await {
                 Ok(Ok(envelope)) => {
                     let frame = &envelope.frame;
                     let data = frame.data();
 
                     if *frame.id() == Id::Standard(CAN_ID_WRITE_DATA) {
+                        boot_deadline = Instant::now() + BOOT_WINDOW;
                         // Dedicated write data frames: all 8 bytes are payload
                         if let Err(e) = self.handle_write_data(data).await {
                             warn!("Write error: {}", e);
                             self.send_error(e).await;
                         }
-                    } else if *frame.id() == Id::Standard(CAN_ID_HOST_TO_DEVICE) {
+                    } else if *frame.id() == Id::Standard(CAN_ID_COMMAND) {
+                        boot_deadline = Instant::now() + BOOT_WINDOW;
                         if data.is_empty() {
                             continue;
                         }
                         if let Err(e) = self.process_command(data[0]).await {
                             warn!("Command error: {}", e);
                             self.send_error(e).await;
+                        }
+                    } else if *frame.id() == Id::Standard(CAN_ID_DISCOVERY) {
+                        // Answer the broadcast but deliberately do NOT extend the
+                        // deadline: a host polling `scan` in a loop must not pin
+                        // every board in the bootloader.
+                        if data.first() == Some(&protocol::msg::GET_STATE) {
+                            self.send_state().await;
                         }
                     }
                 }
@@ -101,12 +116,19 @@ where
                         info!("Timeout, auto-booting application");
                         self.boot_app().await;
                     }
-                    // Check if flashing completed
+                    // Check if flashing completed. Deliberately after the auto-boot
+                    // check, so a just-written app needs one further quiet window
+                    // before it can auto-boot — that leaves the host room to send
+                    // VALIDATE_APP / BOOT_APP without racing the jump.
                     if self.state == BootloaderState::FlashingApp
                         && validate_app(&self.flash).is_ok()
                     {
                         self.state = BootloaderState::WaitingWithApp;
                     }
+                    // Nothing booted: keep waiting, and re-announce so a host that
+                    // arrives later still finds us.
+                    boot_deadline = Instant::now() + BOOT_WINDOW;
+                    self.send_state().await;
                 }
             }
         }
@@ -188,9 +210,15 @@ where
         Ok(())
     }
 
+    /// Report state, including this board's app type. The response ID already
+    /// implies the app type; the byte lets the host cross-check it.
     async fn send_state(&mut self) {
-        self.send_response(&[protocol::msg::GET_STATE, self.state as u8])
-            .await;
+        self.send_response(&[
+            protocol::msg::GET_STATE,
+            self.state as u8,
+            EXPECTED_APP_TYPE as u8,
+        ])
+        .await;
     }
 
     async fn send_error(&mut self, code: u8) {
@@ -198,7 +226,7 @@ where
     }
 
     async fn send_response(&mut self, data: &[u8]) {
-        if let Ok(frame) = Frame::new_data(CAN_ID_DEVICE_TO_HOST, data) {
+        if let Ok(frame) = Frame::new_data(CAN_ID_RESPONSE, data) {
             self.can.write(&frame).await;
         }
     }

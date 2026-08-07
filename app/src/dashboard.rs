@@ -15,6 +15,7 @@ use eoi_can_decoder::can_frame::CanFrame;
 use epd_waveshare::epd5in79::Display5in79;
 use epd_waveshare::prelude::Color;
 
+use crate::app_type::AppType;
 use crate::can::handle_bootloader_reboot;
 
 /// Frames the CAN RX task has drained but the render loop has not consumed yet.
@@ -133,12 +134,16 @@ pub fn log_can_state() {
 /// The lock is held for exactly one insert so the render loop, which takes it
 /// once per iteration, never blocks this task for long.
 #[embassy_executor::task]
-pub async fn dashboard_can_rx_task(rx: BufferedCanReceiver, mut activity_led: Output<'static>) {
+pub async fn dashboard_can_rx_task(
+    rx: BufferedCanReceiver,
+    mut activity_led: Output<'static>,
+    app_type: AppType,
+) {
     loop {
         match rx.receive().await {
             Ok(envelope) => {
                 let frame = &envelope.frame;
-                handle_bootloader_reboot(frame);
+                handle_bootloader_reboot(frame, app_type);
 
                 // `from_encoded` takes a slice, which keeps the decoder's
                 // heapless 0.8 `Vec` out of this crate (the app is on 0.9).

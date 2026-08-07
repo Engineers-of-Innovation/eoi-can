@@ -3,12 +3,16 @@ use can_socket::{CanFrame, CanId, StandardId};
 use std::time::Duration;
 use tokio::time::timeout;
 
-use eoi_boot_api::protocol;
+use eoi_boot_api::header::AppType;
+use eoi_boot_api::protocol::{self, BoardAddress, app_type_from_resp_id, board_address};
 
 // Timeouts
 const READ_TIMEOUT: Duration = Duration::from_millis(500);
 const ERASE_TIMEOUT: Duration = Duration::from_secs(30);
 const WRITE_TIMEOUT: Duration = Duration::from_millis(500);
+/// How long to collect discovery replies. Bootloaders answer immediately, so
+/// this only has to cover one round trip plus a board that is mid-reboot.
+const DISCOVERY_WINDOW: Duration = Duration::from_millis(1500);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootloaderState {
@@ -76,14 +80,84 @@ impl From<u8> for ValidationResult {
     }
 }
 
+/// State of one board, as reported on its own response ID.
+#[derive(Debug, Clone, Copy)]
+pub struct DeviceState {
+    pub state: BootloaderState,
+    /// App type the board reports in byte 2. `None` from a bootloader that
+    /// predates the addressed protocol.
+    pub app_type: Option<AppType>,
+}
+
+/// A client bound to one board's CAN address. Every frame it sends carries that
+/// board's command or data ID, so it cannot touch another board.
 pub struct CanClient {
     socket: CanSocket,
+    addr: BoardAddress,
 }
 
 impl CanClient {
-    pub async fn connect(interface: &str) -> Result<Self, ClientError> {
+    pub async fn connect(interface: &str, app_type: AppType) -> Result<Self, ClientError> {
         let socket = CanSocket::bind(interface).map_err(ClientError::Bind)?;
-        Ok(Self { socket })
+        Ok(Self {
+            socket,
+            addr: board_address(app_type),
+        })
+    }
+
+    /// Broadcast on the discovery ID and collect every board that answers.
+    ///
+    /// Each board replies on its own response ID, so replies are attributed by
+    /// source ID rather than by a payload field — and no two boards ever
+    /// transmit the same identifier, which would collide on the wire.
+    pub async fn discover(interface: &str) -> Result<Vec<DeviceState>, ClientError> {
+        let socket = CanSocket::bind(interface).map_err(ClientError::Bind)?;
+        let id = CanId::Standard(StandardId::new(protocol::CAN_ID_DISCOVERY).unwrap());
+        let frame = make_frame(id, &[protocol::msg::GET_STATE]);
+        socket.send(&frame).await.map_err(ClientError::Send)?;
+
+        let mut found: Vec<DeviceState> = Vec::new();
+        let deadline = tokio::time::Instant::now() + DISCOVERY_WINDOW;
+        loop {
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let Ok(Ok(response)) = timeout(remaining, socket.recv()).await else {
+                break;
+            };
+            let Some(resp_id) = response.id().as_standard() else {
+                continue;
+            };
+            let Some(app_type) = app_type_from_resp_id(resp_id.as_u16()) else {
+                continue;
+            };
+            let Some(data) = response.data() else { continue };
+            if data.first() != Some(&protocol::msg::GET_STATE) {
+                continue;
+            }
+            // Byte 2 is the board's own view of its app type. The source ID is
+            // authoritative; a mismatch means a mis-flashed bootloader.
+            let reported = data.get(2).copied().and_then(AppType::from_u8);
+            if let Some(reported) = reported
+                && reported != app_type
+            {
+                log::warn!(
+                    "Board on 0x{:03X} reports app type {:?} but that ID belongs to {:?}",
+                    resp_id.as_u16(),
+                    reported,
+                    app_type
+                );
+            }
+            if found.iter().any(|d| d.app_type == Some(app_type)) {
+                continue;
+            }
+            found.push(DeviceState {
+                state: BootloaderState::from(data.get(1).copied().unwrap_or(0)),
+                app_type: Some(app_type),
+            });
+        }
+        Ok(found)
     }
 
     /// Send a command frame and wait for a response with the expected type.
@@ -92,7 +166,7 @@ impl CanClient {
         msg: u8,
         recv_timeout: Duration,
     ) -> Result<Vec<u8>, ClientError> {
-        let id = CanId::Standard(StandardId::new(protocol::CAN_ID_HOST_TO_DEVICE).unwrap());
+        let id = CanId::Standard(StandardId::new(self.addr.cmd).unwrap());
         let frame = make_frame(id, &[msg]);
         self.socket.send(&frame).await.map_err(ClientError::Send)?;
         self.recv_expected(msg, recv_timeout).await
@@ -120,7 +194,7 @@ impl CanClient {
                 Some(id) => id,
                 None => continue,
             };
-            if resp_std_id.as_u16() != protocol::CAN_ID_DEVICE_TO_HOST {
+            if resp_std_id.as_u16() != self.addr.resp {
                 continue;
             }
             // RTR frames have no data
@@ -143,12 +217,14 @@ impl CanClient {
         }
     }
 
-    pub async fn get_state(&self) -> Result<BootloaderState, ClientError> {
+    pub async fn get_state(&self) -> Result<DeviceState, ClientError> {
         let resp = self
             .send_and_recv(protocol::msg::GET_STATE, READ_TIMEOUT)
             .await?;
-        let state = resp.get(1).copied().unwrap_or(0);
-        Ok(BootloaderState::from(state))
+        Ok(DeviceState {
+            state: BootloaderState::from(resp.get(1).copied().unwrap_or(0)),
+            app_type: resp.get(2).copied().and_then(AppType::from_u8),
+        })
     }
 
     pub async fn erase_app(&self) -> Result<(), ClientError> {
@@ -168,8 +244,8 @@ impl CanClient {
         while offset < total {
             let chunk = &padded[offset..offset + 8];
 
-            // Send on dedicated write data CAN ID — all 8 bytes are payload
-            let id = CanId::Standard(StandardId::new(protocol::CAN_ID_WRITE_DATA).unwrap());
+            // Send on this board's dedicated write data ID — all 8 bytes are payload
+            let id = CanId::Standard(StandardId::new(self.addr.data).unwrap());
             let frame = make_frame(id, chunk);
             self.socket.send(&frame).await.map_err(ClientError::Send)?;
 

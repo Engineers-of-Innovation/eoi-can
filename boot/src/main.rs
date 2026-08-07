@@ -32,6 +32,21 @@ pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
 pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
     eoi_boot_api::header::AppType::Dashboard;
 
+/// The three CAN IDs this board owns, derived from its app type. The same
+/// constant is both the bootloader's identity and its bus address.
+pub const BOARD_ADDRESS: eoi_boot_api::protocol::BoardAddress =
+    eoi_boot_api::protocol::board_address(EXPECTED_APP_TYPE);
+
+/// Const-checked `StandardId`, so a bad ID is a build failure rather than an
+/// `unsafe` unchecked construction.
+pub const fn std_id(raw: u16) -> can::StandardId {
+    match can::StandardId::new(raw) {
+        Some(id) => id,
+        // `core::panic!` — `defmt::*` shadows `panic!` with a non-const version.
+        None => core::panic!("bootloader CAN ID outside the 11-bit standard range"),
+    }
+}
+
 use core::cell::RefCell;
 
 use defmt::*;
@@ -52,6 +67,7 @@ use embassy_stm32::{bind_interrupts, can};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
 use embassy_time::{Duration, Ticker};
+use eoi_boot_api::protocol;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
 
@@ -84,8 +100,20 @@ async fn main(spawner: Spawner) {
     core::mem::forget(standby_out);
 
     let can = CAN.init(Can::new(p.CAN1, p.PB8, p.PB9, Irqs));
-    can.modify_filters()
-        .enable_bank(0, can::Fifo::Fifo0, can::filter::Mask32::accept_all());
+    // Accept only the discovery ID and this board's own command/data IDs. This is
+    // what makes a cross-board erase impossible rather than merely detected, and
+    // it also keeps unrelated bus traffic from holding the auto-boot window open.
+    can.modify_filters().enable_bank(
+        0,
+        can::Fifo::Fifo0,
+        [
+            can::filter::ListEntry16::data_frames_with_id(std_id(protocol::CAN_ID_DISCOVERY)),
+            can::filter::ListEntry16::data_frames_with_id(std_id(BOARD_ADDRESS.cmd)),
+            can::filter::ListEntry16::data_frames_with_id(std_id(BOARD_ADDRESS.data)),
+            // The bank holds four entries; repeat discovery to fill the slot.
+            can::filter::ListEntry16::data_frames_with_id(std_id(protocol::CAN_ID_DISCOVERY)),
+        ],
+    );
     can.modify_config().set_bitrate(1_000_000);
     can.enable().await;
     let buffered = can.buffered(TX_BUF.init(TxBuf::new()), RX_BUF.init(RxBuf::new()));

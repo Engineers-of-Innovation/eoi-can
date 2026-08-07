@@ -130,7 +130,8 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(unwrap!(dashboard_can_rx_task(
         buffered_rx.reader(),
-        blue_led
+        blue_led,
+        MY_APP_TYPE
     )));
 
     Timer::after_secs(1).await;
