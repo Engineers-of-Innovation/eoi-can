@@ -32,20 +32,28 @@ pub async fn init_can(
 
 use eoi_boot_api::protocol;
 
+/// Reset into the bootloader if this frame is the host's REBOOT command.
+///
+/// Every application must call this on each received frame — it is the only way
+/// the flash tool can get a running app back into the bootloader, so without it
+/// OTA updates are one-way.
+pub fn handle_bootloader_reboot(frame: &embassy_stm32::can::Frame) {
+    if let embassy_stm32::can::Id::Standard(id) = frame.id()
+        && id.as_raw() == protocol::CAN_ID_HOST_TO_DEVICE
+        && frame.data().first() == Some(&protocol::msg::REBOOT)
+    {
+        info!("Reboot to bootloader requested via CAN");
+        cortex_m::peripheral::SCB::sys_reset();
+    }
+}
+
 #[embassy_executor::task]
 pub async fn can_rx_task(rx: BufferedCanReceiver) {
     loop {
         match rx.receive().await {
             Ok(envelope) => {
                 let frame = &envelope.frame;
-                // Check for bootloader reboot command
-                if let embassy_stm32::can::Id::Standard(id) = frame.id()
-                    && id.as_raw() == protocol::CAN_ID_HOST_TO_DEVICE
-                    && frame.data().first() == Some(&protocol::msg::REBOOT)
-                {
-                    info!("Reboot to bootloader requested via CAN");
-                    cortex_m::peripheral::SCB::sys_reset();
-                }
+                handle_bootloader_reboot(frame);
 
                 let ec_id = match frame.id() {
                     embassy_stm32::can::Id::Standard(s) => embedded_can::Id::Standard(

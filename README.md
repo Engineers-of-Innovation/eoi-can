@@ -17,9 +17,13 @@ Embedded firmware for the STM32L471 microcontroller. Contains two application bi
 
 ### Dashboard (`dashboard`)
 
-Same board as the height sensor controller, with a Waveshare 5.79" e-paper display (792x272) on SPI2 instead of the RS-485 height sensors.
+Same board as the height sensor controller, with a Waveshare 5.79" e-paper display (792x272, SSD1683) on SPI2 instead of the RS-485 height sensors.
 
-The application binary is not in this repo yet — it currently lives in the `eoi-can` repo as `eoi-can-display-firmware` and will be moved here. Only the bootloader side (app type `0x03`) is supported so far, so a dashboard board can be given a bootloader today and the application flashed over CAN once it has been ported.
+- Listens on CAN and renders the bus state to the e-paper panel
+- Receive-only: it never transmits, and has no onboard temperature sensor (SPI2's only DMA pair is the one I2C2 would need)
+- Full panel refresh every 60th repaint, differential refresh otherwise; identical frames are skipped
+
+Rendering lives in the `draw-display` crate in this repo, shared in spirit with the simulator and framebuffer tools in the `eoi-can` repo.
 
 ## Bootloader (`eoi-boot`)
 
@@ -124,10 +128,12 @@ cargo install probe-rs-tools
 # Application binaries for development (full flash, no bootloader offset)
 cargo build --release --bin height-sensor-controller
 cargo build --release --bin rudder-controller
+cargo build --release --bin dashboard
 
 # Application binaries for use with bootloader (linked at app offset 0x08014800)
 cargo build --release --bin height-sensor-controller --features bootloader
 cargo build --release --bin rudder-controller --features bootloader
+cargo build --release --bin dashboard --features bootloader
 
 # Bootloader (exactly one board variant feature must be enabled)
 cargo build --release -p eoi-boot --features height-sensor-controller
@@ -136,6 +142,14 @@ cargo build --release -p eoi-boot --features dashboard
 
 # Flash tool (host-side, must be built from its directory)
 cd flash-tool && cargo build && cd ..
+```
+
+The display renderer has host-side layout tests. The workspace defaults to the
+embedded target and `draw-display`'s `std` support is opt-in, so both have to be
+named explicitly:
+
+```sh
+cargo test -p draw-display --features std --target x86_64-unknown-linux-gnu
 ```
 
 ### 4. Flash via debug probe
@@ -153,6 +167,7 @@ Then flash the application:
 ```sh
 cargo run --release --bin height-sensor-controller
 cargo run --release --bin rudder-controller
+cargo run --release --bin dashboard
 ```
 
 This will compile, flash the firmware onto the chip, and show log output via defmt.

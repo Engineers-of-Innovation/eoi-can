@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["app", "boot", "boot-api"]
+members = ["app", "boot", "boot-api", "draw-display"]
 exclude = ["flash-tool"]
 default-members = ["app"]
 
@@ -8,6 +8,12 @@ default-members = ["app"]
 lto = true
 debug = true
 opt-level = "z"
+
+# The display redraw is the longest stretch of uninterrupted CPU work in the
+# dashboard binary, and it runs between CAN drains — its speed bounds how deep
+# the RX buffer has to be. Flash headroom in the app partition is ample.
+[profile.release.package.draw-display]
+opt-level = 3
 
 [profile.dev]
 opt-level = "z"
