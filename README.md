@@ -173,7 +173,7 @@ Build the firmware with the bootloader offset and flash it:
 ```sh
 cargo build --release --bin rudder-controller --features bootloader
 cd flash-tool
-cargo run -- flash ../target/thumbv7em-none-eabi/release/rudder-controller
+cargo run -- flash ../target/thumbv7em-none-eabihf/release/rudder-controller
 ```
 
 Other commands:
