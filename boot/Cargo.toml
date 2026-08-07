@@ -7,6 +7,9 @@ edition = "2024"
 name = "eoi-boot"
 path = "src/main.rs"
 
+[build-dependencies]
+built = { version = "0.8", features = ["git2"] }
+
 [features]
 # Exactly one of these must be enabled. They match the app's [[bin]] names.
 rudder-controller = []

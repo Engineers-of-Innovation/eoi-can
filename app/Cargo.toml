@@ -15,6 +15,9 @@ path = "src/bin/rudder_controller.rs"
 name = "dashboard"
 path = "src/bin/dashboard.rs"
 
+[build-dependencies]
+built = { version = "0.8", features = [ "git2" ] }
+
 [features]
 default = [  ]
 # Link the application at the bootloader app offset (0x08014800).

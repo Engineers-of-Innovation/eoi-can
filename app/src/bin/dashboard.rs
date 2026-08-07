@@ -8,7 +8,7 @@ use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_stm32::{
     bind_interrupts,
     can::{
-        Can, Fifo, Rx0InterruptHandler, Rx1InterruptHandler, RxBuf, SceInterruptHandler,
+        Can, Fifo, Rx0InterruptHandler, Rx1InterruptHandler, RxBuf, SceInterruptHandler, TxBuf,
         TxInterruptHandler, filter::Mask32,
     },
     dma,
@@ -46,6 +46,7 @@ bind_interrupts!(struct Irqs {
 const CAN_RX_BUF_SIZE: usize = 256;
 
 static RX_BUF: StaticCell<RxBuf<CAN_RX_BUF_SIZE>> = StaticCell::new();
+static TX_BUF: StaticCell<TxBuf<4>> = StaticCell::new();
 /// The framebuffer is an inline `[u8; 26928]`. `init_with` builds it in place;
 /// passing it by value risks a 27 KB stack temporary at `opt-level = "z"`.
 static DISPLAY: StaticCell<EpdDisplay> = StaticCell::new();
@@ -67,6 +68,7 @@ async fn heartbeat_task(
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Dashboard");
+    eoi_rust_firmware::build_info::log();
 
     // LEDs are active low.
     let green_led = Output::new(p.PC1, Level::High, Speed::Low);
@@ -114,8 +116,12 @@ async fn main(spawner: Spawner) {
     // peripheral is already live by then, and a frame arriving while RxMode is
     // still NonBuffered takes an ISR path that clears IER.FMPIE0 — which nothing
     // sets again in Buffered mode. RX would be dead for the rest of the boot.
-    let (_, can_rx) = can.split();
+    let (can_tx, can_rx) = can.split();
     let buffered_rx = can_rx.buffered(RX_BUF.init(RxBuf::new()));
+    // The dashboard originates no traffic; the TX half exists only so it can
+    // answer the host's bootloader-protocol queries (state, version). Four
+    // frames is ample — the host asks one question at a time.
+    let buffered_tx = can_tx.buffered(TX_BUF.init(TxBuf::new()));
 
     can.modify_filters()
         .enable_bank(0, Fifo::Fifo0, Mask32::accept_all());
@@ -130,6 +136,7 @@ async fn main(spawner: Spawner) {
 
     spawner.spawn(unwrap!(dashboard_can_rx_task(
         buffered_rx.reader(),
+        buffered_tx.writer(),
         blue_led,
         MY_APP_TYPE
     )));

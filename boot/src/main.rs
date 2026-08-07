@@ -2,6 +2,7 @@
 #![no_main]
 
 mod bootloader;
+mod build_info;
 mod flash;
 
 #[cfg(any(
@@ -88,6 +89,7 @@ static FLASH: StaticCell<Mutex<NoopRawMutex, RefCell<BlockingFlash>>> = StaticCe
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     info!("EoI Bootloader starting");
+    build_info::log();
 
     let p = embassy_stm32::init(clock_config());
 

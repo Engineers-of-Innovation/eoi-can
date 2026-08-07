@@ -1,7 +1,7 @@
 use defmt::*;
 use embassy_stm32::Peri;
 use embassy_stm32::can::{
-    BufferedCan, BufferedCanReceiver, Can, Fifo, RxBuf, TxBuf, filter::Mask32,
+    BufferedCan, BufferedCanReceiver, BufferedCanSender, Can, Fifo, RxBuf, TxBuf, filter::Mask32,
 };
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use eoi_can_decoder::can_frame::CanFrame as DecoderFrame;
@@ -33,33 +33,59 @@ pub async fn init_can(
 use eoi_boot_api::header::AppType;
 use eoi_boot_api::protocol;
 
-/// Reset into the bootloader if this frame is the host's REBOOT command *for this
-/// board*.
+use crate::build_info::VERSION;
+
+/// Answer the host's bootloader-protocol commands aimed *at this board*, and
+/// reset into the bootloader when asked.
 ///
-/// Every application must call this on each received frame — it is the only way
-/// the flash tool can get a running app back into the bootloader, so without it
-/// OTA updates are one-way.
+/// Every application must call this on each received frame — the reboot case is
+/// the only way the flash tool can get a running app back into the bootloader,
+/// so without it OTA updates are one-way.
 ///
-/// The command ID is derived from `app_type`, so rebooting one board leaves the
-/// others running. Applications still use an accept-all hardware filter (the
-/// dashboard needs the whole bus), so this check is what scopes the reset.
-pub fn handle_bootloader_reboot(frame: &embassy_stm32::can::Frame, app_type: AppType) {
-    if let embassy_stm32::can::Id::Standard(id) = frame.id()
-        && id.as_raw() == protocol::board_address(app_type).cmd
-        && frame.data().first() == Some(&protocol::msg::REBOOT)
-    {
-        info!("Reboot to bootloader requested via CAN");
-        cortex_m::peripheral::SCB::sys_reset();
+/// This is the driver half only; the decision lives in
+/// [`protocol::app_action`], which is `no_std` and host-tested.
+pub fn handle_bootloader_command(
+    frame: &embassy_stm32::can::Frame,
+    app_type: AppType,
+    tx: &mut BufferedCanSender,
+) {
+    let embassy_stm32::can::Id::Standard(id) = frame.id() else {
+        return;
+    };
+    match protocol::app_action(id.as_raw(), frame.data(), app_type, &VERSION) {
+        Some(protocol::AppAction::Reply { id, data, len }) => reply(tx, id, &data[..len]),
+        Some(protocol::AppAction::Reboot) => {
+            info!("Reboot to bootloader requested via CAN");
+            cortex_m::peripheral::SCB::sys_reset();
+        }
+        None => {}
+    }
+}
+
+/// Queue a response frame without blocking.
+///
+/// `try_write`, not the async `write`: this runs inline in the RX loop, and on
+/// the dashboard that loop must never stall behind a TX mailbox. A full TX
+/// buffer means the host will retry anyway.
+fn reply(tx: &mut BufferedCanSender, resp_id: u16, data: &[u8]) {
+    let Some(id) = embassy_stm32::can::StandardId::new(resp_id) else {
+        return;
+    };
+    let Ok(frame) = embassy_stm32::can::Frame::new_data(id, data) else {
+        return;
+    };
+    if tx.try_write(frame).is_err() {
+        warn!("CAN TX buffer full, dropped bootloader response");
     }
 }
 
 #[embassy_executor::task]
-pub async fn can_rx_task(rx: BufferedCanReceiver, app_type: AppType) {
+pub async fn can_rx_task(rx: BufferedCanReceiver, mut tx: BufferedCanSender, app_type: AppType) {
     loop {
         match rx.receive().await {
             Ok(envelope) => {
                 let frame = &envelope.frame;
-                handle_bootloader_reboot(frame, app_type);
+                handle_bootloader_command(frame, app_type, &mut tx);
 
                 let ec_id = match frame.id() {
                     embassy_stm32::can::Id::Standard(s) => embedded_can::Id::Standard(

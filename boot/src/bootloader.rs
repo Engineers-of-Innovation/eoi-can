@@ -102,8 +102,11 @@ where
                         // Answer the broadcast but deliberately do NOT extend the
                         // deadline: a host polling `scan` in a loop must not pin
                         // every board in the bootloader.
-                        if data.first() == Some(&protocol::msg::GET_STATE) {
-                            self.send_state().await;
+                        match data.first() {
+                            Some(&protocol::msg::GET_STATE) => self.send_state().await,
+                            Some(&protocol::msg::GET_VERSION) => self.send_version().await,
+                            // Never error on the broadcast — it is not ours alone.
+                            _ => {}
                         }
                     }
                 }
@@ -135,14 +138,20 @@ where
     }
 
     async fn process_command(&mut self, cmd: u8) -> Result<(), u8> {
-        use protocol::msg;
+        use protocol::{err, msg};
         match cmd {
             msg::GET_STATE => {
                 self.send_state().await;
             }
+            msg::GET_VERSION => {
+                self.send_version().await;
+            }
             msg::ERASE_APP => {
                 info!("Erasing application");
-                self.flash.erase_header_and_app().await.map_err(|_| 0x01)?;
+                self.flash
+                    .erase_header_and_app()
+                    .await
+                    .map_err(|_| err::ERASE_FAILED)?;
                 self.write_offset = 0;
                 self.state = BootloaderState::WaitingWithoutApp;
                 self.send_response(&[msg::ERASE_APP]).await;
@@ -169,7 +178,7 @@ where
             }
             msg::BOOT_APP => {
                 if validate_app(&self.flash).is_err() {
-                    return Err(0x04);
+                    return Err(err::NO_VALID_APP);
                 }
                 self.send_response(&[msg::BOOT_APP]).await;
                 Timer::after(Duration::from_millis(500)).await;
@@ -181,7 +190,7 @@ where
                 cortex_m::peripheral::SCB::sys_reset();
             }
             _ => {
-                return Err(0x05);
+                return Err(err::UNKNOWN_COMMAND);
             }
         }
         Ok(())
@@ -191,10 +200,12 @@ where
     /// All 8 bytes of the frame are raw data, written directly to flash (8-byte aligned).
     async fn handle_write_data(&mut self, data: &[u8]) -> Result<(), u8> {
         if data.len() != 8 {
-            return Err(0x02);
+            return Err(protocol::err::BAD_WRITE_LEN);
         }
         let address = self.flash.header_address() + self.write_offset;
-        self.flash.write_bytes(address, data).map_err(|_| 0x03)?;
+        self.flash
+            .write_bytes(address, data)
+            .map_err(|_| protocol::err::WRITE_FAILED)?;
         self.write_offset += 8;
         self.state = BootloaderState::FlashingApp;
 
@@ -219,6 +230,13 @@ where
             EXPECTED_APP_TYPE as u8,
         ])
         .await;
+    }
+
+    /// Report this bootloader's own build identity — not the application's,
+    /// which it has no way of knowing: the firmware header carries no commit.
+    async fn send_version(&mut self) {
+        self.send_response(&crate::build_info::VERSION.encode())
+            .await;
     }
 
     async fn send_error(&mut self, code: u8) {

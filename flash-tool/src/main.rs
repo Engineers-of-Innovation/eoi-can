@@ -1,7 +1,7 @@
 mod can_client;
 mod elf_image;
 
-use can_client::{CanClient, ValidationResult};
+use can_client::{CanClient, ValidationResult, format_version};
 use clap::{Parser, Subcommand, ValueEnum};
 use elf_image::FirmwareImage;
 use eoi_boot_api::header::AppType;
@@ -70,6 +70,8 @@ enum Command {
     Reboot,
     /// Read the current device state
     State,
+    /// Read the version and git hash of whatever is running on the device
+    Version,
 }
 
 #[tokio::main]
@@ -130,9 +132,22 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
     match cli.command {
         Command::Scan => unreachable!("handled above"),
         Command::State => {
-            let state = client.get_state().await?;
-            log::info!("Device state: {}", state.state);
+            let device = client.get_state().await?;
+            log::info!(
+                "Device state: {} (app type {})",
+                device.state,
+                device.app_type.map(board_name).unwrap_or("not reported")
+            );
         }
+        Command::Version => match client.get_version().await? {
+            Some(version) => println!("{:<26} {}", board_name(target), format_version(&version)),
+            None => {
+                println!(
+                    "{:<26} answered, but reports no version — firmware predates GetVersion",
+                    board_name(target)
+                );
+            }
+        },
         Command::Erase => {
             log::info!("Erasing application...");
             client.erase_app().await?;
@@ -158,17 +173,28 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 async fn scan(interface: &str) -> Result<(), Box<dyn std::error::Error>> {
-    log::info!("Scanning {interface} for bootloaders...");
+    log::info!("Scanning {interface} for boards...");
     let found = CanClient::discover(interface).await?;
     if found.is_empty() {
-        println!("No bootloaders answered. Boards running their application do not reply —");
-        println!("use `--board <BOARD> reboot` to bring one into the bootloader.");
+        println!("Nothing answered. Check the interface, the bitrate and the bus wiring.");
         return Ok(());
     }
-    println!("{:<26} STATE", "BOARD");
-    for d in found {
+    println!("{:<26} {:<18} VERSION", "BOARD", "STATE");
+    for d in &found {
         let name = d.app_type.map(board_name).unwrap_or("unknown");
-        println!("{:<26} {}", name, d.state);
+        let version = d
+            .version
+            .as_ref()
+            .map(format_version)
+            .unwrap_or_else(|| "not reported".to_string());
+        // `d.state` through `{:<18}` directly would ignore the width — the
+        // Display impl does not call `f.pad`.
+        println!("{:<26} {:<18} {}", name, d.state.to_string(), version);
+    }
+    if found.iter().any(|d| !d.state.in_bootloader()) {
+        println!();
+        println!("Boards in AppRunning are executing their application. Use");
+        println!("`--board <BOARD> reboot` to bring one into the bootloader.");
     }
     Ok(())
 }
@@ -186,21 +212,33 @@ async fn flash(
         firmware.data.len()
     );
 
-    // If app is running (no bootloader response), reboot into bootloader first.
-    // The reboot goes to this board's command ID, so other boards keep running.
+    // Get into the bootloader first. Two ways the app can be in the way: it
+    // answers `AppRunning`, or (firmware predating that reply) it answers
+    // nothing at all. Both take the same reboot path — the reboot goes to this
+    // board's command ID, so other boards keep running.
     log::info!("Reading device state...");
     let device = match client.get_state().await {
-        Ok(device) => {
+        Ok(device) if device.state.in_bootloader() => {
             log::info!("Device state: {}", device.state);
             device
         }
-        Err(_) => {
-            log::info!("No bootloader response, sending reboot command...");
+        outcome => {
+            match &outcome {
+                Ok(device) => log::info!("Board is running its application ({})", device.state),
+                Err(_) => log::info!("No bootloader response, sending reboot command..."),
+            }
             // Send reboot — the app will reset, bootloader starts and waits 2s
             let _ = client.reboot().await;
             tokio::time::sleep(std::time::Duration::from_secs(1)).await;
             let device = client.get_state().await?;
             log::info!("Device state after reboot: {}", device.state);
+            if !device.state.in_bootloader() {
+                return Err(format!(
+                    "Board is still in state {} after a reboot — refusing to erase",
+                    device.state
+                )
+                .into());
+            }
             device
         }
     };
