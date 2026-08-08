@@ -12,9 +12,11 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x012 | HeightSensorFrontRight | Height Sensors |
 | 0x013 | HeightSensor (placement TBD) | Height Sensors |
 | 0x014 | HeightSensor (placement TBD) | Height Sensors |
-| 0x030 | BootloaderHostToDevice | Bootloader |
-| 0x031 | BootloaderDeviceToHost | Bootloader |
-| 0x032 | BootloaderWriteData | Bootloader |
+| 0x030 | BootloaderDiscovery | Bootloader (broadcast, all boards) |
+| 0x031–0x033 | Bootloader cmd / resp / data | Bootloader (Rudder Controller) |
+| 0x034–0x036 | Bootloader cmd / resp / data | Bootloader (Height Sensor Controller) |
+| 0x037–0x039 | Bootloader cmd / resp / data | Bootloader (Dashboard) |
+| 0x03A–0x03F | _unallocated_ | Bootloader (app types 0x04, 0x05) |
 | 0x020 | ServoRudderStatus | Rudder Controller |
 | 0x021 | ServoRudderCommand | Rudder Controller |
 | 0x100 | PackAndPerriCurrent | Battery Management System |
@@ -91,18 +93,55 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 
 ## Bootloader
 
+The bootloader occupies `0x030`–`0x03F`. Because several boards share the bus, each board type owns
+its own block of three IDs derived from its application type, so a command can only ever reach the
+board it is addressed to — the bootloader's hardware filter rejects the other blocks outright. This
+is what keeps an `EraseApp` aimed at one board from erasing the others.
+
+**Address formula:** `base = 0x031 + (app_type - 1) * 3`
+
+| Board | App type | Command (host→board) | Response (board→host) | Write data (host→board) |
+| --- | --- | --- | --- | --- |
+| Rudder Controller | 0x01 | 0x031 | 0x032 | 0x033 |
+| Height Sensor Controller | 0x02 | 0x034 | 0x035 | 0x036 |
+| Dashboard | 0x03 | 0x037 | 0x038 | 0x039 |
+| _(unallocated)_ | 0x04 | 0x03A | 0x03B | 0x03C |
+| _(unallocated)_ | 0x05 | 0x03D | 0x03E | 0x03F |
+
+`0x030` is a discovery broadcast used to enumerate the bus: the host sends `GetState` on it and every
+bootloader answers on its **own** response ID. Replies are therefore attributed by source ID, and no
+two nodes ever transmit the same identifier — a shared reply ID would have all boards win arbitration
+together on the identical ID field and then collide in the data field. Answering discovery does not
+extend a board's auto-boot window, so repeated scanning cannot hold boards in the bootloader.
+
+A sixth application type would overflow the block and needs the allocation extended into `0x040`+.
+
+In the table below, `cmd`, `resp` and `data` mean the addressed board's three IDs.
+
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| BootloaderHostToDevice | 0x030 | 1 | 0 | Command | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot |
-| BootloaderDeviceToHost (GetState) | 0x031 | 2 | 0 | Message type | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x03=WriteAck, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot, 0xFF=Error |
+| BootloaderDiscovery | 0x030 | 1 | 0 | Command | u8 enum | | 0x01=GetState. Broadcast; every bootloader answers on its own `resp` ID. |
+| BootloaderHostToDevice | cmd | 1 | 0 | Command | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot |
+| BootloaderDeviceToHost (GetState) | resp | 3 | 0 | Message type | u8 enum | | 0x01=GetState, 0x02=EraseApp, 0x03=WriteAck, 0x04=ValidateApp, 0x05=BootApp, 0x06=Reboot, 0xFF=Error |
 | | | | 1 | State | u8 enum | | 0=WaitingWithoutApp, 1=WaitingWithApp, 2=FlashingApp |
-| BootloaderDeviceToHost (WriteAck) | 0x031 | 5 | 0 | Message type | u8 | | 0x03 |
+| | | | 2 | App type | u8 enum | | 0x01=RudderController, 0x02=HeightSensorController, 0x03=Dashboard. The `resp` ID already implies this; the byte lets the host cross-check which board it reached. |
+| BootloaderDeviceToHost (WriteAck) | resp | 5 | 0 | Message type | u8 | | 0x03 |
 | | | | 1–4 | Write offset | u32 | LE | Cumulative bytes written |
-| BootloaderDeviceToHost (ValidateApp) | 0x031 | 2 | 0 | Message type | u8 | | 0x04 |
-| | | | 1 | Result | u8 enum | | 0=Valid, 1=BadMagic, 2=BadLength, 3=BadCrc |
-| BootloaderDeviceToHost (Error) | 0x031 | 2 | 0 | Message type | u8 | | 0xFF |
+| BootloaderDeviceToHost (ValidateApp) | resp | 2 | 0 | Message type | u8 | | 0x04 |
+| | | | 1 | Result | u8 enum | | 0=Valid, 1=BadMagic, 2=BadLength, 3=BadCrc, 4=WrongAppType |
+| BootloaderDeviceToHost (Error) | resp | 2 | 0 | Message type | u8 | | 0xFF |
 | | | | 1 | Error code | u8 enum | | 0x01=EraseFailure, 0x02=InvalidWriteLength, 0x03=FlashWriteFailure, 0x04=InvalidApp, 0x05=UnknownCommand |
-| BootloaderWriteData | 0x032 | 8 | 0–7 | Data | u8[8] | | Raw firmware data (8-byte aligned) |
+| BootloaderWriteData | data | 8 | 0–7 | Data | u8[8] | | Raw firmware data (8-byte aligned). No type byte, so writes stay a full 8 bytes per frame. |
+
+A running application does not answer the bootloader protocol, so the host sends `Reboot` to the
+board's `cmd` ID first. Applications use an accept-all filter, so they scope the reset by checking
+the command ID against their own application type — rebooting one board leaves the others running.
+
+> **Superseded allocation.** Before this scheme the bootloader used a flat `0x030` (host→device),
+> `0x031` (device→host) and `0x032` (write data) shared by every board, which made `EraseApp` a
+> broadcast. Note that `0x032` is now the Rudder Controller's **response** ID: a bootloader predating
+> this change would read those responses as firmware write data. The bootloader is only replaceable
+> over SWD, so every board must be re-flashed before the new host tooling is used on a shared bus.
 
 ## Battery Management System (BMS)
 
