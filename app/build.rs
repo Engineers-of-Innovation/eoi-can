@@ -1,6 +1,12 @@
 use std::path::PathBuf;
 
 fn main() {
+    // Build identity for the CAN GET_VERSION response. Rerun tracking is kept
+    // narrow on purpose: a bare `../` would recursively stat `target/`.
+    println!("cargo:rerun-if-changed=src");
+    println!("cargo:rerun-if-changed=../.git/HEAD");
+    built::write_built_file().expect("Failed to acquire build-time information");
+
     if std::env::var("TARGET").unwrap() != std::env::var("HOST").unwrap() {
         println!("cargo:rustc-link-arg-bins=--nmagic");
         println!("cargo:rustc-link-arg-bins=-Tlink.x");

@@ -71,7 +71,7 @@ if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     # are deliberately identical to the app's [[bin]] names.
     echo "flash-jlink.sh: building bootloader for $BIN"
     cargo build --release --manifest-path "$REPO_ROOT/boot/Cargo.toml" --features "$BIN"
-    BOOT_ELF="$REPO_ROOT/target/thumbv7em-none-eabi/release/eoi-boot"
+    BOOT_ELF="$REPO_ROOT/target/thumbv7em-none-eabihf/release/eoi-boot"
 
     # Header and app are generated as one blob so the CRC in the header always
     # describes the bytes flashed next to it. The flash tool already knows how

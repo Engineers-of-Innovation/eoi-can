@@ -15,9 +15,10 @@ use embassy_stm32::{
 };
 use embassy_time::Timer;
 use eoi_rust_firmware::app_type::AppType;
-use eoi_rust_firmware::can::{can_rx_task, init_can};
+use eoi_rust_firmware::can::init_can;
 use eoi_rust_firmware::clock::clock_config;
 use eoi_rust_firmware::flow_sensor;
+use eoi_rust_firmware::rudder_can::rudder_can_rx_task;
 use eoi_rust_firmware::steering_angle;
 use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
 use eoi_rust_firmware::{config, cooling_pump, declare_app_type, motor_temperature, servo_rudder};
@@ -56,6 +57,7 @@ async fn heartbeat_task(
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Rudder Controller");
+    eoi_rust_firmware::build_info::log();
 
     let green_led = Output::new(p.PC1, Level::High, Speed::Low);
     let red_led = Output::new(p.PC2, Level::High, Speed::Low);
@@ -69,7 +71,11 @@ async fn main(spawner: Spawner) {
     let can = Can::new(p.CAN1, p.PB8, p.PB9, Irqs);
     let buffered = init_can(can, p.PB7).await;
 
-    spawner.spawn(unwrap!(can_rx_task(buffered.reader())));
+    spawner.spawn(unwrap!(rudder_can_rx_task(
+        buffered.reader(),
+        buffered.writer(),
+        MY_APP_TYPE
+    )));
 
     let i2c = i2c::I2c::new(
         p.I2C2,

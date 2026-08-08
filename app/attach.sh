@@ -7,7 +7,7 @@
 set -e
 
 BIN="${1:?Usage: $0 <binary-name>}"
-ELF="../target/thumbv7em-none-eabi/release/$BIN"
+ELF="../target/thumbv7em-none-eabihf/release/$BIN"
 
 if [ ! -f "$ELF" ]; then
     echo "ELF not found: $ELF"

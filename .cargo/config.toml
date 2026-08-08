@@ -9,4 +9,4 @@ runner = "tools/flash-jlink.sh"
 linker = "flip-link"
 
 [build]
-target = "thumbv7em-none-eabi"
+target = "thumbv7em-none-eabihf"

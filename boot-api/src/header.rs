@@ -15,6 +15,7 @@ const CRC: Crc<u32> = Crc::<u32>::new(&CRC_32_ISCSI);
 pub enum AppType {
     RudderController = 0x01,
     HeightSensorController = 0x02,
+    Dashboard = 0x03,
 }
 
 impl AppType {
@@ -22,6 +23,7 @@ impl AppType {
         match v {
             0x01 => Some(Self::RudderController),
             0x02 => Some(Self::HeightSensorController),
+            0x03 => Some(Self::Dashboard),
             _ => None,
         }
     }
