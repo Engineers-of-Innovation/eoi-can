@@ -26,7 +26,7 @@ bootloader = [  ]
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "platform-cortex-m", "executor-thread", "defmt" ] }
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "stm32l471rg", "defmt", "memory-x", "unstable-pac", "time-driver-tim4", "exti", "chrono" ] }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "stm32l471rg", "defmt", "memory-x", "unstable-pac", "time-driver-tim4", "exti" ] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0", features = [ "defmt-timestamp-uptime", "tick-hz-32_768" ] }
 panic-probe = { version = "1.0.0", features = [ "print-defmt" ] }

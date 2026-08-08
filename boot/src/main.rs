@@ -3,6 +3,7 @@
 
 mod bootloader;
 mod build_info;
+mod clock;
 mod flash;
 
 #[cfg(any(
@@ -59,11 +60,6 @@ use embassy_stm32::can::{RxBuf, TxBuf};
 use embassy_stm32::flash::Flash;
 use embassy_stm32::gpio::{Level, Output, Speed};
 use embassy_stm32::peripherals::CAN1;
-use embassy_stm32::rcc::{
-    AHBPrescaler, APBPrescaler, Hse, HseMode, LsConfig, LseConfig, LseDrive, LseMode, Pll, PllMul,
-    PllPreDiv, PllRDiv, PllSource, RtcClockSource, Sysclk,
-};
-use embassy_stm32::time::Hertz;
 use embassy_stm32::{bind_interrupts, can};
 use embassy_sync::blocking_mutex::Mutex;
 use embassy_sync::blocking_mutex::raw::NoopRawMutex;
@@ -91,11 +87,12 @@ async fn main(spawner: Spawner) {
     info!("EoI Bootloader starting");
     build_info::log();
 
-    let p = embassy_stm32::init(clock_config());
+    let (config, hse_ok) = clock::clock_config();
+    let p = embassy_stm32::init(config);
 
     // Status LED - PC1
     let status_led = Output::new(p.PC2, Level::High, Speed::Low);
-    spawner.spawn(unwrap!(heartbeat_task(status_led)));
+    spawner.spawn(unwrap!(heartbeat_task(status_led, hse_ok)));
 
     // CAN bus - PB8 (RX), PB9 (TX), PB7 (standby)
     let standby_out = Output::new(p.PB7, Level::Low, Speed::Low);
@@ -140,11 +137,14 @@ async fn bootloader_task(
 }
 
 #[embassy_executor::task]
-async fn heartbeat_task(mut led: Output<'static>) -> ! {
+async fn heartbeat_task(mut led: Output<'static>, hse_ok: bool) -> ! {
+    // Double flash to distinguish from the application; five flashes if the HSE
+    // never started and we are limping along on HSI16, so the degraded clock is
+    // visible on the bench without attaching a debugger.
+    let flashes = if hse_ok { 2 } else { 5 };
     let mut ticker = Ticker::every(Duration::from_secs(1));
     loop {
-        // Double flash pattern to distinguish from application
-        for _ in 0..2 {
+        for _ in 0..flashes {
             led.set_low();
             embassy_time::Timer::after(Duration::from_millis(100)).await;
             led.set_high();
@@ -152,33 +152,4 @@ async fn heartbeat_task(mut led: Output<'static>) -> ! {
         }
         ticker.next().await;
     }
-}
-
-fn clock_config() -> embassy_stm32::Config {
-    let mut config = embassy_stm32::Config::default();
-    config.rcc.hse = Some(Hse {
-        freq: Hertz(16_000_000),
-        mode: HseMode::Oscillator,
-    });
-    config.rcc.pll = Some(Pll {
-        source: PllSource::HSE,
-        prediv: PllPreDiv::DIV1,
-        mul: PllMul::MUL10,
-        divp: None,
-        divq: None,
-        divr: Some(PllRDiv::DIV2),
-    });
-    config.rcc.sys = Sysclk::PLL1_R;
-    config.rcc.ahb_pre = AHBPrescaler::DIV1;
-    config.rcc.apb1_pre = APBPrescaler::DIV1;
-    config.rcc.apb2_pre = APBPrescaler::DIV1;
-    config.rcc.ls = LsConfig {
-        rtc: RtcClockSource::LSE,
-        lsi: false,
-        lse: Some(LseConfig {
-            frequency: Hertz(32_768),
-            mode: LseMode::Oscillator(LseDrive::MediumHigh),
-        }),
-    };
-    config
 }

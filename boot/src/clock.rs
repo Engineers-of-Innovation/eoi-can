@@ -32,12 +32,14 @@ fn hse_starts() -> bool {
     false
 }
 
-pub fn clock_config() -> embassy_stm32::Config {
+/// Returns the clock config, and whether the 16 MHz crystal actually started.
+///
+/// Both paths produce an identical 80 MHz tree: HSI16 is exactly 16 MHz on this
+/// part, so the same DIV1/MUL10/DIVR2 chain applies either way and no peripheral
+/// divisor downstream has to care.
+pub fn clock_config() -> (embassy_stm32::Config, bool) {
     let mut config = embassy_stm32::Config::default();
 
-    // Both paths produce an identical 80 MHz tree: HSI16 is exactly 16 MHz on
-    // this part, so the same DIV1/MUL10/DIVR2 chain applies either way and no
-    // peripheral divisor downstream has to care.
     let hse_ok = hse_starts();
     if hse_ok {
         config.rcc.hse = Some(Hse {
@@ -53,26 +55,26 @@ pub fn clock_config() -> embassy_stm32::Config {
     }
     config.rcc.pll = Some(Pll {
         source: if hse_ok {
-            PllSource::HSE // 16 MHz HSE
+            PllSource::HSE
         } else {
-            PllSource::HSI // 16 MHz HSI, same tree
+            PllSource::HSI
         },
-        prediv: PllPreDiv::DIV1, // /1 → 16 MHz
-        mul: PllMul::MUL10,      // ×10 → 160 MHz VCO
+        prediv: PllPreDiv::DIV1, // /1 -> 16 MHz
+        mul: PllMul::MUL10,      // x10 -> 160 MHz VCO
         divp: None,
         divq: None,
-        divr: Some(PllRDiv::DIV2), // /2 → 80 MHz SYSCLK
+        divr: Some(PllRDiv::DIV2), // /2 -> 80 MHz SYSCLK
     });
     config.rcc.sys = Sysclk::PLL1_R;
     config.rcc.ahb_pre = AHBPrescaler::DIV1;
     config.rcc.apb1_pre = APBPrescaler::DIV1;
     config.rcc.apb2_pre = APBPrescaler::DIV1;
-    // No 32.768 kHz crystal is fitted and nothing in this firmware touches the RTC.
-    // Enabling the LSE makes embassy spin forever on LSERDY in rcc/bd.rs, and that
-    // loop runs *before* the HSE one, so a missing X2 hangs the boot outright.
-    // `embassy_time`'s tick-hz-32_768 is unrelated: time-driver-tim4 divides TIM4's
-    // 80 MHz APB1 clock down to that rate.
+    // No 32.768 kHz crystal is fitted and nothing in this firmware touches the
+    // RTC. Enabling the LSE makes embassy spin forever on LSERDY in rcc/bd.rs,
+    // and that loop runs *before* the HSE one, so a missing X2 hangs the boot
+    // outright. `embassy_time`'s tick-hz-32_768 is unrelated: time-driver-tim4
+    // divides TIM4's 80 MHz APB1 clock down to that rate.
     config.rcc.ls = LsConfig::off();
-    config.rcc.mux.adcsel = embassy_stm32::rcc::mux::Adcsel::SYS;
-    config
+
+    (config, hse_ok)
 }

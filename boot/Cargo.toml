@@ -18,7 +18,7 @@ dashboard = []
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["stm32l471rg", "defmt", "time-driver-tim4"] }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["stm32l471rg", "defmt", "unstable-pac", "time-driver-tim4"] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0", features = ["defmt-timestamp-uptime", "tick-hz-32_768"] }
 embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["defmt"] }
