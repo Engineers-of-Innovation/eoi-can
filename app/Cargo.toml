@@ -42,6 +42,9 @@ rmodbus = { version = "0.12", default-features = false, features = [ "heapless" 
 heapless = "0.9"
 libm = "0.2"
 eoi-boot-api = { path = "../boot-api" }
+# Must stay on the same ref as draw-display's copy of this dep, or cargo
+# resolves two sources and the `EoiCanData` types stop matching across
+# the crate boundary.
 eoi-can-decoder = { git = "ssh://git@github.com/Engineers-of-Innovation/eoi-can.git", branch = "main", features = [ "defmt" ] }
 embedded-can = "0.4.1"
 draw-display = { path = "../draw-display", default-features = false, features = [ "defmt" ] }

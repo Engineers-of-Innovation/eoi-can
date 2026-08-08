@@ -29,8 +29,8 @@ embassy-time = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-s
 tokio = { version = "1.43.0", features = [ "full" ], optional = true }
 # Same git URL and ref as the app's dependency, so cargo resolves one copy and
 # the `EoiCanData` types match across the crate boundary.
-eoi-can-decoder = { git = "ssh://git@github.com/Engineers-of-Innovation/eoi-can.git", branch = "feat/5in79-display" }
-mppt-layout = { git = "ssh://git@github.com/Engineers-of-Innovation/eoi-can.git", branch = "feat/5in79-display" }
+eoi-can-decoder = { git = "ssh://git@github.com/Engineers-of-Innovation/eoi-can.git", branch = "main" }
+mppt-layout = { git = "ssh://git@github.com/Engineers-of-Innovation/eoi-can.git", branch = "main" }
 
 [dev-dependencies]
 # Only to hand-build CAN frames in tests, so the decode path is covered end to end.
