@@ -5,13 +5,8 @@ use embassy_stm32::can::{
 };
 use embassy_stm32::gpio::{Level, Output, Pin, Speed};
 use eoi_can_decoder::can_frame::CanFrame as DecoderFrame;
-use eoi_can_decoder::{
-    EoiBattery, EoiCanData, RudderControllerData, ServoData, parse_eoi_can_data,
-};
+use eoi_can_decoder::{EoiCanData, parse_eoi_can_data};
 use static_cell::StaticCell;
-
-use crate::cooling_pump::BMS_DISCHARGE_STATE;
-use crate::servo_rudder::{SERVO_COMMAND, SERVO_SETPOINT, SETPOINT_MAX, SETPOINT_MIN};
 
 static CAN: StaticCell<Can<'static>> = StaticCell::new();
 static TX_BUF: StaticCell<TxBuf<8>> = StaticCell::new();
@@ -82,6 +77,29 @@ fn reply(tx: &mut BufferedCanSender, resp_id: u16, data: &[u8]) {
     }
 }
 
+/// Decode a received frame into an application message, if it is one we know.
+///
+/// `from_encoded` takes a slice, which keeps the decoder's heapless 0.8 `Vec`
+/// out of this crate (the app is on 0.9).
+pub fn decode(frame: &embassy_stm32::can::Frame) -> Option<EoiCanData> {
+    let ec_id = match frame.id() {
+        embassy_stm32::can::Id::Standard(s) => {
+            embedded_can::Id::Standard(embedded_can::StandardId::new(s.as_raw()).unwrap())
+        }
+        embassy_stm32::can::Id::Extended(e) => {
+            embedded_can::Id::Extended(embedded_can::ExtendedId::new(e.as_raw()).unwrap())
+        }
+    };
+    parse_eoi_can_data(&DecoderFrame::from_encoded(ec_id, frame.data()))
+}
+
+/// The minimal RX loop: answer bootloader commands, and nothing else.
+///
+/// This is all a board needs when it consumes no inbound application message —
+/// the height-sensor-controller only ever transmits. Boards that do consume one
+/// supply their own task so the handling lives with its consumers; see
+/// [`crate::rudder_can::rudder_can_rx_task`] and
+/// [`crate::dashboard::dashboard_can_rx_task`].
 #[embassy_executor::task]
 pub async fn can_rx_task(rx: BufferedCanReceiver, mut tx: BufferedCanSender, app_type: AppType) {
     loop {
@@ -89,37 +107,6 @@ pub async fn can_rx_task(rx: BufferedCanReceiver, mut tx: BufferedCanSender, app
             Ok(envelope) => {
                 let frame = &envelope.frame;
                 handle_bootloader_command(frame, app_type, &mut tx);
-
-                let ec_id = match frame.id() {
-                    embassy_stm32::can::Id::Standard(s) => embedded_can::Id::Standard(
-                        embedded_can::StandardId::new(s.as_raw()).unwrap(),
-                    ),
-                    embassy_stm32::can::Id::Extended(e) => embedded_can::Id::Extended(
-                        embedded_can::ExtendedId::new(e.as_raw()).unwrap(),
-                    ),
-                };
-                let decoder_frame = DecoderFrame::from_encoded(ec_id, frame.data());
-                match parse_eoi_can_data(&decoder_frame) {
-                    Some(EoiCanData::EoiBattery(EoiBattery::TemperaturesAndStates(t))) => {
-                        BMS_DISCHARGE_STATE.signal(t.discharge_state);
-                    }
-                    Some(EoiCanData::RudderController(RudderControllerData::Servo(
-                        ServoData::Setpoint(setpoint),
-                    ))) => {
-                        if (SETPOINT_MIN..=SETPOINT_MAX).contains(&setpoint) {
-                            SERVO_SETPOINT.signal(setpoint);
-                        } else {
-                            warn!("Servo setpoint {} out of range, rejected", setpoint);
-                        }
-                    }
-                    Some(EoiCanData::RudderController(RudderControllerData::Servo(
-                        ServoData::Command(command),
-                    ))) => {
-                        SERVO_COMMAND.signal(command);
-                    }
-                    _ => {}
-                }
-
                 trace!("CAN rx: {:02x}", frame.data());
             }
             Err(e) => warn!("CAN rx error: {:?}", e),
