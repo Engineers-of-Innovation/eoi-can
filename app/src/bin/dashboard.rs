@@ -3,6 +3,7 @@
 
 use defmt::*;
 use embassy_executor::Spawner;
+use embassy_futures::yield_now;
 use embassy_stm32::time::Hertz;
 use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_stm32::{
@@ -179,11 +180,14 @@ async fn main(spawner: Spawner) {
     const RX_STALL_ITERATIONS: u32 = 5;
     let mut empty_snapshots: u32 = 0;
 
-    // A floor on the loop period, not a delay added to it: the refresh alone
-    // exceeds this, so every tick is already overdue and the loop runs work-bound.
-    // The floor matters only when the frame is unchanged and the refresh is
-    // skipped, where it stops the loop spinning on the CAN collector lock.
-    const MIN_LOOP_PERIOD: Duration = Duration::from_millis(500);
+    // A floor on the loop period. Must stay comfortably above the ~490 ms that
+    // `draw_display` + `fnv1a_hash` cost, or the ticker never gets to wait:
+    // `Ticker::next` advances `expires_at` by exactly one period per call, so
+    // once it falls behind it only claws back (period - body) per iteration and
+    // returns `Ready` immediately until it catches up. With a 500 ms period that
+    // margin was 9 ms, and the 2.5 s full refresh put it ~5 periods in debt, so
+    // it never did — see the `yield_now` below for why that was fatal.
+    const MIN_LOOP_PERIOD: Duration = Duration::from_secs(1);
     let mut ticker = Ticker::every(MIN_LOOP_PERIOD);
 
     info!("Starting main loop");
@@ -260,7 +264,20 @@ async fn main(spawner: Spawner) {
             last_buffer_hash = Some(buffer_hash);
             info!("Display updated");
             red_led.set_high();
+            // A refresh takes 0.7-2.5 s, many periods' worth. Without this the
+            // ticker carries that debt forward and stops yielding afterwards.
+            ticker.reset();
         }
+
+        // The one await in this loop guaranteed to return `Pending`, and the
+        // reason the loop is sound at all. Everything else can complete inline:
+        // `COLLECTOR.lock()` is uncontended, the refresh branch is skipped
+        // whenever the frame is unchanged, and `ticker.next()` returns `Ready`
+        // while it is behind. An embassy task that never returns `Pending` is
+        // never descheduled, which previously starved `heartbeat_task` (so the
+        // 4 s watchdog reset the board) and `dashboard_can_rx_task` (so the
+        // collector stayed empty and the RX path looked dead from the inside).
+        yield_now().await;
 
         ticker.next().await;
     }

@@ -88,21 +88,28 @@ pub fn fnv1a_hash(data: &[u8]) -> u64 {
     hash
 }
 
-/// Defensive against two embassy-stm32 quirks that leave interrupts off
-/// permanently (still present as of `embassy-stm32-v0.6.0`):
-/// - the non-buffered RX ISR path clears `IER.FMPIE`, and the buffered path has
-///   no counterpart that sets it again;
-/// - the SCE handler clears `IER.ERRIE` on the first bus error and nothing ever
-///   restores it.
+/// Defensive against an embassy-stm32 quirk that leaves RX interrupts off
+/// permanently (still present as of `embassy-stm32-v0.6.0`): the non-buffered RX
+/// ISR path clears `IER.FMPIE`, and the buffered path has no counterpart that
+/// sets it again.
 ///
 /// Safe to call repeatedly. `FMPIE` is level-driven on `RFR.FMP != 0`, so if the
 /// hardware FIFO already holds frames the RX ISR fires as soon as this returns
 /// and drains them — no manual drain needed.
+///
+/// Deliberately does *not* touch `IER.ERRIE`. embassy's `SceInterruptHandler`
+/// clears it on the first bus error and never acknowledges `MSR.ERRI`, so
+/// setting it again just re-enters the handler once to have it cleared again —
+/// and nothing here consumes bus errors anyway.
+///
+/// Note this is a narrow workaround, not a general "RX is stuck" remedy. When
+/// this fired in practice the captured state was `fmpie0=true` with `fmp=0`:
+/// interrupts were already armed and the FIFO was empty, because the *RX task*
+/// was starved, not the peripheral. See the `yield_now` in `bin/dashboard.rs`.
 pub fn rearm_can_rx_interrupts() {
     embassy_stm32::pac::CAN1.ier().modify(|w| {
         w.set_fmpie(0, true);
         w.set_fmpie(1, true);
-        w.set_errie(true);
     });
 }
 
