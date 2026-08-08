@@ -1021,7 +1021,25 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
             "RudderController.Servo.Status.setpoint",
         )
         .measurement()
-        .diagnostic(),
+        .icon("mdi:ship-wheel"),
+    );
+    v.push(
+        sensor(
+            "rudder_status_actual_position",
+            "Rudder Status Actual Position",
+            "RudderController.Servo.Status.actual_position",
+        )
+        .measurement()
+        .icon("mdi:ship-wheel"),
+    );
+    v.push(
+        sensor(
+            "rudder_status_fault_cause",
+            "Rudder Status Fault Cause",
+            "RudderController.Servo.Status.fault_cause",
+        )
+        .diagnostic()
+        .icon("mdi:console"),
     );
     v.push(
         sensor(
@@ -1716,6 +1734,8 @@ mod tests {
                 ServoStatus {
                     state: ServoState::Operational,
                     setpoint: 0,
+                    actual_position: 0,
+                    fault_cause: ServoFaultCause::None,
                 },
             ))),
             EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Command(
