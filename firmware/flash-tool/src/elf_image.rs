@@ -86,9 +86,7 @@ fn extract_loadable_segments(
     elf: &elf::ElfBytes<elf::endian::LittleEndian>,
     input: &[u8],
 ) -> Result<Vec<u8>, ElfError> {
-    let segments = elf
-        .segments()
-        .ok_or(ElfError::NoLoadableSegments)?;
+    let segments = elf.segments().ok_or(ElfError::NoLoadableSegments)?;
 
     // Find the address range
     let mut lowest_addr = usize::MAX;

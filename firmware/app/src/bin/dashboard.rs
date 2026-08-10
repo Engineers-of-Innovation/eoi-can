@@ -18,13 +18,13 @@ use embassy_stm32::{
     spi,
 };
 use embassy_time::{Delay, Duration, Ticker, Timer};
-use eoi_rust_firmware::app_type::AppType;
-use eoi_rust_firmware::clock::clock_config;
-use eoi_rust_firmware::dashboard::{
+use eoi_firmware::app_type::AppType;
+use eoi_firmware::clock::clock_config;
+use eoi_firmware::dashboard::{
     COLLECTOR, EpdDisplay, dashboard_can_rx_task, fnv1a_hash, log_can_state,
     rearm_can_rx_interrupts,
 };
-use eoi_rust_firmware::declare_app_type;
+use eoi_firmware::declare_app_type;
 use epd_waveshare::epd5in79::Epd5in79;
 use static_cell::StaticCell;
 use {defmt_rtt as _, panic_probe as _};
@@ -69,7 +69,7 @@ async fn heartbeat_task(
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Dashboard");
-    eoi_rust_firmware::build_info::log();
+    eoi_firmware::build_info::log();
 
     // LEDs are active low.
     let green_led = Output::new(p.PC1, Level::High, Speed::Low);

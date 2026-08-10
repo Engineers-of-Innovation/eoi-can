@@ -22,6 +22,8 @@ const BOOT_WINDOW: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Format)]
 #[repr(u8)]
+// The names match the states in the bootloader protocol documentation.
+#[allow(clippy::enum_variant_names)]
 enum BootloaderState {
     WaitingWithoutApp = 0,
     WaitingWithApp = 1,

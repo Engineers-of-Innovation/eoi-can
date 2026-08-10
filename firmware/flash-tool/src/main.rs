@@ -8,7 +8,10 @@ use eoi_boot_api::header::AppType;
 use eoi_boot_api::protocol::board_address;
 
 #[derive(Parser)]
-#[command(name = "eoi-flash-tool", about = "Flash firmware to EoI boards via CAN bus")]
+#[command(
+    name = "eoi-flash-tool",
+    about = "Flash firmware to EoI boards via CAN bus"
+)]
 struct Cli {
     /// CAN interface to use
     #[arg(short, long, default_value = "can0")]
@@ -129,9 +132,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         (_, Some(board)) => (board.into(), None),
         (_, None) => {
-            return Err("this command needs --board <BOARD> to say which board to address; \
+            return Err(
+                "this command needs --board <BOARD> to say which board to address; \
                         run `scan` to see what is on the bus"
-                .into());
+                    .into(),
+            );
         }
     };
 

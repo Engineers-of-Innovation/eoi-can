@@ -424,7 +424,7 @@ fn make_frame(id: CanId, data: &[u8]) -> CanFrame {
         5 => CanFrame::new(id, <&[u8; 5]>::try_from(&buf[..5]).unwrap()),
         6 => CanFrame::new(id, <&[u8; 6]>::try_from(&buf[..6]).unwrap()),
         7 => CanFrame::new(id, <&[u8; 7]>::try_from(&buf[..7]).unwrap()),
-        _ => CanFrame::new(id, &buf),
+        _ => CanFrame::new(id, buf),
     }
 }
 

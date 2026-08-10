@@ -14,15 +14,15 @@ use embassy_stm32::{
     usart,
 };
 use embassy_time::Timer;
-use eoi_rust_firmware::app_type::AppType;
-use eoi_rust_firmware::can::{can_rx_task, init_can};
-use eoi_rust_firmware::clock::clock_config;
-use eoi_rust_firmware::declare_app_type;
-use eoi_rust_firmware::height_sensor::{
+use eoi_firmware::app_type::AppType;
+use eoi_firmware::can::{can_rx_task, init_can};
+use eoi_firmware::clock::clock_config;
+use eoi_firmware::declare_app_type;
+use eoi_firmware::height_sensor::{
     CAN_ID_HEIGHT_SENSOR_FRONT_LEFT, CAN_ID_HEIGHT_SENSOR_FRONT_RIGHT, height_sensor_task,
     height_sensor_timer_task,
 };
-use eoi_rust_firmware::temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
+use eoi_firmware::temperature::{CAN_ID_TEMPERATURE_HEIGHT_SENSORS, temperature_task};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::HeightSensorController);
@@ -61,7 +61,7 @@ async fn heartbeat_task(
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Height Sensor Controller");
-    eoi_rust_firmware::build_info::log();
+    eoi_firmware::build_info::log();
 
     let green_led = Output::new(p.PC1, Level::High, Speed::Low);
     let red_led = Output::new(p.PC2, Level::High, Speed::Low);

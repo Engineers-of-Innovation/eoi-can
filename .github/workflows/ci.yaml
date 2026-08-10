@@ -59,11 +59,12 @@ jobs:
           deny: warnings
 
       # boot needs exactly one board feature, so the firmware workspace is
-      # linted per package instead of with --workspace.
+      # linted per package instead of with --workspace. No --all-targets:
+      # test harnesses cannot build for the no_std thumb target.
       - name: Firmware clippy
         working-directory: firmware
         run: |
-          cargo clippy -p eoi-firmware --all-targets -- -D warnings
+          cargo clippy -p eoi-firmware -- -D warnings
           cargo clippy -p eoi-boot-api -- -D warnings
           for board in rudder-controller height-sensor-controller dashboard; do
             cargo clippy -p eoi-boot --features $board -- -D warnings
