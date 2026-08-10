@@ -1,0 +1,12 @@
+[package]
+name = "eoi-boot-api"
+version = "0.1.0"
+edition = "2024"
+
+[features]
+default = []
+defmt = ["dep:defmt"]
+
+[dependencies]
+crc = "3"
+defmt = { version = "0.3.10", optional = true }

@@ -1,0 +1,12 @@
+[target.'cfg(all(target_arch = "arm", target_os = "none"))']
+
+# Dispatches to probe-rs (default, same flags as before) or, under WSL, to the
+# Windows-side J-Link Commander. Path is resolved relative to this file, so it
+# works from any directory in the workspace. See the script header for the
+# FLASH_BACKEND override.
+runner = "tools/flash-jlink.sh"
+
+linker = "flip-link"
+
+[build]
+target = "thumbv7em-none-eabihf"

@@ -28,7 +28,12 @@ jobs:
       - name: Check formatting of Rust firmware code with rustfmt
         uses: actions-rust-lang/rustfmt@v1
         with:
-          manifest-path: eoi-can-display-firmware/Cargo.toml
+          manifest-path: firmware/Cargo.toml
+
+      - name: Check formatting of flash-tool code with rustfmt
+        uses: actions-rust-lang/rustfmt@v1
+        with:
+          manifest-path: firmware/flash-tool/Cargo.toml
 
   clippy:
     runs-on: ubuntu-latest
@@ -53,14 +58,21 @@ jobs:
           options: --all-targets
           deny: warnings
 
+      # boot needs exactly one board feature, so the firmware workspace is
+      # linted per package instead of with --workspace. No --all-targets:
+      # test harnesses cannot build for the no_std thumb target.
       - name: Firmware clippy
-        uses: LoliGothick/clippy-check@v0.3.1
-        with:
-          name: clippy-firmware
-          token: ${{ secrets.GITHUB_TOKEN }}
-          working-directory: eoi-can-display-firmware
-          options: --target thumbv7em-none-eabihf
-          deny: warnings
+        working-directory: firmware
+        run: |
+          cargo clippy -p eoi-firmware -- -D warnings
+          cargo clippy -p eoi-boot-api -- -D warnings
+          for board in rudder-controller height-sensor-controller dashboard; do
+            cargo clippy -p eoi-boot --features $board -- -D warnings
+          done
+
+      - name: Flash-tool clippy
+        working-directory: firmware/flash-tool
+        run: cargo clippy --all-targets -- -D warnings
 
   test:
     runs-on: ubuntu-latest
@@ -82,6 +94,10 @@ jobs:
       - name: Run all tests
         run: cargo nextest run
         working-directory: .
+
+      - name: Run boot-api host tests
+        run: cargo test -p eoi-boot-api --target x86_64-unknown-linux-gnu
+        working-directory: firmware
 
   fuzz:
     runs-on: ubuntu-latest
@@ -114,17 +130,37 @@ jobs:
     steps:
       - name: Install libsdl2-dev
         run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
-        
+
       - name: Checkout repository
         uses: actions/checkout@v3
 
       - name: Install toolchain with required components
         uses: actions-rust-lang/setup-rust-toolchain@v1
 
+      - name: Install tools
+        uses: taiki-e/install-action@v2
+        with:
+          tool: flip-link
+
       - name: Build
         run: cargo build
         working-directory: .
 
-      - name: Build firmware
-        run: DEFMT_LOG=trace cargo build
-        working-directory: eoi-can-display-firmware
+      - name: Build firmware (dev linker layout)
+        run: DEFMT_LOG=trace cargo build --bins
+        working-directory: firmware
+
+      - name: Build firmware (bootloader layout)
+        run: DEFMT_LOG=trace cargo build --bins --features bootloader
+        working-directory: firmware
+
+      - name: Build bootloader for every board variant
+        working-directory: firmware
+        run: |
+          for board in rudder-controller height-sensor-controller dashboard; do
+            DEFMT_LOG=trace cargo build -p eoi-boot --features $board
+          done
+
+      - name: Build flash-tool
+        run: cargo build
+        working-directory: firmware/flash-tool

@@ -34,12 +34,12 @@ You do **not** need to be a Rust expert to get started! This guide will help you
 ## Project Structure
 
 - `draw-display/` — Library for drawing on display devices
-  - Used in all `eoi-can-display-*` projects
+  - Used by the display simulator, the framebuffer tool, and the firmware's `dashboard` binary
   - Original designed for an black and white e-ink display
 - `eoi-can-decoder/` — CAN data decoding utilities
   - Made in a way so it can be used for displaying data but also can easily be converted to JSON (to be send over MQTT)
-- `eoi-can-display-firmware/` — Firmware for the CAN display
-  - Connects to a eink display with our `RS485 to CAN` board
+- `firmware/` — STM32L471 board firmware: rudder controller, height sensor controller, dashboard (e-paper display), CAN bootloader, and host-side flash tool
+  - Its own Cargo workspace (builds for `thumbv7em-none-eabihf`); see [firmware/README.md](firmware/README.md)
 - `eoi-can-display-framebuffer/` — Framebuffer-based display application
   - Can be run on a linux machine with a standard Raspberry Pi display; the 792x272 rendering is centered in the framebuffer
 - `eoi-can-display-simulator/` — Simulator for the CAN display
@@ -70,7 +70,7 @@ You do **not** need to be a Rust expert to get started! This guide will help you
 ### Clone the Repository
 
 ```sh
-git clone https://git.engineersofinnovation.nl/boat-fw/eoi-can
+git clone git@github.com:Engineers-of-Innovation/eoi-can.git
 cd eoi-can
 ```
 

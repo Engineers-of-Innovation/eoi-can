@@ -1,7 +1,6 @@
 pub use embassy_time::Duration;
 
 #[cfg(not(feature = "tokio"))]
-#[expect(clippy::disallowed_types)]
 pub type Instant = embassy_time::Instant;
 
 #[cfg(feature = "tokio")]
