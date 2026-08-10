@@ -2,7 +2,7 @@
 resolver = "3"
 
 members = [ "eoi-can-display-simulator", "eoi-can-display-framebuffer", "draw-display", "eoi-can-decoder", "eoi-gnss-to-can" , "get-wifi-ip", "eoi-can-to-mqtt", "pisugar", "mppt-layout", "eoi-candump-to-csv"]
-exclude = [ "eoi-can-display-firmware", "fuzz" ]
+exclude = [ "firmware", "firmware/flash-tool", "fuzz" ]
 
 [workspace.dependencies]
 embedded-graphics = "0.8.1"

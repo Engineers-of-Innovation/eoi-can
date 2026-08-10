@@ -18,7 +18,12 @@ embedded-graphics = { workspace = true }
 u8g2-fonts = "0.7"
 heapless = "0.8.0"
 defmt = { version = "0.3", optional = true }
-embassy-time = { version = "0.4" }
+# Must be the same source as the one the firmware's embassy-stm32 pulls in. A
+# crates.io `embassy-time` would resolve to a second copy with its own
+# `embassy-time-driver` defaulting to tick-hz-1_000_000, while the firmware runs
+# tick-hz-32_768 — every staleness timeout here would silently be ~30x too
+# long, with no build error.
+embassy-time = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0" }
 tokio = { version = "1.43.0", features = [ "full" ], optional = true }
 eoi-can-decoder = { path = "../eoi-can-decoder" }
 mppt-layout = { path = "../mppt-layout" }

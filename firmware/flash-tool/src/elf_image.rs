@@ -163,7 +163,7 @@ pub enum ElfError {
         file_size: usize,
     },
     #[error(
-        "ELF is missing the `.app_type` section — binary must call `declare_app_type!(...)` (in eoi-rust-firmware::app_type)"
+        "ELF is missing the `.app_type` section — binary must call `declare_app_type!(...)` (in eoi-firmware::app_type)"
     )]
     MissingAppType,
     #[error("`.app_type` section has unexpected contents: {0:02X?}")]
