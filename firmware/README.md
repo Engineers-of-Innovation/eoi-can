@@ -1,6 +1,6 @@
-# EoI Rust Firmware
+# EoI Firmware
 
-Embedded firmware for the STM32L471 microcontroller. Contains two application binaries that share common code (clock configuration, temperature sensor, CAN bus), a CAN bootloader for field updates, and a host-side flash tool. Communicates over CAN bus at 1 Mbps.
+Embedded firmware for the STM32L471 microcontroller. Contains three application binaries that share common code (clock configuration, temperature sensor, CAN bus), a CAN bootloader for field updates, and a host-side flash tool. Communicates over CAN bus at 1 Mbps.
 
 ## Application Binaries
 
@@ -24,7 +24,7 @@ Same board as the height sensor controller, with a Waveshare 5.79" e-paper displ
 - Originates no bus traffic: the only frames it sends are replies to the host's bootloader-protocol queries. It has no onboard temperature sensor (SPI2's only DMA pair is the one I2C2 would need)
 - Full panel refresh every 60th repaint, differential refresh otherwise; identical frames are skipped
 
-Rendering lives in the `draw-display` crate in this repo, shared in spirit with the simulator and framebuffer tools in the `eoi-can` repo.
+Rendering lives in the [`draw-display`](../draw-display) crate at the repo root, shared with the simulator and framebuffer tools.
 
 ## Bootloader (`eoi-boot`)
 

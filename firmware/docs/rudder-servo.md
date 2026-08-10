@@ -19,8 +19,7 @@ StallGuard-detected mechanical stop found during homing. All logic lives in
 
 ## CAN interface
 
-See [CAN_MESSAGES.md](https://github.com/Engineers-of-Innovation/eoi-can/blob/main/CAN_MESSAGES.md)
-for the byte layouts.
+See [CAN_MESSAGES.md](../../CAN_MESSAGES.md) for the byte layouts.
 
 | ID | Message | Direction | Notes |
 | --- | --- | --- | --- |

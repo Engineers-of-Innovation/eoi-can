@@ -9,3 +9,4 @@ perf.data*
 
 # Python bytecode from support/ scripts
 __pycache__/
+backups
