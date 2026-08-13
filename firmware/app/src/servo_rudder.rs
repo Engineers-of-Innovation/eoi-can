@@ -44,10 +44,11 @@ const MRES_8_MICROSTEPS: u32 = 5;
 const CHOPCONF_RESET: u32 = 0x1000_0053;
 
 // StallGuard: DIAG trips when SG_RESULT < 2*SGTHRS.
-// TODO(bench): tune with the "Homing SG_RESULT" defmt logs (lower = more
-// load): pick roughly half the unloaded value so a hand-stall trips DIAG
-// reliably without false positives during normal homing.
-const SGTHRS_HOMING: u32 = 60;
+// Bench-measured (2026-08): unloaded SG_RESULT ~70 at the homing speed, so
+// trip below 34 (~half the free-running value). The previous value of 60
+// tripped at <120 and stalled instantly against the free-running 70.
+// TODO(bench): verify a hand-stall still trips DIAG reliably under real load.
+const SGTHRS_HOMING: u32 = 17;
 const TCOOLTHRS_VAL: u32 = 0xF_FFFF;
 // Ignore DIAG for the first steps of a move (StallGuard is unreliable while
 // accelerating from standstill).
@@ -106,6 +107,7 @@ enum FaultCause {
     HomingTimeout = 2,
     DriverNoUartResponse = 3,
     DriverError = 4,
+    DriverOpenLoad = 5,
 }
 
 #[derive(PartialEq)]
@@ -321,6 +323,36 @@ impl Servo {
         Ok(())
     }
 
+    /// Coil and StallGuard health straight from the driver. Open-load
+    /// (ola/olb) means a coil is not conducting (wiring/crimp); cs_actual
+    /// shows the current scale actually applied.
+    async fn read_driver_status(&mut self, context: &str) -> Option<reg::DRV_STATUS> {
+        match self.tmc.read::<reg::DRV_STATUS>().await {
+            Ok(s) => {
+                info!(
+                    "DRV_STATUS ({=str}): stst={} stealth={} cs_actual={} ola={} olb={} s2ga={} s2gb={} s2vsa={} s2vsb={} otpw={} ot={}",
+                    context,
+                    s.stst(),
+                    s.stealth(),
+                    s.cs_actual(),
+                    s.ola(),
+                    s.olb(),
+                    s.s2ga(),
+                    s.s2gb(),
+                    s.s2vsa(),
+                    s.s2vsb(),
+                    s.otpw(),
+                    s.ot()
+                );
+                Some(s)
+            }
+            Err(_) => {
+                warn!("DRV_STATUS ({=str}): read failed", context);
+                None
+            }
+        }
+    }
+
     /// Stall-seek toward the home stop, back off, and define position 0.
     async fn home(&mut self) -> Result<(), FaultCause> {
         let result = self.home_inner().await;
@@ -337,12 +369,17 @@ impl Servo {
         self.enable.set_low();
         Timer::after_millis(10).await;
 
+        info!("DIAG before homing: {}", self.diag.is_high());
+        // Log-only: open-load flags are unreliable at standstill.
+        self.read_driver_status("pre-homing").await;
+
         self.dir.set_level(HOME_DIR_LEVEL);
         Timer::after_ticks(1).await;
 
         let budget = TRAVEL_STEPS as u32 * HOMING_BUDGET_PERCENT / 100;
         let mut stepped: u32 = 0;
         let mut blank = STALL_BLANK_STEPS;
+        let mut open_load_samples: u32 = 0;
         let mut next = Instant::now();
         loop {
             if stepped >= budget {
@@ -365,7 +402,25 @@ impl Servo {
                     Ok(sg) => info!("Homing SG_RESULT: {}", sg.get()),
                     Err(_) => warn!("SG_RESULT read failed during homing"),
                 }
-                // The read pauses stepping; re-blank so the restart does not
+                // Open-load flags can flicker; require two consecutive
+                // samples before faulting.
+                if let Ok(s) = self.tmc.read::<reg::DRV_STATUS>().await {
+                    if s.ola() || s.olb() {
+                        open_load_samples += 1;
+                        warn!(
+                            "Open load during homing (ola={} olb={}, sample {})",
+                            s.ola(),
+                            s.olb(),
+                            open_load_samples
+                        );
+                        if open_load_samples >= 2 {
+                            return Err(FaultCause::DriverOpenLoad);
+                        }
+                    } else {
+                        open_load_samples = 0;
+                    }
+                }
+                // The reads pause stepping; re-blank so the restart does not
                 // false-trigger DIAG.
                 blank = STALL_BLANK_STEPS;
                 next = Instant::now();
@@ -379,6 +434,19 @@ impl Servo {
             Timer::at(next).await;
         }
         info!("Home stop found after {} steps", stepped);
+        match self.tmc.read::<reg::SG_RESULT>().await {
+            Ok(sg) => info!("SG_RESULT at stop: {}", sg.get()),
+            Err(_) => warn!("SG_RESULT read failed at stop"),
+        }
+        // An open coil reads SG_RESULT = 0 and trips DIAG right after the
+        // blanking window — without this check that would pass as a
+        // successful home.
+        if let Some(s) = self.read_driver_status("at stop").await
+            && (s.ola() || s.olb())
+        {
+            warn!("Open load at home stop (ola={} olb={})", s.ola(), s.olb());
+            return Err(FaultCause::DriverOpenLoad);
+        }
         Timer::after_millis(50).await;
 
         self.dir.set_level(away_level());
