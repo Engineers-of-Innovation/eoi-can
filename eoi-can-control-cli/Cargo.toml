@@ -1,0 +1,15 @@
+[package]
+name = "eoi-can-control-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+clap = { workspace = true }
+crossterm = "0.29"
+embedded-can = { workspace = true }
+eoi-can-decoder = { path = "../eoi-can-decoder" }
+socketcan = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
