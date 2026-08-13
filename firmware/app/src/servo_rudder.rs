@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU16, Ordering};
 
 use defmt::*;
+use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_stm32::Peri;
 use embassy_stm32::can::{BufferedCanSender, Frame, StandardId};
@@ -22,7 +23,9 @@ pub const SETPOINT_MAX: u16 = 2000;
 const FAILSAFE_SETPOINT: u16 = 1000;
 const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
 
-const TMC_ADDR: u8 = 0;
+// MS1 (AD0) and MS2 (AD1) are strapped to 3V3 on the board, so the driver
+// listens on UART slave address 3.
+const TMC_ADDR: u8 = 3;
 pub const TMC_BAUD: u32 = 115_200;
 const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 
@@ -178,25 +181,42 @@ impl Tmc2209Uart {
 
     async fn read<R: ReadableRegister>(&mut self) -> Result<R, TmcError> {
         let request = tmc2209::read_request::<R>(TMC_ADDR);
-        self.tx
-            .write(request.bytes())
-            .await
-            .map_err(|_| TmcError::Uart)?;
-
-        // The RX line also sees our own request (single-wire UART); the
-        // Reader only syncs on replies addressed to the master.
         let deadline = Instant::now() + TMC_READ_TIMEOUT;
         let mut reader = tmc2209::Reader::default();
         let mut buffer = [0u8; 24];
+
+        // Arm RX together with TX: the reply starts only ~8 bit times after
+        // our request ends, so it must not race the RX DMA setup. The RX line
+        // also sees our own request (single-wire UART); parse_response skips
+        // it by only syncing on replies addressed to the master.
+        match select(
+            join(
+                self.rx.read_until_idle(&mut buffer),
+                self.tx.write(request.bytes()),
+            ),
+            Timer::at(deadline),
+        )
+        .await
+        {
+            Either::First((rx_result, tx_result)) => {
+                tx_result.map_err(|_| TmcError::Uart)?;
+                match rx_result {
+                    Ok(len) => {
+                        if let Some(value) = parse_response::<R>(&mut reader, &buffer[..len]) {
+                            return Ok(value);
+                        }
+                    }
+                    Err(e) => trace!("TMC2209 UART rx error: {:?}", e),
+                }
+            }
+            Either::Second(_) => return Err(TmcError::Timeout),
+        }
+
         loop {
             match select(self.rx.read_until_idle(&mut buffer), Timer::at(deadline)).await {
                 Either::First(Ok(len)) => {
-                    if let (_, Some(response)) = reader.read_response(&buffer[..len])
-                        && response.crc_is_valid()
-                        && let Ok(address) = response.reg_addr()
-                        && address == R::ADDRESS
-                    {
-                        return Ok(R::from(response.data_u32()));
+                    if let Some(value) = parse_response::<R>(&mut reader, &buffer[..len]) {
+                        return Ok(value);
                     }
                 }
                 Either::First(Err(e)) => {
@@ -205,6 +225,18 @@ impl Tmc2209Uart {
                 Either::Second(_) => return Err(TmcError::Timeout),
             }
         }
+    }
+}
+
+fn parse_response<R: ReadableRegister>(reader: &mut tmc2209::Reader, bytes: &[u8]) -> Option<R> {
+    if let (_, Some(response)) = reader.read_response(bytes)
+        && response.crc_is_valid()
+        && let Ok(address) = response.reg_addr()
+        && address == R::ADDRESS
+    {
+        Some(R::from(response.data_u32()))
+    } else {
+        None
     }
 }
 
@@ -233,17 +265,18 @@ impl Servo {
         POSITION_STEPS.store(self.position, Ordering::Relaxed);
     }
 
-    async fn configure_driver(&mut self) -> Result<(), FaultCause> {
-        let mut start_count = None;
+    async fn read_ifcnt(&mut self) -> Result<u8, FaultCause> {
         for _ in 0..3 {
             if let Ok(ifcnt) = self.tmc.read::<reg::IFCNT>().await {
-                start_count = Some(ifcnt.0 as u8);
-                break;
+                return Ok(ifcnt.0 as u8);
             }
         }
-        let Some(start_count) = start_count else {
-            return Err(FaultCause::DriverNoUartResponse);
-        };
+        warn!("TMC2209 not responding on UART (IFCNT read failed 3x)");
+        Err(FaultCause::DriverNoUartResponse)
+    }
+
+    async fn configure_driver(&mut self) -> Result<(), FaultCause> {
+        let start_count = self.read_ifcnt().await?;
 
         let mut gconf = reg::GCONF::default();
         gconf.set_pdn_disable(true);
@@ -279,15 +312,11 @@ impl Servo {
             .await
             .map_err(|_| FaultCause::DriverError)?;
 
-        match self.tmc.read::<reg::IFCNT>().await {
-            Ok(ifcnt) => {
-                let delta = (ifcnt.0 as u8).wrapping_sub(start_count);
-                if delta != 5 {
-                    warn!("TMC2209 IFCNT delta {} after 5 writes", delta);
-                    return Err(FaultCause::DriverError);
-                }
-            }
-            Err(_) => return Err(FaultCause::DriverNoUartResponse),
+        let end_count = self.read_ifcnt().await?;
+        let delta = end_count.wrapping_sub(start_count);
+        if delta != 5 {
+            warn!("TMC2209 IFCNT delta {} after 5 writes", delta);
+            return Err(FaultCause::DriverError);
         }
         Ok(())
     }
