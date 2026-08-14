@@ -38,7 +38,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x214 | SteeringAngleCalibration (reserved) | Rudder Controller |
 | 0x215 | FlowSensorIn | Rudder Controller |
 | 0x216 | FlowSensorOut | Rudder Controller |
-| 0x217 | MotorTemperature | Rudder Controller |
+| 0x217 | MotorTemperature (retired, do not reuse) | Rudder Controller |
 | 0x219 | MotorNtc | Motor NTC Sensor |
 | 0x201 | GnssSpeedAndHeading | GNSS |
 | 0x202 | GnssLatitude | GNSS |
@@ -76,8 +76,8 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | FlowSensorOut | 0x216 | 8 | 0–1 | Flow rate | u16 | LE | mL/min. Same scaling and cadence as `FlowSensorIn`. |
 | | | | 2–3 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` means open/shorted NTC. |
 | | | | 4–5 | Raw pulses | u16 | LE | Pulses counted in the last 1 s window. |
-| | | | 6–7 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). |
-| MotorTemperature | 0x217 | 4 | 0–1 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` (`-32768`) means open/shorted NTC. Sent every 1 s. NTC = 10 kΩ at 25 °C, B=3950, top = 10 kΩ. Shares PA3 with `FlowSensorOut`'s NTC; mutually exclusive with 0x216. |
+| | | | 6–7 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). Same NTC part as `FlowSensorIn` (50 kΩ at 25 °C, B=3950, top = 47 kΩ), read on PA3 — the pin the retired 0x217 borrowed. |
+| MotorTemperature | 0x217 | 4 | 0–1 | Temperature | i16 | LE | **Retired — no longer transmitted.** Motor temperature comes from `MotorNtc` (0x219). Was centidegrees Celsius, `i16::MIN` (`-32768`) for an open/shorted NTC, every 1 s, NTC = 10 kΩ at 25 °C, B=3950, top = 10 kΩ. The decoder still parses it so archived logs replay; the ID is reserved and must not be reused. |
 | | | | 2–3 | Raw ADC | u16 | LE | 12-bit NTC ADC code (0–4095). |
 
 ## Height Sensors
@@ -211,7 +211,8 @@ the command ID against their own application type — rebooting one board leaves
 
 A standalone node — STM32G491 on CANable 2.5 hardware with a 10 kΩ NTC on the motor,
 transmit only, never receives. It supersedes reading the motor NTC through the VESC,
-whose own reading is broken, and is what the display shows as `Motor`.
+whose own reading is broken, and through the rudder controller's retired 0x217. It is
+what the display shows as `Motor` and the only motor temperature on the bus.
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
