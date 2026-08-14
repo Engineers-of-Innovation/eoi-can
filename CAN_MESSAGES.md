@@ -44,6 +44,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x202 | GnssLatitude | GNSS |
 | 0x203 | GnssLongitude | GNSS |
 | 0x204 | GnssDateTime | GNSS |
+| 0x205 | DataLoggerWifiIp | Data Logger |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
@@ -199,6 +200,12 @@ the command ID against their own application type — rebooting one board leaves
 | | | | 4 | Hours | u8 | | 0–23 |
 | | | | 5 | Minutes | u8 | | 0–59 |
 | | | | 6 | Seconds | u8 | | 0–59 |
+
+## Data Logger
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| DataLoggerWifiIp | 0x205 | 4 | 0–3 | IPv4 address octets | u8 ×4 | | Address order: `192.168.1.5` → `C0 A8 01 05`. Sent every 1 s while the data logger has a WiFi IPv4; not sent otherwise |
 
 ## Controller Temperatures
 

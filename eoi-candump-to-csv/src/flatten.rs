@@ -47,6 +47,8 @@ pub fn flatten(data: &EoiCanData, out: &mut Vec<(String, String)>) {
         EoiCanData::RudderController(r) => flatten_rudder(r, out),
         EoiCanData::HeightSensors(h) => flatten_height(h, out),
         EoiCanData::Temperature(t) => flatten_temperature(t, out),
+        // Filtered out before it gets here -- see `Filter::accepts`.
+        EoiCanData::DataLogger(_) => {}
     }
 }
 

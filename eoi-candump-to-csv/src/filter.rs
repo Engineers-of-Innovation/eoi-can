@@ -124,6 +124,8 @@ impl Filter {
                 Some(set) if set.is_empty() => true,
                 Some(set) => set.contains(&m.node_id()),
             },
+            // The data logger's WiFi IP is plumbing, not telemetry -- no CSV columns.
+            EoiCanData::DataLogger(_) => false,
         }
     }
 

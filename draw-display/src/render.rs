@@ -178,12 +178,19 @@ const COL_RIGHT: Cell = TOP_COLS[2];
 /// Keeps column contents off each other and off the screen edges. There are no
 /// vertical rules any more, so this is the only thing separating the columns.
 const COL_PAD_X: i32 = 20;
-/// Top margin for the headline. Small on purpose -- the panel is white past the
-/// active area, so tight margins read fine.
+/// Vertical inset of the outer columns. Small on purpose -- the panel is white
+/// past the active area, so tight margins read fine. The headline takes its top
+/// from `STAMP_BAND_H` instead, to clear the stamp line above it.
 const COL_PAD_Y: i32 = 4;
 
 const LEFT_INNER: Cell = COL_LEFT.inset(COL_PAD_X, COL_PAD_Y);
 const RIGHT_INNER: Cell = COL_RIGHT.inset(COL_PAD_X, COL_PAD_Y);
+
+/// Height reserved across the very top for the 4x6 stamp line: the IP address in
+/// the left corner and the build stamp over the centre column. `FONT_4X6` at
+/// `VERSION_BASELINE_Y` reaches down to y=6, so this keeps the headlines' ink
+/// clear of it.
+const STAMP_BAND_H: i32 = 8;
 
 /// Both outer columns open with a headline value over a small label -- net power
 /// on the left, state of charge on the right. They share one block so the two big
@@ -191,7 +198,7 @@ const RIGHT_INNER: Cell = COL_RIGHT.inset(COL_PAD_X, COL_PAD_Y);
 const HEADLINE_H: i32 = NET_DIGIT_H + NET_STACK_GAP + SMALL_CAP_H;
 const HEADLINE_BLOCK: Cell = Cell {
     x: 0,
-    y: BAND_TOP.y + COL_PAD_Y,
+    y: BAND_TOP.y + STAMP_BAND_H,
     w: 0,
     h: HEADLINE_H,
 };
@@ -444,7 +451,12 @@ const _: () = assert!(ICON_STRIP_Y + ICON_SIZE < TIME_TOP_Y);
 
 /// The build stamp sits at the very top of the centre column, above the speed.
 /// `FONT_4X6` is 6px tall, so a baseline here puts it flush with the screen edge.
+/// The IP address shares this baseline in the top-left corner.
 const VERSION_BASELINE_Y: i32 = 6;
+
+// The stamp line must stay clear of the headline digits under it -- that is what
+// `STAMP_BAND_H` buys.
+const _: () = assert!(VERSION_BASELINE_Y < HEADLINE_VALUE_Y - NET_DIGIT_H / 2);
 
 /// The fix state starts under the last whole digit -- the one always on screen,
 /// whether the speed reads 9 or 29. Anchoring to the first digit instead would move
@@ -1025,6 +1037,7 @@ where
     draw_icons(display, data)?;
     draw_times(display, data, &mut buf)?;
     draw_version(display)?;
+    draw_ip(display, data)?;
 
     Ok(())
 }
@@ -1234,6 +1247,39 @@ where
         Point::new(COL_MID.center_x(), VERSION_BASELINE_Y),
         style,
         Alignment::Center,
+    )
+    .draw(display)?;
+    Ok(())
+}
+
+/// The data logger's WiFi IP, on the build stamp's line but in the left corner,
+/// flush with the screen edge like the net power under it. Drawn only while the
+/// value is fresh: the Pi broadcasts it every second (and the std front-ends also
+/// query it locally), so no WiFi or no frames makes it disappear rather than
+/// leave a stale address up.
+fn draw_ip<D, C>(display: &mut D, data: &DisplayData) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = C>,
+    C: PixelColor + From<BinaryColor>,
+{
+    let Some(address) = data.ip_address.get() else {
+        return Ok(());
+    };
+
+    let style: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
+        .font(&FONT_4X6)
+        .text_color(BinaryColor::Off.into())
+        .background_color(BinaryColor::On.into())
+        .build();
+
+    let mut ip: String<24> = String::new();
+    write!(&mut ip, "IP: {address}").unwrap();
+
+    Text::with_alignment(
+        ip.as_str(),
+        Point::new(COL_LEFT.x, VERSION_BASELINE_Y),
+        style,
+        Alignment::Left,
     )
     .draw(display)?;
     Ok(())
@@ -1770,6 +1816,22 @@ mod tests {
         assert!(
             gap >= 2,
             "only {gap}px between the fix/unit line and the icons -- raise SPEED_LIFT"
+        );
+    }
+
+    /// The IP shares the stamp line with the build stamp, so the widest address
+    /// must end before the centred version text can begin.
+    #[test]
+    fn ip_stamp_clears_the_version_stamp() {
+        // `FONT_4X6` advances 4px per character.
+        let ip_right = COL_LEFT.x + 4 * "IP: 255.255.255.255".len() as i32;
+        // The version is centred on the middle column; even one as wide as the
+        // whole column stays right of this.
+        let version_left_bound = COL_MID.center_x() - COL_MID.w / 2;
+        assert!(
+            ip_right < version_left_bound,
+            "the IP stamp reaches x={ip_right}, into the version stamp's column at \
+             x={version_left_bound}"
         );
     }
 

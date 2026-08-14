@@ -1,5 +1,5 @@
 use clap::Parser;
-use embedded_can::Frame;
+use embedded_can::{Frame, StandardId};
 use eoi_can_decoder::parse_eoi_can_data;
 use get_wifi_ip::get_wifi_ip;
 use json_patch::merge;
@@ -69,6 +69,28 @@ async fn main() -> Result<(), core::convert::Infallible> {
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
             .expect("Unable to open CAN socket");
     info!("Connected to CAN interface: {}", args.can_interface);
+
+    // Broadcast the WiFi IP as DataLoggerWifiIp (0x205, see CAN_MESSAGES.md) so the
+    // CAN-only dashboard can show it. Spawned before anything MQTT: the connect loop
+    // below blocks until the broker is reachable, and the boat's dashboard must show
+    // the IP precisely when there is no internet. The RX socket is owned by its own
+    // task, so this gets a separate TX socket. Nothing is sent while there is no
+    // address; the display hides the IP once the frames stop for 5 s.
+    let ip_tx_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
+        socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
+            .expect("Unable to open CAN socket");
+    tokio::spawn(async move {
+        loop {
+            if let Some(ip) = get_wifi_ip() {
+                let frame = socketcan::CanFrame::new(StandardId::new(0x205).unwrap(), &ip.octets())
+                    .expect("4 data bytes always fit a CAN frame");
+                if let Err(e) = ip_tx_sock.write_frame(frame).await {
+                    error!("Failed to send WiFi IP CAN frame: {e}");
+                }
+            }
+            tokio::time::sleep(Duration::from_secs(1)).await;
+        }
+    });
 
     let create_opts = mqtt::CreateOptionsBuilder::new()
         .server_uri(mqtt_settings::BROKER.to_string())
