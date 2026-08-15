@@ -13,7 +13,7 @@ use anyhow::{anyhow, Context};
 use clap::Parser;
 use csv::WriterBuilder;
 use eoi_can_decoder::{can_frame::CanFrame, parse_eoi_can_data};
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::filter::{EnvFilter, LevelFilter};
 use tracing_subscriber::prelude::*;
 
@@ -23,18 +23,21 @@ use crate::sampler::{Mode, Sampler};
 #[derive(Parser, Debug)]
 #[command(
     version,
-    about = "Convert a candump .log into a CSV by sampling decoded CAN data",
-    long_about = "Convert a candump .log into a CSV by sampling decoded CAN data.\n\
+    about = "Convert candump .log files into CSVs by sampling decoded CAN data",
+    long_about = "Convert one or more candump .log files into CSVs by sampling decoded CAN data.\n\
+                  Each input produces its own CSV.\n\
                   \n\
                   Device selectors: all, battery, vesc, throttle, mppt, mppt:N (0..7),\n\
                   gan-mppt, gan-mppt:N (0..15), gnss, rudder, height, temperature.\n\
                   Combine via comma or repeated -d."
 )]
 struct Args {
-    /// candump .log file to read
-    input: PathBuf,
+    /// candump .log file(s) to read
+    #[arg(required = true, num_args = 1..)]
+    inputs: Vec<PathBuf>,
 
     /// Output CSV file. Defaults to <INPUT>.csv next to the input.
+    /// Only valid with a single input file.
     #[arg(short, long)]
     output: Option<PathBuf>,
 
@@ -60,25 +63,55 @@ fn main() -> anyhow::Result<()> {
     }
 
     let mode = parse_mode(&args.interval)?;
-    let output_path = output_path(&args.input, args.output.as_deref());
 
+    if args.output.is_some() && args.inputs.len() > 1 {
+        return Err(anyhow!(
+            "--output cannot be combined with multiple inputs; \
+             per-input <INPUT>.csv names are used instead"
+        ));
+    }
+
+    let total = args.inputs.len();
+    let mut failed = 0usize;
+    for input in &args.inputs {
+        let output = output_path(input, args.output.as_deref());
+        if let Err(err) = convert_file(input, &output, &filter, &schema, mode) {
+            error!(input = %input.display(), "conversion failed: {err:#}");
+            failed += 1;
+        }
+    }
+
+    if failed > 0 {
+        return Err(anyhow!("{failed} of {total} files failed"));
+    }
+
+    Ok(())
+}
+
+fn convert_file(
+    input_path: &Path,
+    output_path: &Path,
+    filter: &Filter,
+    schema: &[String],
+    mode: Mode,
+) -> anyhow::Result<()> {
     info!(
-        input = %args.input.display(),
+        input = %input_path.display(),
         output = %output_path.display(),
         mode = ?mode,
         columns = schema.len(),
         "starting conversion"
     );
 
-    let input = File::open(&args.input)
-        .with_context(|| format!("opening input {}", args.input.display()))?;
+    let input = File::open(input_path)
+        .with_context(|| format!("opening input {}", input_path.display()))?;
     let reader = BufReader::new(input);
 
-    let output = File::create(&output_path)
+    let output = File::create(output_path)
         .with_context(|| format!("creating output {}", output_path.display()))?;
     let csv_writer = WriterBuilder::new().from_writer(BufWriter::new(output));
 
-    let mut sampler = Sampler::new(mode, schema, csv_writer)?;
+    let mut sampler = Sampler::new(mode, schema.to_vec(), csv_writer)?;
 
     let mut fields = Vec::with_capacity(16);
     let mut lines = 0u64;

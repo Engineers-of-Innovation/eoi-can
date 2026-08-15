@@ -268,15 +268,34 @@ pub fn publish_availability(client: &mqtt::Client, online: bool) -> Result<(), m
     ))
 }
 
+/// Entities that once existed and have to be deleted from Home Assistant. Discovery
+/// configs are published retained, so dropping a row from `entities()` is not enough:
+/// the broker keeps serving the old config and HA keeps the entity forever. Publishing
+/// an empty retained payload to the same topic is what removes it.
+///
+/// Rows stay here indefinitely -- they cost one empty publish per start -- since we
+/// cannot know whether every broker that ever saw the entity has been swept.
+const RETIRED: &[(&str, Device, &str)] = &[
+    // 0x217, the rudder controller's motor NTC. A stopgap that shared the flow-out
+    // sensor's pin; motor temperature comes from the standalone node (0x219) now.
+    ("sensor", RUDDER, "rudder_motor_temperature"),
+    ("sensor", RUDDER, "rudder_motor_temperature_raw_adc"),
+];
+
+fn discovery_topic(component: &str, device_id: &str, object_id: &str) -> String {
+    format!(
+        "{}/{component}/{device_id}/{object_id}/config",
+        mqtt_settings::DISCOVERY_PREFIX,
+    )
+}
+
 pub fn publish_discovery(client: &mqtt::Client) -> Result<(), mqtt::Error> {
+    for (component, device, object_id) in RETIRED {
+        let topic = discovery_topic(component, device.id, object_id);
+        client.publish(mqtt::Message::new_retained(topic, "", mqtt::QOS_1))?;
+    }
     for entity in entities() {
-        let topic = format!(
-            "{}/{}/{}/{}/config",
-            mqtt_settings::DISCOVERY_PREFIX,
-            entity.component,
-            entity.device.id,
-            entity.object_id,
-        );
+        let topic = discovery_topic(&entity.component, entity.device.id, &entity.object_id);
         let payload = build_config(&entity).to_string();
         client.publish(mqtt::Message::new_retained(topic, payload, mqtt::QOS_1))?;
     }
@@ -1128,24 +1147,8 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
             .diagnostic(),
         );
     }
-    v.push(
-        sensor(
-            "rudder_motor_temperature",
-            "Rudder Motor Temperature",
-            "RudderController.MotorTemperature.temperature",
-        )
-        .measurement()
-        .diagnostic(),
-    );
-    v.push(
-        sensor(
-            "rudder_motor_temperature_raw_adc",
-            "Rudder Motor Temperature Raw ADC",
-            "RudderController.MotorTemperature.raw_adc",
-        )
-        .measurement()
-        .diagnostic(),
-    );
+    // No motor temperature here: the rudder controller's 0x217 is retired, see RETIRED.
+    // Motor temperature is the standalone node's, on the MOTOR device below.
 }
 
 /// The standalone motor NTC node, `0x219`. Its own device, since it is its own board
@@ -1760,12 +1763,9 @@ mod tests {
                 raw_pulses: 0,
                 raw_adc: 0,
             })),
-            EoiCanData::RudderController(RudderControllerData::MotorTemperature(
-                MotorTemperature {
-                    temperature: Some(0.0),
-                    raw_adc: 0,
-                },
-            )),
+            // No RudderController::MotorTemperature sample on purpose. The decoder still
+            // parses 0x217 so archived logs keep flattening, but nothing transmits it any
+            // more and it has no HA entity -- listing it here would fail the leaf check.
             // Height sensors
             EoiCanData::HeightSensors(HeightSensorData::FrontLeft(height_status())),
             EoiCanData::HeightSensors(HeightSensorData::FrontRight(height_status())),
@@ -1933,6 +1933,24 @@ mod tests {
             missing_in_registry,
             missing_in_json
         );
+    }
+
+    /// A retired row publishes an empty retained payload, which deletes the entity in
+    /// Home Assistant. If an object_id were live as well, whichever publish landed last
+    /// would decide whether the entity exists -- so they must stay disjoint.
+    #[test]
+    fn retired_ids_are_not_live() {
+        for (component, device, object_id) in RETIRED {
+            assert!(
+                !entities().iter().any(|e| e.component == *component
+                    && e.device.id == device.id
+                    && e.object_id == *object_id),
+                "retired object_id is still in the registry: {}/{}/{}",
+                component,
+                device.id,
+                object_id,
+            );
+        }
     }
 
     #[test]

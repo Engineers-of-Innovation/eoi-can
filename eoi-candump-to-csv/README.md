@@ -16,6 +16,9 @@ cargo run -p eoi-candump-to-csv -- some.log -d mppt:1 --interval frame -o mppt1.
 
 # Everything, 100 ms buckets
 cargo run -p eoi-candump-to-csv -- some.log -d all --interval 100ms
+
+# Batch: multiple logs at once (shell glob), one CSV beside each input
+cargo run -p eoi-candump-to-csv -- logs/candump-2026-0*.log -d all
 ```
 
 See `eoi-candump-to-csv --help` for the full flag list and the set of
