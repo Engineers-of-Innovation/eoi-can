@@ -8,9 +8,9 @@ pub use render::{draw_display, DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use core::net::Ipv4Addr;
 
 use eoi_can_decoder::{
-    BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData, GanMpptPacket, GnssData,
-    GnssDateTime, HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData,
-    ThrottleErrors, VescData,
+    BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData,
+    GanMpptPacket, GnssData, GnssDateTime, HeightSensorData, MpptChannel, MpptInfo,
+    TemperatureData, ThrottleData, ThrottleErrors, VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
 
@@ -277,6 +277,9 @@ impl DisplayData {
                     self.motor_ntc_temperature.update(ntc.temperature);
                 }
             },
+            EoiCanData::DataLogger(DataLoggerData::WifiIp(octets)) => {
+                self.ip_address.update(Ipv4Addr::from(octets));
+            }
         }
     }
 

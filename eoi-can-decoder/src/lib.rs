@@ -17,6 +17,35 @@ pub enum EoiCanData {
     HeightSensors(HeightSensorData),
     GanMppt(GanMpptData),
     Temperature(TemperatureData),
+    DataLogger(DataLoggerData),
+}
+
+#[derive(Debug)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum DataLoggerData {
+    /// The data logger's WiFi IPv4 address, octets in address order.
+    WifiIp([u8; 4]),
+}
+
+/// Serializes as the dotted string (`"WifiIp": "192.168.1.5"`) rather than an
+/// octet array, so the MQTT JSON matches the `DataLogger.WifiIp` value the
+/// bridge already publishes from its local interface query.
+impl Serialize for DataLoggerData {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        use core::fmt::Write;
+        match self {
+            DataLoggerData::WifiIp(octets) => {
+                let mut dotted = heapless::String::<15>::new();
+                write!(
+                    &mut dotted,
+                    "{}.{}.{}.{}",
+                    octets[0], octets[1], octets[2], octets[3]
+                )
+                .map_err(serde::ser::Error::custom)?;
+                serializer.serialize_newtype_variant("DataLoggerData", 0, "WifiIp", dotted.as_str())
+            }
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1004,6 +1033,12 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             minutes: *data.get(5)?,
             seconds: *data.get(6)?,
         }))),
+        0x205 => Some(EoiCanData::DataLogger(DataLoggerData::WifiIp([
+            *data.first()?,
+            *data.get(1)?,
+            *data.get(2)?,
+            *data.get(3)?,
+        ]))),
 
         MPPT_BASE_ADDRESS..MPPT_STOP_ADDRESS => {
             let mppt_id = ((id >> 4) & 0x7) as u8;
@@ -1819,5 +1854,29 @@ mod tests {
         assert!(status.error.gain_invalid);
         assert!(status.error.deadman_missing);
         assert!(status.error.impedance_high);
+    }
+
+    #[test]
+    fn data_logger_wifi_ip() {
+        // 192.168.1.5, octets in address order.
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x205).unwrap()),
+            &[0xC0, 0xA8, 0x01, 0x05],
+        );
+
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::DataLogger(DataLoggerData::WifiIp(octets)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(octets, [192, 168, 1, 5]);
+    }
+
+    #[test]
+    fn data_logger_wifi_ip_short_frame_is_ignored() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x205).unwrap()),
+            &[0xC0, 0xA8, 0x01],
+        );
+        assert!(parse_eoi_can_data(&can_frame).is_none());
     }
 }
