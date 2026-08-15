@@ -659,6 +659,7 @@ pub enum ServoFaultCause {
     HomingTimeout,
     DriverNoUartResponse,
     DriverError,
+    DriverOpenLoad,
     Unknown,
 }
 
@@ -670,6 +671,7 @@ impl From<u8> for ServoFaultCause {
             2 => Self::HomingTimeout,
             3 => Self::DriverNoUartResponse,
             4 => Self::DriverError,
+            5 => Self::DriverOpenLoad,
             _ => Self::Unknown,
         }
     }

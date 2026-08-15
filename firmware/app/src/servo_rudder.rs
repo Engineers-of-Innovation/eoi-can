@@ -1,6 +1,7 @@
 use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU16, Ordering};
 
 use defmt::*;
+use embassy_futures::join::join;
 use embassy_futures::select::{Either, Either3, select, select3};
 use embassy_stm32::Peri;
 use embassy_stm32::can::{BufferedCanSender, Frame, StandardId};
@@ -22,7 +23,9 @@ pub const SETPOINT_MAX: u16 = 2000;
 const FAILSAFE_SETPOINT: u16 = 1000;
 const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
 
-const TMC_ADDR: u8 = 0;
+// MS1 (AD0) and MS2 (AD1) are strapped to 3V3 on the board, so the driver
+// listens on UART slave address 3.
+const TMC_ADDR: u8 = 3;
 pub const TMC_BAUD: u32 = 115_200;
 const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 
@@ -41,10 +44,11 @@ const MRES_8_MICROSTEPS: u32 = 5;
 const CHOPCONF_RESET: u32 = 0x1000_0053;
 
 // StallGuard: DIAG trips when SG_RESULT < 2*SGTHRS.
-// TODO(bench): tune with the "Homing SG_RESULT" defmt logs (lower = more
-// load): pick roughly half the unloaded value so a hand-stall trips DIAG
-// reliably without false positives during normal homing.
-const SGTHRS_HOMING: u32 = 60;
+// Bench-measured (2026-08): unloaded SG_RESULT ~70 at the homing speed, so
+// trip below 34 (~half the free-running value). The previous value of 60
+// tripped at <120 and stalled instantly against the free-running 70.
+// TODO(bench): verify a hand-stall still trips DIAG reliably under real load.
+const SGTHRS_HOMING: u32 = 17;
 const TCOOLTHRS_VAL: u32 = 0xF_FFFF;
 // Ignore DIAG for the first steps of a move (StallGuard is unreliable while
 // accelerating from standstill).
@@ -103,6 +107,7 @@ enum FaultCause {
     HomingTimeout = 2,
     DriverNoUartResponse = 3,
     DriverError = 4,
+    DriverOpenLoad = 5,
 }
 
 #[derive(PartialEq)]
@@ -178,25 +183,42 @@ impl Tmc2209Uart {
 
     async fn read<R: ReadableRegister>(&mut self) -> Result<R, TmcError> {
         let request = tmc2209::read_request::<R>(TMC_ADDR);
-        self.tx
-            .write(request.bytes())
-            .await
-            .map_err(|_| TmcError::Uart)?;
-
-        // The RX line also sees our own request (single-wire UART); the
-        // Reader only syncs on replies addressed to the master.
         let deadline = Instant::now() + TMC_READ_TIMEOUT;
         let mut reader = tmc2209::Reader::default();
         let mut buffer = [0u8; 24];
+
+        // Arm RX together with TX: the reply starts only ~8 bit times after
+        // our request ends, so it must not race the RX DMA setup. The RX line
+        // also sees our own request (single-wire UART); parse_response skips
+        // it by only syncing on replies addressed to the master.
+        match select(
+            join(
+                self.rx.read_until_idle(&mut buffer),
+                self.tx.write(request.bytes()),
+            ),
+            Timer::at(deadline),
+        )
+        .await
+        {
+            Either::First((rx_result, tx_result)) => {
+                tx_result.map_err(|_| TmcError::Uart)?;
+                match rx_result {
+                    Ok(len) => {
+                        if let Some(value) = parse_response::<R>(&mut reader, &buffer[..len]) {
+                            return Ok(value);
+                        }
+                    }
+                    Err(e) => trace!("TMC2209 UART rx error: {:?}", e),
+                }
+            }
+            Either::Second(_) => return Err(TmcError::Timeout),
+        }
+
         loop {
             match select(self.rx.read_until_idle(&mut buffer), Timer::at(deadline)).await {
                 Either::First(Ok(len)) => {
-                    if let (_, Some(response)) = reader.read_response(&buffer[..len])
-                        && response.crc_is_valid()
-                        && let Ok(address) = response.reg_addr()
-                        && address == R::ADDRESS
-                    {
-                        return Ok(R::from(response.data_u32()));
+                    if let Some(value) = parse_response::<R>(&mut reader, &buffer[..len]) {
+                        return Ok(value);
                     }
                 }
                 Either::First(Err(e)) => {
@@ -205,6 +227,18 @@ impl Tmc2209Uart {
                 Either::Second(_) => return Err(TmcError::Timeout),
             }
         }
+    }
+}
+
+fn parse_response<R: ReadableRegister>(reader: &mut tmc2209::Reader, bytes: &[u8]) -> Option<R> {
+    if let (_, Some(response)) = reader.read_response(bytes)
+        && response.crc_is_valid()
+        && let Ok(address) = response.reg_addr()
+        && address == R::ADDRESS
+    {
+        Some(R::from(response.data_u32()))
+    } else {
+        None
     }
 }
 
@@ -233,17 +267,18 @@ impl Servo {
         POSITION_STEPS.store(self.position, Ordering::Relaxed);
     }
 
-    async fn configure_driver(&mut self) -> Result<(), FaultCause> {
-        let mut start_count = None;
+    async fn read_ifcnt(&mut self) -> Result<u8, FaultCause> {
         for _ in 0..3 {
             if let Ok(ifcnt) = self.tmc.read::<reg::IFCNT>().await {
-                start_count = Some(ifcnt.0 as u8);
-                break;
+                return Ok(ifcnt.0 as u8);
             }
         }
-        let Some(start_count) = start_count else {
-            return Err(FaultCause::DriverNoUartResponse);
-        };
+        warn!("TMC2209 not responding on UART (IFCNT read failed 3x)");
+        Err(FaultCause::DriverNoUartResponse)
+    }
+
+    async fn configure_driver(&mut self) -> Result<(), FaultCause> {
+        let start_count = self.read_ifcnt().await?;
 
         let mut gconf = reg::GCONF::default();
         gconf.set_pdn_disable(true);
@@ -279,17 +314,43 @@ impl Servo {
             .await
             .map_err(|_| FaultCause::DriverError)?;
 
-        match self.tmc.read::<reg::IFCNT>().await {
-            Ok(ifcnt) => {
-                let delta = (ifcnt.0 as u8).wrapping_sub(start_count);
-                if delta != 5 {
-                    warn!("TMC2209 IFCNT delta {} after 5 writes", delta);
-                    return Err(FaultCause::DriverError);
-                }
-            }
-            Err(_) => return Err(FaultCause::DriverNoUartResponse),
+        let end_count = self.read_ifcnt().await?;
+        let delta = end_count.wrapping_sub(start_count);
+        if delta != 5 {
+            warn!("TMC2209 IFCNT delta {} after 5 writes", delta);
+            return Err(FaultCause::DriverError);
         }
         Ok(())
+    }
+
+    /// Coil and StallGuard health straight from the driver. Open-load
+    /// (ola/olb) means a coil is not conducting (wiring/crimp); cs_actual
+    /// shows the current scale actually applied.
+    async fn read_driver_status(&mut self, context: &str) -> Option<reg::DRV_STATUS> {
+        match self.tmc.read::<reg::DRV_STATUS>().await {
+            Ok(s) => {
+                info!(
+                    "DRV_STATUS ({=str}): stst={} stealth={} cs_actual={} ola={} olb={} s2ga={} s2gb={} s2vsa={} s2vsb={} otpw={} ot={}",
+                    context,
+                    s.stst(),
+                    s.stealth(),
+                    s.cs_actual(),
+                    s.ola(),
+                    s.olb(),
+                    s.s2ga(),
+                    s.s2gb(),
+                    s.s2vsa(),
+                    s.s2vsb(),
+                    s.otpw(),
+                    s.ot()
+                );
+                Some(s)
+            }
+            Err(_) => {
+                warn!("DRV_STATUS ({=str}): read failed", context);
+                None
+            }
+        }
     }
 
     /// Stall-seek toward the home stop, back off, and define position 0.
@@ -308,12 +369,17 @@ impl Servo {
         self.enable.set_low();
         Timer::after_millis(10).await;
 
+        info!("DIAG before homing: {}", self.diag.is_high());
+        // Log-only: open-load flags are unreliable at standstill.
+        self.read_driver_status("pre-homing").await;
+
         self.dir.set_level(HOME_DIR_LEVEL);
         Timer::after_ticks(1).await;
 
         let budget = TRAVEL_STEPS as u32 * HOMING_BUDGET_PERCENT / 100;
         let mut stepped: u32 = 0;
         let mut blank = STALL_BLANK_STEPS;
+        let mut open_load_samples: u32 = 0;
         let mut next = Instant::now();
         loop {
             if stepped >= budget {
@@ -336,7 +402,25 @@ impl Servo {
                     Ok(sg) => info!("Homing SG_RESULT: {}", sg.get()),
                     Err(_) => warn!("SG_RESULT read failed during homing"),
                 }
-                // The read pauses stepping; re-blank so the restart does not
+                // Open-load flags can flicker; require two consecutive
+                // samples before faulting.
+                if let Ok(s) = self.tmc.read::<reg::DRV_STATUS>().await {
+                    if s.ola() || s.olb() {
+                        open_load_samples += 1;
+                        warn!(
+                            "Open load during homing (ola={} olb={}, sample {})",
+                            s.ola(),
+                            s.olb(),
+                            open_load_samples
+                        );
+                        if open_load_samples >= 2 {
+                            return Err(FaultCause::DriverOpenLoad);
+                        }
+                    } else {
+                        open_load_samples = 0;
+                    }
+                }
+                // The reads pause stepping; re-blank so the restart does not
                 // false-trigger DIAG.
                 blank = STALL_BLANK_STEPS;
                 next = Instant::now();
@@ -350,6 +434,19 @@ impl Servo {
             Timer::at(next).await;
         }
         info!("Home stop found after {} steps", stepped);
+        match self.tmc.read::<reg::SG_RESULT>().await {
+            Ok(sg) => info!("SG_RESULT at stop: {}", sg.get()),
+            Err(_) => warn!("SG_RESULT read failed at stop"),
+        }
+        // An open coil reads SG_RESULT = 0 and trips DIAG right after the
+        // blanking window — without this check that would pass as a
+        // successful home.
+        if let Some(s) = self.read_driver_status("at stop").await
+            && (s.ola() || s.olb())
+        {
+            warn!("Open load at home stop (ola={} olb={})", s.ola(), s.olb());
+            return Err(FaultCause::DriverOpenLoad);
+        }
         Timer::after_millis(50).await;
 
         self.dir.set_level(away_level());

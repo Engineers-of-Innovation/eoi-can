@@ -120,8 +120,9 @@ fn read_pulses<T: GeneralInstance4Channel>(
 }
 
 fn pulses_to_milliliter_per_minute(pulses_per_s: u16) -> u16 {
-    let ml = (pulses_per_s as u32 * ML_PER_MIN_NUM) / ML_PER_MIN_DEN;
-    ml.min(u16::MAX as u32) as u16
+    // u64: a noisy/floating input can count far past the ~2284 pulses/s where u32 overflows.
+    let ml = (pulses_per_s as u64 * ML_PER_MIN_NUM as u64) / ML_PER_MIN_DEN as u64;
+    ml.min(u16::MAX as u64) as u16
 }
 
 struct NtcParams {
@@ -131,8 +132,13 @@ struct NtcParams {
     pub b_k: f32,
 }
 
+// Readings within this many counts of either rail mean an open or shorted NTC: both dividers
+// in use stay well inside this band over their full temperature range (the 10k/10k motor NTC
+// reads ~3280 counts at -40 °C and ~80 counts at +150 °C).
+const NTC_RAIL_MARGIN: u16 = 16;
+
 fn ntc_raw_to_centidegrees(raw: u16, p: &NtcParams) -> i16 {
-    if raw == 0 || raw >= ADC_MAX {
+    if !(NTC_RAIL_MARGIN..ADC_MAX - NTC_RAIL_MARGIN).contains(&raw) {
         return TEMP_INVALID_CDEG;
     }
     let r_ntc = p.top_ohms * (raw as f32) / ((ADC_MAX - raw) as f32);
