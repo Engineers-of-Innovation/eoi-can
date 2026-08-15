@@ -580,6 +580,10 @@ pub struct FlowSensor {
     pub raw_adc: u16,
 }
 
+/// Retired. The rudder controller sent this on `0x217` while its motor NTC borrowed the
+/// flow-out sensor's pin; the flow-out sensor has that pin back and motor temperature
+/// comes from [`MotorNtc`] (`0x219`) instead. Kept decodable for the archived candump
+/// logs from that period -- nothing transmits it any more.
 #[derive(Debug, Serialize, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct MotorTemperature {
@@ -742,8 +746,9 @@ pub enum TemperatureData {
 }
 
 /// The standalone motor NTC node, `0x219` -- an STM32G491 on CANable 2.5 hardware
-/// with a 10 kΩ NTC, transmit only, once per second. It replaces reading the motor
-/// NTC through the VESC or the rudder controller's `0x217`.
+/// with a 10 kΩ NTC, transmit only, once per second. It has replaced reading the motor
+/// NTC through the VESC, whose own reading is broken, and through the rudder controller's
+/// `0x217`, which was a stopgap and is retired.
 ///
 /// `temperature` is `None` when the frame carried the node's invalid sentinel, which
 /// it always does for an open sensor, a short, or a failed acquisition. `OutOfRange`
@@ -861,6 +866,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x216 => Some(EoiCanData::RudderController(
             RudderControllerData::FlowSensorOut(parse_flow_sensor(data)?),
         )),
+        // Retired, see `MotorTemperature`. Still decoded so archived logs replay.
         0x217 => {
             let raw_temperature = bytes_le_to_i16(data.get(0..2)?)?;
             Some(EoiCanData::RudderController(

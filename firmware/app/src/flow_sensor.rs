@@ -29,10 +29,10 @@ const FLOW_NTC: NtcParams = NtcParams {
     t0_k: 298.15,
     b_k: 3950.0,
 };
-pub(crate) const ADC_MAX: u16 = 4095;
+const ADC_MAX: u16 = 4095;
 // Returned when the NTC reads as open or shorted, so consumers can flag the sensor as bad
 // without seeing an absurd temperature.
-pub(crate) const TEMP_INVALID_CDEG: i16 = i16::MIN;
+const TEMP_INVALID_CDEG: i16 = i16::MIN;
 
 // 1 Hz broadcast.
 const TICK_PERIOD_MS: u64 = 1000;
@@ -124,14 +124,14 @@ fn pulses_to_milliliter_per_minute(pulses_per_s: u16) -> u16 {
     ml.min(u16::MAX as u32) as u16
 }
 
-pub(crate) struct NtcParams {
+struct NtcParams {
     pub top_ohms: f32,
     pub r0_ohms: f32,
     pub t0_k: f32,
     pub b_k: f32,
 }
 
-pub(crate) fn ntc_raw_to_centidegrees(raw: u16, p: &NtcParams) -> i16 {
+fn ntc_raw_to_centidegrees(raw: u16, p: &NtcParams) -> i16 {
     if raw == 0 || raw >= ADC_MAX {
         return TEMP_INVALID_CDEG;
     }
