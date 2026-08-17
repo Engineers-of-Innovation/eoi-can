@@ -27,6 +27,11 @@ struct Cli {
 }
 
 /// The boards on the bus. Names match the firmware binary names.
+///
+/// Deliberately no `FoilTuning`: no bootloader is deployed on that board yet, so
+/// nothing answers on its address and offering it as a `--board` would only buy a
+/// timeout. Its [`AppType`] still exists, and `board_name` still renders it, so
+/// `scan` and `flash <elf>` report it correctly once one is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Board {
     RudderController,
@@ -50,6 +55,7 @@ fn board_name(t: AppType) -> &'static str {
         AppType::RudderController => "rudder-controller",
         AppType::HeightSensorController => "height-sensor-controller",
         AppType::Dashboard => "dashboard",
+        AppType::FoilTuning => "foiling",
     }
 }
 

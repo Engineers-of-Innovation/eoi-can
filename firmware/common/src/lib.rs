@@ -6,7 +6,7 @@ pub mod can;
 pub mod clock;
 pub mod config;
 pub mod cooling_pump;
-pub mod dashboard;
+pub mod display;
 pub mod flow_sensor;
 pub mod height_sensor;
 pub mod rudder_can;

@@ -17,6 +17,13 @@
 # The flash tool picks its target from the ELF's app type, so each ELF can
 # only ever end up on its own board. Boards that fail to flash are reported
 # at the end; the script keeps going so the remaining boards still update.
+#
+# The foiling display is deliberately absent: it is an STM32L476RG in a separate
+# crate (`app-foiling`) with no bootloader deployed, so it is flashed over SWD.
+# Build it with `cargo build --release -p eoi-firmware-foiling`, on its own --
+# building it in the same cargo invocation as these three fails with "Multiple
+# stm32xx Cargo features enabled", because the chip is a Cargo feature and the
+# two crates name different ones.
 
 set -e
 
@@ -58,9 +65,9 @@ cd "$(dirname "$0")"
 
 # Build firmware binaries (host cargo, default target = thumbv7em-none-eabihf).
 if [[ ${#boards[@]} -eq 1 ]]; then
-    cargo build --release --bin "${boards[0]}" --features bootloader
+    cargo build --release -p eoi-firmware --bin "${boards[0]}" --features bootloader
 else
-    cargo build --release --bins --features bootloader
+    cargo build --release -p eoi-firmware --bins --features bootloader
 fi
 
 # Flash each board over CAN; keep going if one fails.

@@ -1,0 +1,48 @@
+[package]
+name = "eoi-firmware-common"
+version = "0.1.0"
+edition = "2024"
+
+[build-dependencies]
+built = { version = "0.8", features = [ "git2" ] }
+
+[dependencies]
+# NOTE: deliberately no `stm32xxx` chip feature here.
+#
+# The fleet is not on one part any more -- the display boards are moving to
+# STM32L476RG for supply reasons while the rudder and height-sensor boards stay
+# on STM32L471RG -- and a Cargo feature cannot differ per binary within a
+# package. So each *application* crate names its own chip, and Cargo's feature
+# unification applies it to this crate's copy of embassy-stm32.
+#
+# Two consequences, both intended:
+# - `cargo build -p eoi-firmware-common` on its own fails with embassy's
+#   "No stm32xx Cargo feature enabled". Build an application crate instead.
+# - Building two application crates in one invocation fails with "Multiple
+#   stm32xx Cargo features enabled". Use one `-p` per crate; that is why the
+#   workspace sets `default-members` and `build-and-update-over-can.sh` runs a
+#   separate cargo invocation per MCU.
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "defmt", "memory-x", "unstable-pac", "time-driver-tim4", "exti" ] }
+embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "platform-cortex-m", "executor-thread", "defmt" ] }
+embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0" }
+embassy-time = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0", features = [ "defmt-timestamp-uptime", "tick-hz-32_768" ] }
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "defmt" ] }
+cortex-m = { version = "0.7.7", features = [ "critical-section-single-core" ] }
+defmt = "0.3.10"
+tmc2209 = "0.2.2"
+nb = "1.1.0"
+static_cell = "2.1.1"
+rmodbus = { version = "0.12", default-features = false, features = [ "heapless" ] }
+heapless = "0.9"
+libm = "0.2"
+eoi-boot-api = { path = "../boot-api" }
+eoi-can-decoder = { path = "../../eoi-can-decoder", features = [ "defmt" ] }
+embedded-can = "0.4.1"
+draw-display = { path = "../../draw-display", default-features = false, features = [ "defmt" ] }
+# `graphics` is what provides `Display5in79`. `epd2in13_v3` is unrelated to this
+# panel but not optional: every display module is compiled unconditionally, and
+# epd2in13_v2 has a `compile_error!` unless one of its two LUT features is on.
+# Only `linux-dev` (examples-only) is dropped from the defaults.
+epd-waveshare = { git = "https://github.com/fromeijn/epd-waveshare", rev = "6ec511e9656fad59c2256713ed1ecb451e346ddb", default-features = false, features = [ "graphics", "epd2in13_v3" ] }
+embedded-graphics = "0.8.1"
+embedded-hal-bus = { version = "0.3", features = [ "async" ] }

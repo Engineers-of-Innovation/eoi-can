@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["app", "boot", "boot-api"]
+members = ["app", "app-foiling", "boot", "boot-api", "build-support", "common"]
 exclude = ["flash-tool"]
 default-members = ["app"]
 
