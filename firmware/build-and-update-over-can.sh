@@ -18,12 +18,18 @@
 # only ever end up on its own board. Boards that fail to flash are reported
 # at the end; the script keeps going so the remaining boards still update.
 #
-# The foiling display is deliberately absent: it is an STM32L476RG in a separate
-# crate (`app-foiling`) with no bootloader deployed, so it is flashed over SWD.
-# Build it with `cargo build --release -p eoi-firmware-foiling`, on its own --
-# building it in the same cargo invocation as these three fails with "Multiple
-# stm32xx Cargo features enabled", because the chip is a Cargo feature and the
-# two crates name different ones.
+# The foiling display is deliberately absent. It has no bootloader deployed, so
+# it is flashed over SWD from an image linked at 0x08000000:
+#
+#     cargo build --release --bin foiling      # note: no --features bootloader
+#
+# `bootloader` is a crate-wide feature, so it cannot be on for some binaries and
+# off for others in one invocation. That is why the three boards below are named
+# explicitly instead of using `--bins`: `--bins --features bootloader` would also
+# produce a `foiling` image at the bootloader offset, which is wrong for that
+# board and indistinguishable from a good one by eye. The two builds also share a
+# target directory, so each overwrites the other's `foiling` — rebuild it after
+# running this script.
 
 set -e
 
@@ -64,11 +70,13 @@ cd "$(dirname "$0")"
 (cd flash-tool && cargo build --release)
 
 # Build firmware binaries (host cargo, default target = thumbv7em-none-eabihf).
-if [[ ${#boards[@]} -eq 1 ]]; then
-    cargo build --release -p eoi-firmware --bin "${boards[0]}" --features bootloader
-else
-    cargo build --release -p eoi-firmware --bins --features bootloader
-fi
+# Every board is named explicitly -- never `--bins` -- so the bootloader-offset
+# build can never sweep up the SWD-flashed `foiling` image. See the header.
+bin_args=()
+for board in "${boards[@]}"; do
+    bin_args+=(--bin "${board}")
+done
+cargo build --release -p eoi-firmware --features bootloader "${bin_args[@]}"
 
 # Flash each board over CAN; keep going if one fails.
 failed=()

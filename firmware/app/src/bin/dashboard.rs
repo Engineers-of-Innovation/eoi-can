@@ -7,16 +7,16 @@ use embassy_stm32::can::{
 };
 use embassy_stm32::peripherals::{self, CAN1};
 use embassy_stm32::{bind_interrupts, dma};
-use eoi_firmware_common::app_type::AppType;
-use eoi_firmware_common::clock::clock_config;
-use eoi_firmware_common::declare_app_type;
-use eoi_firmware_common::display::run_display;
+use eoi_firmware::app_type::AppType;
+use eoi_firmware::clock::clock_config;
+use eoi_firmware::declare_app_type;
+use eoi_firmware::display::run_display;
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::Dashboard);
 
 // Has to stay in the binary: `bind_interrupts!` emits `#[no_mangle]` handlers,
-// and one copy in `eoi-firmware-common` would collide with the `CAN1_*` handlers
+// and one copy in the library would collide with the `CAN1_*` handlers
 // the rudder and height-sensor binaries declare for themselves.
 bind_interrupts!(struct Irqs {
     CAN1_TX  => TxInterruptHandler<CAN1>;

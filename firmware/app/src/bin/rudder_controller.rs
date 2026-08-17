@@ -14,14 +14,14 @@ use embassy_stm32::{
     usart,
 };
 use embassy_time::Timer;
-use eoi_firmware_common::app_type::AppType;
-use eoi_firmware_common::can::init_can;
-use eoi_firmware_common::clock::clock_config;
-use eoi_firmware_common::flow_sensor;
-use eoi_firmware_common::rudder_can::rudder_can_rx_task;
-use eoi_firmware_common::steering_angle;
-use eoi_firmware_common::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
-use eoi_firmware_common::{config, cooling_pump, declare_app_type, servo_rudder};
+use eoi_firmware::app_type::AppType;
+use eoi_firmware::can::init_can;
+use eoi_firmware::clock::clock_config;
+use eoi_firmware::flow_sensor;
+use eoi_firmware::rudder_can::rudder_can_rx_task;
+use eoi_firmware::steering_angle;
+use eoi_firmware::temperature::{CAN_ID_TEMPERATURE_RUDDER_CONTROLLER, temperature_task};
+use eoi_firmware::{config, cooling_pump, declare_app_type, servo_rudder};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::RudderController);
@@ -57,7 +57,7 @@ async fn heartbeat_task(
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
     info!("Rudder Controller");
-    eoi_firmware_common::build_info::log();
+    eoi_firmware::build_info::log();
 
     let green_led = Output::new(p.PC1, Level::High, Speed::Low);
     let red_led = Output::new(p.PC2, Level::High, Speed::Low);

@@ -3,10 +3,21 @@ name = "eoi-firmware"
 version = "0.1.0"
 edition = "2024"
 
-# The STM32L471RG boards: rudder controller, height sensor controller, and the
-# helm dashboard. The foiling display is a separate crate because it is an
-# STM32L476RG and the chip feature cannot differ per binary -- see
-# `../common/Cargo.toml`.
+# One crate, one chip feature, four boards.
+#
+# The foiling display board is an STM32L476RG where the rest of the fleet is an
+# STM32L471RG, but the two are compatible enough to share a compiled image: the
+# whole difference in `stm32-metapac`'s generated PAC is the USB_OTG_FS and LCD
+# register blocks plus their two interrupt-table entries (67 and 78). Every base
+# address, RCC enable bit, DMA channel and request number, and every interrupt
+# number these binaries bind is identical, and both parts have 1 MB of flash.
+#
+# So everything is built for `stm32l471rg`, the *subset*, and the foiling image
+# runs unmodified on the L476. Building for the subset is what makes this safe
+# rather than lucky: the PAC cannot expose USB or the LCD, so no binary can
+# accidentally depend on a peripheral the L471 boards lack, and the two vector
+# slots that stay `_reserved` belong to peripherals whose clocks can never be
+# enabled. See `docs/crate-layout.md`.
 
 [[bin]]
 name = "height-sensor-controller"
@@ -20,8 +31,12 @@ path = "src/bin/rudder_controller.rs"
 name = "dashboard"
 path = "src/bin/dashboard.rs"
 
+[[bin]]
+name = "foiling"
+path = "src/bin/foiling.rs"
+
 [build-dependencies]
-eoi-build-support = { path = "../build-support" }
+built = { version = "0.8", features = [ "git2" ] }
 
 [features]
 default = [  ]
@@ -30,29 +45,30 @@ default = [  ]
 bootloader = [  ]
 
 [dependencies]
-eoi-firmware-common = { path = "../common" }
-# This is where the chip is chosen for these three boards. Cargo unifies it onto
-# `eoi-firmware-common`'s copy of embassy-stm32, which names no chip itself.
-embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "stm32l471rg", "defmt", "memory-x", "unstable-pac", "time-driver-tim4", "exti" ] }
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "platform-cortex-m", "executor-thread", "defmt" ] }
+embassy-stm32 = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "stm32l471rg", "defmt", "memory-x", "unstable-pac", "time-driver-tim4", "exti" ] }
 embassy-futures = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0" }
 embassy-time = { git = "https://github.com/embassy-rs/embassy.git", tag = "embassy-stm32-v0.6.0", features = [ "defmt-timestamp-uptime", "tick-hz-32_768" ] }
-embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "defmt" ] }
 panic-probe = { version = "1.0.0", features = [ "print-defmt" ] }
 cortex-m = { version = "0.7.7", features = [ "critical-section-single-core" ] }
 cortex-m-rt = "0.7.0"
 defmt = "0.3.10"
 defmt-rtt = "0.4"
+tmc2209 = "0.2.2"
+nb = "1.1.0"
+embassy-sync = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = [ "defmt" ] }
 static_cell = "2.1.1"
+rmodbus = { version = "0.12", default-features = false, features = [ "heapless" ] }
 heapless = "0.9"
+libm = "0.2"
 eoi-boot-api = { path = "../boot-api" }
 eoi-can-decoder = { path = "../../eoi-can-decoder", features = [ "defmt" ] }
 embedded-can = "0.4.1"
 draw-display = { path = "../../draw-display", default-features = false, features = [ "defmt" ] }
+# `graphics` is what provides `Display5in79`. `epd2in13_v3` is unrelated to this
+# panel but not optional: every display module is compiled unconditionally, and
+# epd2in13_v2 has a `compile_error!` unless one of its two LUT features is on.
+# Only `linux-dev` (examples-only) is dropped from the defaults.
 epd-waveshare = { git = "https://github.com/fromeijn/epd-waveshare", rev = "6ec511e9656fad59c2256713ed1ecb451e346ddb", default-features = false, features = [ "graphics", "epd2in13_v3" ] }
 embedded-graphics = "0.8.1"
 embedded-hal-bus = { version = "0.3", features = [ "async" ] }
-rmodbus = { version = "0.12", default-features = false, features = [ "heapless" ] }
-tmc2209 = "0.2.2"
-nb = "1.1.0"
-libm = "0.2"
