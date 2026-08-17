@@ -3,7 +3,9 @@
 mod render;
 mod time;
 
-pub use render::{draw_display, DISPLAY_HEIGHT, DISPLAY_WIDTH};
+pub use render::dashboard::draw_display;
+pub use render::foiling::draw_foiling;
+pub use render::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 use core::net::Ipv4Addr;
 
@@ -18,6 +20,86 @@ const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Which screen to draw.
+///
+/// Both boards run the same decode pipeline into the same [`DisplayData`] and
+/// differ only in the layout they render it with, so the choice is one value
+/// rather than two code paths: a firmware bin fixes it at compile time, and the
+/// simulator and framebuffer take it from `--layout` so a screen can be worked
+/// on without flashing anything.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub enum Layout {
+    /// The helm dashboard: speed, power, temperatures, times.
+    #[default]
+    Dashboard,
+    /// Foiling trim and tuning parameters.
+    Foiling,
+}
+
+impl Layout {
+    /// Every layout, for a front-end to list in its `--help`.
+    pub const ALL: [Self; 2] = [Self::Dashboard, Self::Foiling];
+
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Dashboard => "dashboard",
+            Self::Foiling => "foiling",
+        }
+    }
+
+    pub fn draw<D, C>(self, display: &mut D, data: &DisplayData) -> Result<(), D::Error>
+    where
+        D: embedded_graphics::prelude::DrawTarget<Color = C>,
+        C: embedded_graphics::prelude::PixelColor
+            + From<embedded_graphics::pixelcolor::BinaryColor>,
+    {
+        match self {
+            Self::Dashboard => draw_display(display, data),
+            Self::Foiling => draw_foiling(display, data),
+        }
+    }
+}
+
+impl core::fmt::Display for Layout {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.name())
+    }
+}
+
+/// The name was not one of [`Layout::ALL`].
+///
+/// Implements [`core::error::Error`] so clap's `FromStr` value parser accepts
+/// [`Layout`] directly, without the front-ends each wrapping it in a local enum.
+#[derive(Debug)]
+pub struct UnknownLayout;
+
+impl core::error::Error for UnknownLayout {}
+
+impl core::fmt::Display for UnknownLayout {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "expected one of")?;
+        for (index, layout) in Layout::ALL.iter().enumerate() {
+            write!(f, "{} {layout}", if index == 0 { "" } else { "," })?;
+        }
+        Ok(())
+    }
+}
+
+impl core::str::FromStr for Layout {
+    type Err = UnknownLayout;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::ALL
+            .into_iter()
+            .find(|layout| layout.name() == s)
+            .ok_or(UnknownLayout)
+    }
+}
 
 mod built_info {
     // The file has been placed there by the build script.

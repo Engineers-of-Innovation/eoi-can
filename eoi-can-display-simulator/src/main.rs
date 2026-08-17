@@ -21,6 +21,10 @@ struct Args {
     /// CAN interface
     #[arg(short, long, default_value_t = String::from("vcan0"))]
     can_interface: String,
+
+    /// Screen layout to draw: dashboard or foiling
+    #[arg(short, long, default_value_t = draw_display::Layout::default())]
+    layout: draw_display::Layout,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -48,6 +52,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
     register_tracing_subscriber(LevelFilter::DEBUG);
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
+    info!("Layout: {}", args.layout);
 
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
@@ -89,13 +94,16 @@ async fn main() -> Result<(), core::convert::Infallible> {
     ));
     let output_settings = OutputSettingsBuilder::new().scale(1).max_fps(10).build();
     let mut window = Window::new(
-        "Engineers of Innovation CAN Display Simulator",
+        &format!(
+            "Engineers of Innovation CAN Display Simulator -- {}",
+            args.layout
+        ),
         &output_settings,
     );
 
     let mut display_data = draw_display::DisplayData::default();
 
-    draw_display::draw_display(&mut display, &display_data).unwrap();
+    args.layout.draw(&mut display, &display_data).unwrap();
 
     tokio::time::sleep(Duration::from_millis(1000)).await; // load CAN data
     let mut last_time_updated_display = Instant::now() - Duration::from_secs(100);
@@ -125,7 +133,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 display_data.ip_address.update(ip);
             }
 
-            draw_display::draw_display(&mut display, &display_data).unwrap();
+            args.layout.draw(&mut display, &display_data).unwrap();
             window.update(&display);
         }
 
