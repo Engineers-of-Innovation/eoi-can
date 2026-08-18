@@ -98,6 +98,19 @@ cd eoi-can-display-simulator
 cargo run -- -ccan0
 ```
 
+The simulator draws either screen with `--layout dashboard|foiling`. The foiling
+screen has two ways to show values without a boat:
+
+```sh
+# Values invented locally -- no bus needed at all, so this works anywhere.
+cargo run -p eoi-can-display-simulator -- --layout foiling --demo
+
+# Values over a real bus, from a stand-in for the flight controller. Exercises
+# the whole path: 0x261 frames -> decoder -> layout.
+cargo run -p eoi-can-display-simulator -- --layout foiling &
+support/send-foil-params.py vcan0
+```
+
 For firmware or embedded targets, see the specific subproject's README or source for details on flashing or running on hardware.
 
 ## Build and send script
@@ -111,6 +124,11 @@ The `support/` directory contains useful shell scripts and systemd service files
 - `install.sh` — Installs systemd services
 - `status.sh` — Checks service status
 - `auto-poweroff.sh` — Power management script
+- `build-fonts.py` — Rebuilds the display font blobs (see `draw-display/fonts/README.md`)
+- `export-foiling-params.py` — Regenerates `FOILING_PARAMETERS.{md,csv}`, the foiling
+  screen's hotkey and cursor map, for the datalogger's tuning code
+- `send-foil-params.py` — Broadcasts a foil parameter table on CAN, standing in for
+  the flight controller so the foiling screen can be driven without a boat
 
 To install services (run this on the target, not your computer):
 

@@ -288,6 +288,7 @@ plex_font!(PlexNet58, "plex_net58_tn.u8g2font");
 plex_font!(PlexBig49, "plex_big49_tn.u8g2font");
 plex_font!(PlexMid30, "plex_mid30_tn.u8g2font");
 plex_font!(PlexSmall14, "plex_small14_tf.u8g2font");
+plex_font!(PlexSmall12, "plex_small12_tf.u8g2font");
 
 /// Net power, the left column's headline.
 const FONT_NET: FontRenderer = FontRenderer::new::<PlexNet58>();
@@ -295,6 +296,11 @@ const FONT_NET: FontRenderer = FontRenderer::new::<PlexNet58>();
 const FONT_BIG: FontRenderer = FontRenderer::new::<PlexBig49>();
 const FONT_MID: FontRenderer = FontRenderer::new::<PlexMid30>();
 const FONT_SMALL: FontRenderer = FontRenderer::new::<PlexSmall14>();
+/// Two points smaller, for the foiling screen: four tables abreast need the width
+/// back, and it is a screen read leaning in rather than at a glance.
+const FONT_TINY: FontRenderer = FontRenderer::new::<PlexSmall12>();
+/// Cap height of [`FONT_TINY`], pinned by `font_metrics_match_their_consts`.
+const TINY_CAP_H: i32 = 12;
 
 /// Offset applied to the GNSS (UTC) time for display, in hours.
 const TIME_OFFSET_HOURS: u8 = 2;
@@ -614,17 +620,19 @@ mod tests {
             "dot ink is {dot}px, wider than the {SPEED_DOT_W}px reserved for it"
         );
 
-        let cap = FONT_SMALL
-            .get_rendered_dimensions("T", Point::zero(), VerticalPosition::Center)
-            .unwrap()
-            .bounding_box
-            .expect("cap renders")
-            .size
-            .height as i32;
-        assert_eq!(
-            cap, SMALL_CAP_H,
-            "FONT_SMALL cap height changed; update SMALL_CAP_H"
-        );
+        for (name, font, expected) in [
+            ("FONT_SMALL", &FONT_SMALL, SMALL_CAP_H),
+            ("FONT_TINY", &FONT_TINY, TINY_CAP_H),
+        ] {
+            let cap = font
+                .get_rendered_dimensions("T", Point::zero(), VerticalPosition::Center)
+                .unwrap()
+                .bounding_box
+                .expect("cap renders")
+                .size
+                .height as i32;
+            assert_eq!(cap, expected, "{name} cap height changed");
+        }
 
         // Glyph advances that position a neighbour: the minus that widens a
         // reserved field, the percent and unit that hang off a value, and the

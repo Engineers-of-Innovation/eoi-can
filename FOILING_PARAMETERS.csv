@@ -1,0 +1,60 @@
+key,column,col_index,row,label,group,param,index,min,max,step_fine,step_coarse,locked_in_flight,decimals,action
+P,Pitch,0,1,RATE_P,AXIS,PTCH_RATE_P,16,0.02,8,0.02,0.1,,2,adjust
+P,Roll,1,1,RATE_P,AXIS,RLL_RATE_P,1,0.02,2,0.005,0.02,,2,adjust
+I,Pitch,0,2,RATE_I,AXIS,PTCH_RATE_I,17,0,8,0.02,0.1,,2,adjust
+I,Roll,1,2,RATE_I,AXIS,RLL_RATE_I,2,0,2,0.005,0.02,,2,adjust
+D,Pitch,0,3,RATE_D,AXIS,PTCH_RATE_D,18,0,0.5,0.001,0.005,,3,adjust
+D,Roll,1,3,RATE_D,AXIS,RLL_RATE_D,3,0,0.5,0.001,0.005,,3,adjust
+F,Pitch,0,4,RATE_FF,AXIS,PTCH_RATE_FF,19,0,4,0.01,0.05,,2,adjust
+F,Roll,1,4,RATE_FF,AXIS,RLL_RATE_FF,4,0,3,0.01,0.05,,2,adjust
+M,Pitch,0,5,RATE_IMAX,AXIS,PTCH_RATE_IMAX,20,0,40,0.1,0.5,,1,adjust
+M,Roll,1,5,RATE_IMAX,AXIS,RLL_RATE_IMAX,5,0,30,0.1,0.5,,1,adjust
+C,Pitch,0,6,TCONST,AXIS,PTCH2SRV_TCONST,21,0.1,2,0.05,0.1,,2,adjust
+C,Roll,1,6,TCONST,AXIS,RLL2SRV_TCONST,6,0.1,2,0.05,0.1,,2,adjust
+R,Pitch,0,7,RMAX,AXIS,PTCH2SRV_RMAX_UP+PTCH2SRV_RMAX_DN,22+23,0,180,5,15,,0,adjust
+R,Roll,1,7,RMAX,AXIS,RLL2SRV_RMAX,7,0,180,5,15,,0,adjust
+L,Pitch,0,8,LIMIT,AXIS,PTCH_LIM_MAX_DEG+PTCH_LIM_MIN_DEG,25+26,-10,10,1,5,yes,0,adjust
+L,Roll,1,8,LIMIT,AXIS,ROLL_LIMIT_DEG,8,5,20,1,5,yes,0,adjust
+T,Pitch,0,9,FLT_T,AXIS,PTCH_RATE_FLTT,27,0,100,1,5,,0,adjust
+T,Roll,1,9,FLT_T,AXIS,RLL_RATE_FLTT,9,0,100,1,5,,0,adjust
+E,Pitch,0,10,FLT_E,AXIS,PTCH_RATE_FLTE,28,0,100,1,5,,0,adjust
+E,Roll,1,10,FLT_E,AXIS,RLL_RATE_FLTE,10,0,100,1,5,,0,adjust
+G,Pitch,0,11,FLT_D,AXIS,PTCH_RATE_FLTD,29,0,100,1,5,,0,adjust
+G,Roll,1,11,FLT_D,AXIS,RLL_RATE_FLTD,11,0,100,1,5,,0,adjust
+S,Pitch,0,12,SMAX,AXIS,PTCH_RATE_SMAX,30,0,200,5,20,,0,adjust
+S,Roll,1,12,SMAX,AXIS,RLL_RATE_SMAX,12,0,200,5,20,,0,adjust
+X,Pitch,0,13,RLL>PTCH,AXIS,PTCH2SRV_RLL,24,0,1.5,0.01,0.05,,2,adjust
+X,Roll,1,13,RLL>PTCH,AXIS,,,,,,,,2,skip
+p,Mid,2,1,KP,HEIGHT,HYD_KP,32,0,2000,10,50,,0,adjust
+k,Mid,2,2,KI,HEIGHT,HYD_KI,33,0,500,5,20,,0,adjust
+d,Mid,2,3,KD,HEIGHT,HYD_KD,34,0,2000,10,50,,0,adjust
+h,Mid,2,4,IMAX,HEIGHT,HYD_IMAX,35,0,500,10,50,,0,adjust
+t,Mid,2,5,TARGET,HEIGHT,HYD_TARGET,36,0,1,0.01,0.05,,2,adjust
+g,Mid,2,6,CMD,HEIGHT,HYD_CMDMAX+HYD_CMDMIN,52+53,-8,5,0.1,0.5,,1,adjust
+b,Mid,2,7,ARM,HEIGHT,HYD_ARM,39,0,3.8,0.05,0.2,,2,adjust
+K,Mid,2,9,RKP,REAR,HYD_RKP,54,0.15,1.2,0.02,0.1,,2,adjust
+W,Mid,2,10,RSCALE,REAR,HYD_RSCALE,55,0.5,1.2,0.02,0.1,,2,adjust
+Y,Mid,2,11,RSCHED,REAR,HYD_RSCHED,56,0,1200,5,25,,0,adjust
+V,Mid,2,12,FRNTFF,REAR,HYD_FRNTFF,57,0,0.5,0.01,0.05,,2,adjust
+N,Right,3,1,ENABLE,TURN,TRN_ENABLE,40,0,1,1,1,,0,adjust
+U,Right,3,2,ON,TURN,TRN_ON,41,5,60,1,5,,0,adjust
+A,Right,3,3,FULL,TURN,TRN_FULL,42,10,100,1,5,,0,adjust
+Z,Right,3,4,MAX,TURN,TRN_MAX,43,0,20,0.5,2,,1,adjust
+H,Right,3,5,RATE,TURN,TRN_RATE,44,1,20,0.5,2,,1,adjust
+J,Right,3,6,REV,TURN,TRN_REV,45,0,1,1,1,yes,0,adjust
+y,Right,3,8,MODE,MODE,SCR_USER1,48,0,1,1,1,yes,0,adjust
+q,Right,3,9,TEST_P,MODE,SCR_USER2,49,-10,10,0.5,1,,1,adjust
+f,Right,3,10,TEST_R,MODE,SCR_USER3,50,-20,20,1,5,,1,adjust
+B,Right,3,11,JOG,MODE,SCR_USER4,51,0,2100,10,50,yes,0,adjust
+Q,Right,3,12,SPEED,GLOBAL,SCALING_SPEED,31,4,15,0.5,1,,1,adjust
+1,Slot,4,1,config 1,CONFIG,,,,,,,,,short_restore;long_store
+2,Slot,4,2,config 2,CONFIG,,,,,,,,,short_restore;long_store
+3,Slot,4,3,config 3,CONFIG,,,,,,,,,short_restore;long_store
+4,Slot,4,4,config 4,CONFIG,,,,,,,,,short_restore;long_store
+5,Slot,4,5,config 5,CONFIG,,,,,,,,,short_restore;long_store
+6,Slot,4,6,config 6,CONFIG,,,,,,,,,short_restore;long_store
+7,Slot,4,7,config 7,CONFIG,,,,,,,,,short_restore;long_store
+8,Slot,4,8,config 8,CONFIG,,,,,,,,,short_restore;long_store
+9,Slot,4,9,config 9,CONFIG,,,,,,,,,short_restore;long_store
+~,Slot,4,10,undo,CONFIG,,,,,,,,,undo
+0,Slot,4,11,factory,CONFIG,,,,,,,,,factory_reset

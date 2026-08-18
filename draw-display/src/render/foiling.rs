@@ -5,8 +5,13 @@
 //!
 //! Four regions tile the full width: the axis rate loops on the left with a
 //! column per axis, the height and rear loops next, then turn/mode/global, then
-//! the config slots hard against the right edge. A status line runs along the
-//! bottom row, in the space the first three tables leave free.
+//! the config slots hard against the right edge. The status line sits in the
+//! bottom-right corner, off the row grid.
+//!
+//! The block is parked against the top edge -- the heading row's ink starts on
+//! y=0 -- because the panel is white past its active area, so text on the edge
+//! reads as a margin rather than as clipping. What that frees pays for the gap
+//! above the `Rear` and `Mode` headings and for the status line's own baseline.
 //!
 //! Three ideas do the heavy lifting:
 //!
@@ -44,13 +49,23 @@ struct Row {
     hotkey: &'static str,
     label: &'static str,
     decimals: usize,
+    /// Drawn after the value, empty for the many parameters that are pure gains
+    /// or ratios. A blank slot rather than a shifted value: the digits have to go
+    /// on lining up down the column whether their neighbours carry a unit or not.
+    unit: &'static str,
 }
 
-const fn row(hotkey: &'static str, label: &'static str, decimals: usize) -> Row {
+const fn row(
+    hotkey: &'static str,
+    label: &'static str,
+    decimals: usize,
+    unit: &'static str,
+) -> Row {
     Row {
         hotkey,
         label,
         decimals,
+        unit,
     }
 }
 
@@ -65,25 +80,44 @@ struct Block {
     heading: bool,
 }
 
+/// Extra space above a stacked column's second and later blocks.
+///
+/// On the row grid alone a `Rear` or `Mode` heading sits one pitch below the last
+/// row of the block above, which reads as another entry rather than as a new
+/// table. This offsets everything from the heading down, so the gap lands where
+/// the eye needs it. Paid for by [`BLOCK_TOP`] moving the whole grid up.
+const SECTION_GAP: i32 = 6;
+
+impl Block {
+    /// Vertical offset applied to this block, heading included.
+    const fn y_offset(&self) -> i32 {
+        if self.first_row > 1 {
+            SECTION_GAP
+        } else {
+            0
+        }
+    }
+}
+
 /// The axis rate loops. `RMAX` and `LIMIT` each collapse an up/down pair.
 ///
 /// Labels keep the `RATE_` prefix the real parameters carry. Dropping it frees
 /// 14px, but leaves rows reading `P  P` and a status line saying "PITCH P
 /// increased", so the width comes out of `FIELD_GAP` instead.
 const AXIS: [Row; 13] = [
-    row("P", "RATE_P", 2),
-    row("I", "RATE_I", 2),
-    row("D", "RATE_D", 3),
-    row("F", "RATE_FF", 2),
-    row("M", "RATE_IMAX", 1),
-    row("C", "TCONST", 2),
-    row("R", "RMAX", 0),
-    row("L", "LIMIT", 0),
-    row("T", "FLT_T", 0),
-    row("E", "FLT_E", 0),
-    row("G", "FLT_D", 0),
-    row("S", "SMAX", 0),
-    row("X", "RLL>PTCH", 2),
+    row("P", "RATE_P", 2, ""),
+    row("I", "RATE_I", 2, ""),
+    row("D", "RATE_D", 3, ""),
+    row("F", "RATE_FF", 2, ""),
+    row("M", "RATE_IMAX", 1, ""),
+    row("C", "TCONST", 2, "s"),
+    row("R", "RMAX", 0, "\u{b0}/s"),
+    row("L", "LIMIT", 0, "\u{b0}"),
+    row("T", "FLT_T", 0, "Hz"),
+    row("E", "FLT_E", 0, "Hz"),
+    row("G", "FLT_D", 0, "Hz"),
+    row("S", "SMAX", 0, ""),
+    row("X", "RLL>PTCH", 2, ""),
 ];
 
 /// The ride-height loop. `CMD` collapses `HYD_CMDMAX`/`HYD_CMDMIN`.
@@ -92,46 +126,46 @@ const AXIS: [Row; 13] = [
 /// `P`/`D`. `k` stands in for the I gain because lowercase `i` is unusable beside
 /// `I` and `1`, and `h` for IMAX because lowercase `m` would read as a small `M`.
 const HEIGHT: [Row; 7] = [
-    row("p", "KP", 0),
-    row("k", "KI", 0),
-    row("d", "KD", 0),
-    row("h", "IMAX", 0),
-    row("t", "TARGET", 2),
-    row("g", "CMD", 1),
-    row("b", "ARM", 2),
+    row("p", "KP", 0, ""),
+    row("k", "KI", 0, ""),
+    row("d", "KD", 0, ""),
+    row("h", "IMAX", 0, ""),
+    row("t", "TARGET", 2, "m"),
+    row("g", "CMD", 1, "\u{b0}"),
+    row("b", "ARM", 2, "m"),
 ];
 
 /// The rear foil: artificial tailplane, decalage and speed schedule.
 const REAR: [Row; 4] = [
-    row("K", "RKP", 2),
-    row("W", "RSCALE", 2),
-    row("Y", "RSCHED", 0),
-    row("V", "FRNTFF", 2),
+    row("K", "RKP", 2, ""),
+    row("W", "RSCALE", 2, ""),
+    row("Y", "RSCHED", 0, ""),
+    row("V", "FRNTFF", 2, ""),
 ];
 
 /// Coordinated-turn banking. `ENABLE` stays keyed as the in-flight kill switch.
 const TURN: [Row; 6] = [
-    row("N", "ENABLE", 0),
-    row("U", "ON", 0),
-    row("A", "FULL", 0),
-    row("Z", "MAX", 1),
-    row("H", "RATE", 1),
-    row("J", "REV", 0),
+    row("N", "ENABLE", 0, ""),
+    row("U", "ON", 0, "%"),
+    row("A", "FULL", 0, "%"),
+    row("Z", "MAX", 1, "\u{b0}"),
+    row("H", "RATE", 1, "\u{b0}/s"),
+    row("J", "REV", 0, ""),
 ];
 
 /// Operating mode and the live test demands: `SCR_USER1..4` under names that mean
 /// something, since the real ones do not.
 const MODE: [Row; 4] = [
-    row("y", "MODE", 0),
-    row("q", "TEST_P", 1),
-    row("f", "TEST_R", 1),
-    row("B", "JOG", 0),
+    row("y", "MODE", 0, ""),
+    row("q", "TEST_P", 1, "\u{b0}"),
+    row("f", "TEST_R", 1, "\u{b0}"),
+    row("B", "JOG", 0, "\u{b5}s"),
 ];
 
 /// Gain scaling, which rescales both axes at once and so belongs to neither.
 /// Drawn without a heading: one row does not earn a line of its own, and the
 /// row it would have taken is the status line's.
-const GLOBAL: [Row; 1] = [row("Q", "SPEED", 1)];
+const GLOBAL: [Row; 1] = [row("Q", "SPEED", 1, "m/s")];
 
 const MID_BLOCKS: [Block; 2] = [
     Block {
@@ -182,24 +216,30 @@ const ROWS: i32 = 14;
 /// Ink is 18px tall once descenders are counted -- `p`, `g`, `q` and `y` all
 /// appear in hotkeys -- so 19px is the floor, not the 14px cap height.
 const ROW_H: i32 = 19;
-/// Centres the block, splitting the 6px of `272 - 14*19` top and bottom.
-const BLOCK_TOP: i32 = (DISPLAY_HEIGHT as i32 - ROWS * ROW_H) / 2;
-/// Measured ink height of a string with descenders.
-const INK_H: i32 = 18;
+/// Puts the heading row's ink on y=0, so the top line touches the panel edge.
+///
+/// Negative on purpose: `row_y` returns a *centre*, and the ink of a line reaches
+/// `INK_TOP` above it. The panel is white past the active area, so text parked
+/// against the edge reads as a margin rather than as clipping, and the pixels this
+/// frees go to [`SECTION_GAP`] and the status line.
+const BLOCK_TOP: i32 = -(ROW_H / 2) - INK_TOP;
+/// Measured ink height of a `FONT_TINY` string with descenders.
+const INK_H: i32 = 15;
 /// Measured top of that ink box relative to a `VerticalPosition::Center` anchor.
 /// Values are all digits, so their ink is only the cap band inside it -- which is
 /// why a row-height box centred on the row misses their tops.
-const INK_TOP: i32 = -9;
+const INK_TOP: i32 = -7;
 /// Padding around a value's cap band when its cell is inverted.
 const CURSOR_PAD: i32 = 2;
-const CURSOR_H: i32 = SMALL_CAP_H + 2 * CURSOR_PAD;
+const CURSOR_H: i32 = TINY_CAP_H + 2 * CURSOR_PAD;
 
 const _: () = assert!(ROW_H > INK_H, "rows would touch");
 // The inverted cell must cover a value's ink without reaching the rows either
 // side. Digits leave the descender space empty, which is where the slack is.
 const _: () = assert!(CURSOR_H <= ROW_H);
-const _: () = assert!(CURSOR_PAD + CURSOR_PAD + SMALL_CAP_H <= ROW_H);
-const _: () = assert!(BLOCK_TOP >= 0);
+const _: () = assert!(CURSOR_PAD + CURSOR_PAD + TINY_CAP_H <= ROW_H);
+// The heading row's ink starts exactly at the top edge, and nothing is clipped.
+const _: () = assert!(BLOCK_TOP + ROW_H / 2 + INK_TOP == 0);
 
 /// Centre y of a screen row, the heading being row 0.
 const fn row_y(index: i32) -> i32 {
@@ -208,33 +248,50 @@ const fn row_y(index: i32) -> i32 {
 
 /// Column widths, each the sum of its fields, and the gutters chosen so the four
 /// tile the full width exactly.
-const HOTKEY_W: i32 = 18;
-/// Space between a table's fields. Tight, because an arrow costs 17px: a diverged
-/// pitch pair needs a 110px column, and this is where that width came from.
-/// Values are right-aligned so their left gap is usually far wider than this;
-/// what it really sets is hotkey-to-label.
-const FIELD_GAP: i32 = 5;
+const HOTKEY_W: i32 = 17;
+/// Space between a table's fields.
+const FIELD_GAP: i32 = 7;
 
-const AXIS_LABEL_W: i32 = 108;
-/// Wide enough for `180^ 180v`, the widest a diverged pitch pair can reach.
-const AXIS_PITCH_W: i32 = 110;
+const AXIS_LABEL_W: i32 = 94;
+/// Sized for an ordinary value, **not** for a diverged pair.
+///
+/// A diverged pair is 92px -- an arrow alone is 14px -- and giving the column
+/// that width would leave 40px of dead space on all eleven rows that never diverge,
+/// which read as a value adrift from its label. Instead the pair overflows
+/// leftward into the gap its own label leaves: only `RMAX` and `LIMIT` diverge,
+/// and both have short labels. `diverged_values_clear_their_labels` checks it.
+const AXIS_PITCH_W: i32 = 52;
 /// Roll has no up/down pairs -- `RLL2SRV_RMAX` and `ROLL_LIMIT_DEG` are single
 /// values -- so this column never holds an arrow pair.
-const AXIS_ROLL_W: i32 = 53;
-const W_AXIS: i32 = HOTKEY_W + AXIS_LABEL_W + AXIS_PITCH_W + AXIS_ROLL_W + 3 * FIELD_GAP;
+const AXIS_ROLL_W: i32 = 46;
+/// Widest unit the axis table carries, `°/s` for `RMAX`. One slot serves both
+/// columns: the unit belongs to the row, not the axis, so `RMAX` is degrees per
+/// second whichever side you read.
+const AXIS_UNIT_W: i32 = 22;
+const W_AXIS: i32 =
+    HOTKEY_W + AXIS_LABEL_W + AXIS_PITCH_W + AXIS_ROLL_W + AXIS_UNIT_W + 4 * FIELD_GAP;
 
-const MID_LABEL_W: i32 = 76;
-/// The widest value column on the screen: `CMD` is the one diverged pair
-/// carrying a decimal, so it has to hold `5.0^ 8.0v` at 96px.
-const MID_VALUE_W: i32 = 96;
-const W_MID: i32 = HOTKEY_W + MID_LABEL_W + MID_VALUE_W + 2 * FIELD_GAP;
+const MID_LABEL_W: i32 = 68;
+/// Sized for an ordinary value. `CMD` is the one diverged pair here and, like the
+/// axis pairs, overflows left past its short label -- see [`AXIS_PITCH_W`].
+const MID_VALUE_W: i32 = 52;
+/// `m` for the ride height and the reference arm; `°` for the command clamps.
+///
+/// The rear speed schedule's real unit is `°·m²/s²`, which measures 52px and
+/// would set this slot for all eleven rows at a cost of 13px off each gutter. Not
+/// taken: one row's unit is not worth a third of the space between the tables,
+/// and a unit only legible to someone who already knows it earns little.
+const MID_UNIT_W: i32 = 15;
+const W_MID: i32 = HOTKEY_W + MID_LABEL_W + MID_VALUE_W + MID_UNIT_W + 3 * FIELD_GAP;
 
-const RIGHT_LABEL_W: i32 = 76;
-const RIGHT_VALUE_W: i32 = 53;
-const W_RIGHT: i32 = HOTKEY_W + RIGHT_LABEL_W + RIGHT_VALUE_W + 2 * FIELD_GAP;
+const RIGHT_LABEL_W: i32 = 66;
+const RIGHT_VALUE_W: i32 = 46;
+/// Widest on the screen, `m/s` for the gain-scaling reference speed.
+const RIGHT_UNIT_W: i32 = 30;
+const W_RIGHT: i32 = HOTKEY_W + RIGHT_LABEL_W + RIGHT_VALUE_W + RIGHT_UNIT_W + 3 * FIELD_GAP;
 
-const SLOT_LABEL_W: i32 = 61;
-const SLOT_KEY_W: i32 = 13;
+const SLOT_LABEL_W: i32 = 54;
+const SLOT_KEY_W: i32 = 12;
 const SLOT_GAP: i32 = 6;
 const W_SLOTS: i32 = SLOT_LABEL_W + SLOT_GAP + SLOT_KEY_W;
 
@@ -256,11 +313,20 @@ const COLS: [Cell; 7] = SCREEN.cols([W_AXIS, GUTTER, W_MID, GUTTER, W_RIGHT, GUT
 const AXIS_HOTKEY_X: i32 = COLS[0].x;
 const AXIS_LABEL_X: i32 = AXIS_HOTKEY_X + HOTKEY_W + FIELD_GAP;
 const AXIS_PITCH_R: i32 = AXIS_LABEL_X + AXIS_LABEL_W + FIELD_GAP + AXIS_PITCH_W;
+/// Space a right-aligned pitch value may grow into before it reaches the label
+/// column: the pitch column plus the gap plus the label column itself. Only the
+/// test that enforces the overflow reads it, but it is the rule being enforced.
+#[cfg(test)]
+const AXIS_PITCH_SPAN: i32 = AXIS_LABEL_W + FIELD_GAP + AXIS_PITCH_W;
 const AXIS_ROLL_R: i32 = AXIS_PITCH_R + FIELD_GAP + AXIS_ROLL_W;
+const AXIS_UNIT_X: i32 = AXIS_ROLL_R + FIELD_GAP;
 
 const MID_HOTKEY_X: i32 = COLS[2].x;
 const MID_LABEL_X: i32 = MID_HOTKEY_X + HOTKEY_W + FIELD_GAP;
 const MID_VALUE_R: i32 = MID_LABEL_X + MID_LABEL_W + FIELD_GAP + MID_VALUE_W;
+/// As `AXIS_PITCH_SPAN`, for the height and rear column.
+#[cfg(test)]
+const MID_VALUE_SPAN: i32 = MID_LABEL_W + FIELD_GAP + MID_VALUE_W;
 
 const RIGHT_HOTKEY_X: i32 = COLS[4].x;
 const RIGHT_LABEL_X: i32 = RIGHT_HOTKEY_X + HOTKEY_W + FIELD_GAP;
@@ -271,21 +337,32 @@ const RIGHT_VALUE_R: i32 = RIGHT_LABEL_X + RIGHT_LABEL_W + FIELD_GAP + RIGHT_VAL
 const SLOT_KEY_R: i32 = COLS[6].right();
 const SLOT_LABEL_R: i32 = SLOT_KEY_R - SLOT_KEY_W - SLOT_GAP;
 
-/// The status line shares the bottom row, starting where the axis table ends.
-/// Only the axis table reaches row 13, so everything right of it is free.
-const STATUS_ROW: i32 = ROWS - 1;
-const STATUS_X: i32 = COLS[2].x;
-/// Only the test uses this, but it is the budget the sentence is written to.
+/// The status line sits in the bottom-right corner, off the row grid.
+///
+/// Its own baseline rather than row 13's: the corner is the one place a sentence
+/// can be as long as it needs without a column to answer to, and hugging the edge
+/// keeps it clearly separate from the tables instead of reading as another row.
+/// Right-aligned on the screen edge, like the config keys above it.
+const STATUS_R: i32 = DISPLAY_WIDTH as i32;
+/// Ink bottom on the last pixel row, mirroring what `BLOCK_TOP` does at the top.
+const STATUS_Y: i32 = DISPLAY_HEIGHT as i32 - 1 - INK_H - INK_TOP;
+/// It overlaps row 13 vertically, so it has to stay clear of that row horizontally.
+/// Only the axis table reaches row 13.
 #[cfg(test)]
-const STATUS_W: i32 = DISPLAY_WIDTH as i32 - STATUS_X;
+const STATUS_W: i32 = DISPLAY_WIDTH as i32 - COLS[0].right() - GUTTER;
 
-// Every table has to fit inside the rows, headings included, and none may reach
-// into the status line except the axis table it shares a row with.
-// The axis table starts on row 1, so its last row is the status line's.
-const _: () = assert!(AXIS.len() as i32 == STATUS_ROW);
-const _: () = assert!(MID_BLOCKS[1].first_row + REAR.len() as i32 <= STATUS_ROW);
-const _: () = assert!(RIGHT_BLOCKS[2].first_row + GLOBAL.len() as i32 <= STATUS_ROW);
-const _: () = assert!(1 + SLOT_COUNT as i32 + 2 <= STATUS_ROW);
+// Every table has to fit inside the rows, headings included.
+// The axis table starts on row 1, so its last row is the bottom one.
+const _: () = assert!(AXIS.len() as i32 == ROWS - 1);
+const _: () = assert!(MID_BLOCKS[1].first_row + (REAR.len() as i32) < ROWS);
+const _: () = assert!(RIGHT_BLOCKS[2].first_row + (GLOBAL.len() as i32) < ROWS);
+const _: () = assert!((SLOT_COUNT as i32) + 3 < ROWS);
+// The lowest stacked row, pushed down by SECTION_GAP, must not reach the status
+// line's ink -- they share the right-hand side of the screen.
+const LOWEST_STACKED_INK: i32 = row_y(ROWS - 2) + SECTION_GAP + INK_TOP + INK_H;
+const _: () = assert!(LOWEST_STACKED_INK < STATUS_Y + INK_TOP);
+// And nothing runs off the bottom.
+const _: () = assert!(STATUS_Y + INK_TOP + INK_H < DISPLAY_HEIGHT as i32);
 
 // ---------------------------------------------------------------------------
 // Drawing
@@ -304,7 +381,7 @@ where
     for (right, name) in [(AXIS_PITCH_R, "Pitch"), (AXIS_ROLL_R, "Roll")] {
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Right,
             right,
             row_y(0),
@@ -323,6 +400,8 @@ where
             &mut buf,
         )?;
         value(display, AXIS_ROLL_R, y, entry, &foil.roll[index], &mut buf)?;
+        // One slot for both columns: the unit belongs to the row, not the axis.
+        unit(display, AXIS_UNIT_X, y, entry)?;
     }
 
     // The two stacked columns. Each block's values come from its own array, so a
@@ -373,6 +452,7 @@ where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
+    let offset = block.y_offset();
     if block.heading {
         // Over the label column, not the values: these tables have one value
         // column, so the name belongs to the group rather than the numbers.
@@ -387,19 +467,42 @@ where
         }
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Left,
             label_x,
-            row_y(block.first_row - 1),
+            row_y(block.first_row - 1) + offset,
             title.as_str(),
         )?;
     }
     for (index, entry) in block.rows.iter().enumerate() {
-        let y = row_y(block.first_row + index as i32);
+        let y = row_y(block.first_row + index as i32) + offset;
         key_and_label(display, hotkey_x, label_x, y, entry)?;
         value(display, value_r, y, entry, &values[index], buf)?;
+        // The unit slot opens one field gap past the value column, whichever
+        // column this block is in.
+        unit(display, value_r + FIELD_GAP, y, entry)?;
     }
     Ok(())
+}
+
+/// The unit slot: left-aligned against the value it belongs to, and skipped
+/// entirely when the parameter has none.
+fn unit<D, C>(display: &mut D, x: i32, y: i32, entry: &Row) -> Result<(), D::Error>
+where
+    D: DrawTarget<Color = C>,
+    C: PixelColor + From<BinaryColor>,
+{
+    if entry.unit.is_empty() {
+        return Ok(());
+    }
+    draw_text(
+        display,
+        &FONT_TINY,
+        HorizontalAlignment::Left,
+        x,
+        y,
+        entry.unit,
+    )
 }
 
 fn key_and_label<D, C>(
@@ -415,7 +518,7 @@ where
 {
     draw_text(
         display,
-        &FONT_SMALL,
+        &FONT_TINY,
         HorizontalAlignment::Left,
         hotkey_x,
         y,
@@ -423,7 +526,7 @@ where
     )?;
     draw_text(
         display,
-        &FONT_SMALL,
+        &FONT_TINY,
         HorizontalAlignment::Left,
         label_x,
         y,
@@ -445,11 +548,18 @@ fn format_reading(buf: &mut String<16>, reading: Option<&Reading>, decimals: usi
             // minimum is negative on the bus, and a down arrow beside a minus
             // sign reads as a double negative.
             let magnitude = if *down < 0.0 { -*down } else { *down };
-            write!(
-                buf,
-                "{up:.decimals$}\u{2191} {magnitude:.decimals$}\u{2193}"
-            )
-            .ok();
+            if (up - magnitude).abs() < f32::EPSILON {
+                // Symmetric, so it reads as one number. Collapsing here rather
+                // than at the sender means whoever fills these in can always
+                // store both halves and never has to decide which form to use.
+                write!(buf, "{up:.decimals$}").ok();
+            } else {
+                write!(
+                    buf,
+                    "{up:.decimals$}\u{2191} {magnitude:.decimals$}\u{2193}"
+                )
+                .ok();
+            }
         }
         None => {
             buf.push_str("--").ok();
@@ -472,7 +582,7 @@ where
     format_reading(buf, reading.get(), entry.decimals);
     draw_text(
         display,
-        &FONT_SMALL,
+        &FONT_TINY,
         HorizontalAlignment::Right,
         right,
         y,
@@ -509,7 +619,7 @@ where
 {
     draw_text(
         display,
-        &FONT_SMALL,
+        &FONT_TINY,
         HorizontalAlignment::Right,
         SLOT_KEY_R,
         row_y(0),
@@ -521,7 +631,7 @@ where
         format_slot(buf, slot.get());
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Right,
             SLOT_LABEL_R,
             y,
@@ -531,7 +641,7 @@ where
         write!(buf, "{}", index + 1).ok();
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Right,
             SLOT_KEY_R,
             y,
@@ -543,7 +653,7 @@ where
         let y = row_y(1 + SLOT_COUNT as i32 + offset as i32);
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Right,
             SLOT_LABEL_R,
             y,
@@ -551,7 +661,7 @@ where
         )?;
         draw_text(
             display,
-            &FONT_SMALL,
+            &FONT_TINY,
             HorizontalAlignment::Right,
             SLOT_KEY_R,
             y,
@@ -559,6 +669,89 @@ where
         )?;
     }
     Ok(())
+}
+
+/// Which half of a collapsed up/down pair a parameter index is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PairHalf {
+    /// Not a pair: the index is the whole cell.
+    Whole,
+    Up,
+    Down,
+}
+
+/// Where a `foil_tune.lua` parameter index lands on this screen.
+///
+/// The tuner addresses parameters by index and the screen is laid out by cell, so
+/// something has to join the two. It lives here, beside the row tables it has to
+/// agree with; `FOILING_PARAMETERS.csv` carries the same mapping outwards for the
+/// datalogger, and a test checks the two agree.
+///
+/// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 7. 13-15 and 46-47
+/// are unused; 37-38 are retired and must never be reused.
+pub const fn cell_for_index(index: u8) -> Option<(FoilColumn, u8, PairHalf)> {
+    use FoilColumn::{Mid, Pitch, Right, Roll};
+    use PairHalf::{Down, Up, Whole};
+    Some(match index {
+        // Roll rate loop. Roll has no up/down pairs.
+        1 => (Roll, 1, Whole),
+        2 => (Roll, 2, Whole),
+        3 => (Roll, 3, Whole),
+        4 => (Roll, 4, Whole),
+        5 => (Roll, 5, Whole),
+        6 => (Roll, 6, Whole),
+        7 => (Roll, 7, Whole),
+        8 => (Roll, 8, Whole),
+        9 => (Roll, 9, Whole),
+        10 => (Roll, 10, Whole),
+        11 => (Roll, 11, Whole),
+        12 => (Roll, 12, Whole),
+        // Pitch rate loop. RMAX and LIMIT are each two parameters in one cell.
+        16 => (Pitch, 1, Whole),
+        17 => (Pitch, 2, Whole),
+        18 => (Pitch, 3, Whole),
+        19 => (Pitch, 4, Whole),
+        20 => (Pitch, 5, Whole),
+        21 => (Pitch, 6, Whole),
+        22 => (Pitch, 7, Up),
+        23 => (Pitch, 7, Down),
+        24 => (Pitch, 13, Whole),
+        25 => (Pitch, 8, Up),
+        26 => (Pitch, 8, Down),
+        27 => (Pitch, 9, Whole),
+        28 => (Pitch, 10, Whole),
+        29 => (Pitch, 11, Whole),
+        30 => (Pitch, 12, Whole),
+        // Gain scaling, which belongs to neither axis.
+        31 => (Right, 12, Whole),
+        // Ride-height loop. The command clamps share a cell.
+        32 => (Mid, 1, Whole),
+        33 => (Mid, 2, Whole),
+        34 => (Mid, 3, Whole),
+        35 => (Mid, 4, Whole),
+        36 => (Mid, 5, Whole),
+        52 => (Mid, 6, Up),
+        53 => (Mid, 6, Down),
+        39 => (Mid, 7, Whole),
+        // Rear foil.
+        54 => (Mid, 9, Whole),
+        55 => (Mid, 10, Whole),
+        56 => (Mid, 11, Whole),
+        57 => (Mid, 12, Whole),
+        // Coordinated turn.
+        40 => (Right, 1, Whole),
+        41 => (Right, 2, Whole),
+        42 => (Right, 3, Whole),
+        43 => (Right, 4, Whole),
+        44 => (Right, 5, Whole),
+        45 => (Right, 6, Whole),
+        // Mode and the live test demands.
+        48 => (Right, 8, Whole),
+        49 => (Right, 9, Whole),
+        50 => (Right, 10, Whole),
+        51 => (Right, 11, Whole),
+        _ => return None,
+    })
 }
 
 /// Look up the block and row a cell belongs to, for the cursor and status line.
@@ -621,10 +814,10 @@ where
 
     draw_text(
         display,
-        &FONT_SMALL,
-        HorizontalAlignment::Left,
-        STATUS_X,
-        row_y(STATUS_ROW),
+        &FONT_TINY,
+        HorizontalAlignment::Right,
+        STATUS_R,
+        STATUS_Y,
         line.as_str(),
     )
 }
@@ -701,7 +894,7 @@ where
     .draw(display)?;
 
     // The one place this screen draws in the background colour.
-    FONT_SMALL
+    FONT_TINY
         .render_aligned(
             buf.as_str(),
             Point::new(right, y),
@@ -760,8 +953,8 @@ mod tests {
     #[test]
     fn every_glyph_this_screen_draws_exists() {
         for entry in all_rows() {
-            let _ = width(&FONT_SMALL, entry.hotkey);
-            let _ = width(&FONT_SMALL, entry.label);
+            let _ = width(&FONT_TINY, entry.hotkey);
+            let _ = width(&FONT_TINY, entry.label);
         }
         for extra in [
             "Pitch",
@@ -782,8 +975,139 @@ mod tests {
             "HEIGHT CMD decreased from 5.0 to 4.5",
             "5.0\u{2191} 8.0\u{2193}",
         ] {
-            let _ = width(&FONT_SMALL, extra);
+            let _ = width(&FONT_TINY, extra);
         }
+    }
+
+    /// The datalogger's copy of the key and cursor map, which is generated from
+    /// these tables by `support/export-foiling-params.py`. Checked here so the
+    /// two cannot drift: the display renders whatever cell the datalogger
+    /// selects, so a disagreement about which row a key means would put the
+    /// cursor on one parameter while the operator adjusts another.
+    ///
+    /// Only the columns this file owns are compared. The ranges, steps and locks
+    /// in the export are the boat's spec and are not the display's business.
+    #[test]
+    fn the_exported_map_matches_these_tables() {
+        let csv = include_str!("../../../FOILING_PARAMETERS.csv");
+        let mut exported: heapless::Vec<(&str, &str, u8, &str, usize), 80> = heapless::Vec::new();
+        for line in csv.lines().skip(1) {
+            let f: heapless::Vec<&str, 16> = line.split(',').collect();
+            // Config slots carry no parameter row, so they have nothing to check.
+            if f[5] == "CONFIG" {
+                continue;
+            }
+            let cell = (
+                f[0],
+                f[1],
+                f[3].parse().unwrap(),
+                f[4],
+                f[13].parse().unwrap(),
+            );
+            // The axis tables list one row per axis; both must agree with AXIS.
+            if !exported.contains(&cell) {
+                exported.push(cell).unwrap();
+            }
+        }
+
+        let mut expected: heapless::Vec<(&str, &str, u8, &str, usize), 80> = heapless::Vec::new();
+        for (index, entry) in AXIS.iter().enumerate() {
+            for column in ["Pitch", "Roll"] {
+                expected
+                    .push((
+                        entry.hotkey,
+                        column,
+                        1 + index as u8,
+                        entry.label,
+                        entry.decimals,
+                    ))
+                    .unwrap();
+            }
+        }
+        for (blocks, column) in [
+            (MID_BLOCKS.as_slice(), "Mid"),
+            (RIGHT_BLOCKS.as_slice(), "Right"),
+        ] {
+            for block in blocks {
+                for (index, entry) in block.rows.iter().enumerate() {
+                    expected
+                        .push((
+                            entry.hotkey,
+                            column,
+                            (block.first_row + index as i32) as u8,
+                            entry.label,
+                            entry.decimals,
+                        ))
+                        .unwrap();
+                }
+            }
+        }
+
+        for cell in &expected {
+            assert!(
+                exported.contains(cell),
+                "{cell:?} is drawn but missing from FOILING_PARAMETERS.csv -- \
+                 rerun support/export-foiling-params.py"
+            );
+        }
+        for cell in &exported {
+            assert!(
+                expected.contains(cell),
+                "{cell:?} is in FOILING_PARAMETERS.csv but not drawn -- \
+                 rerun support/export-foiling-params.py"
+            );
+        }
+        assert_eq!(exported.len(), expected.len());
+    }
+
+    /// The exported index-to-cell mapping must agree with `cell_for_index`, or a
+    /// parameter would land in one place on the display and be described as
+    /// another in the datalogger's copy.
+    #[test]
+    fn the_exported_indices_match_cell_for_index() {
+        let csv = include_str!("../../../FOILING_PARAMETERS.csv");
+        let mut checked = 0;
+        for line in csv.lines().skip(1) {
+            let f: heapless::Vec<&str, 20> = line.split(',').collect();
+            if f[7].is_empty() {
+                continue; // config slots and the pitch-only gap carry no index
+            }
+            let column = match f[1] {
+                "Pitch" => FoilColumn::Pitch,
+                "Roll" => FoilColumn::Roll,
+                "Mid" => FoilColumn::Mid,
+                "Right" => FoilColumn::Right,
+                other => panic!("unknown column {other:?}"),
+            };
+            let row: u8 = f[3].parse().unwrap();
+            // A combined cell lists both halves, `22+23`.
+            for (half, raw) in f[7].split('+').enumerate() {
+                let index: u8 = raw.parse().unwrap();
+                let (got_column, got_row, got_half) =
+                    cell_for_index(index).unwrap_or_else(|| panic!("index {index} has no cell"));
+                assert_eq!(
+                    (got_column, got_row),
+                    (column, row),
+                    "index {index} maps to {got_column:?} row {got_row}, but the \
+                     export says {column:?} row {row}"
+                );
+                let expected = if f[7].contains('+') {
+                    if half == 0 {
+                        PairHalf::Up
+                    } else {
+                        PairHalf::Down
+                    }
+                } else {
+                    PairHalf::Whole
+                };
+                assert_eq!(got_half, expected, "index {index} half");
+                checked += 1;
+            }
+        }
+        assert_eq!(
+            checked, 50,
+            "foil_tune.lua PROTO_VERSION 7 has 50 parameters"
+        );
     }
 
     /// Hotkeys must be unique across the whole screen: one keypress selects one
@@ -820,16 +1144,14 @@ mod tests {
     }
 
     /// `render_aligned` clips rather than erroring, so a value that outgrows its
-    /// column produces no warning at all. These are the widest each column can
-    /// reach in service.
+    /// space produces no warning at all. Ordinary values must fit their column.
     #[test]
     fn widest_values_fit_their_columns() {
         for (name, text, budget) in [
-            ("axis pitch pair", "180\u{2191} 180\u{2193}", AXIS_PITCH_W),
+            ("axis pitch", "0.020", AXIS_PITCH_W),
             ("axis roll", "0.020", AXIS_ROLL_W),
-            ("height CMD pair", "5.0\u{2191} 8.0\u{2193}", MID_VALUE_W),
             ("height KP", "2000", MID_VALUE_W),
-            ("turn value", "100.0", RIGHT_VALUE_W),
+            ("turn value", "-20.0", RIGHT_VALUE_W),
             ("slot label", "empty", SLOT_LABEL_W),
             (
                 "status line",
@@ -837,8 +1159,32 @@ mod tests {
                 STATUS_W,
             ),
         ] {
-            let w = width(&FONT_SMALL, text);
+            let w = width(&FONT_TINY, text);
             assert!(w <= budget, "{name}: {text:?} is {w}px, budget {budget}px");
+        }
+    }
+
+    /// A diverged pair is wider than its column and overflows leftward, which is
+    /// only sound while it stays clear of the label beside it. Every row that can
+    /// diverge is checked against the widest pair it can reach.
+    #[test]
+    fn diverged_values_clear_their_labels() {
+        for (label, worst, span) in [
+            // Pitch rate max, both halves 0..180.
+            ("RMAX", "180\u{2191} 180\u{2193}", AXIS_PITCH_SPAN),
+            // Pitch envelope, +1..10 up and -10..-1 down.
+            ("LIMIT", "10\u{2191} 10\u{2193}", AXIS_PITCH_SPAN),
+            // Height command clamps, +0.5..5 up and -8..-0.5 down.
+            ("CMD", "5.0\u{2191} 8.0\u{2193}", MID_VALUE_SPAN),
+        ] {
+            let value = width(&FONT_TINY, worst);
+            let needed = width(&FONT_TINY, label) + FIELD_GAP + value;
+            assert!(
+                needed <= span,
+                "{label}: {worst:?} is {value}px and the label {}px, needing \
+                 {needed}px of the {span}px span",
+                width(&FONT_TINY, label)
+            );
         }
     }
 
@@ -854,7 +1200,7 @@ mod tests {
             (GLOBAL.as_slice(), RIGHT_LABEL_W, "global"),
         ] {
             for entry in rows {
-                let w = width(&FONT_SMALL, entry.label);
+                let w = width(&FONT_TINY, entry.label);
                 assert!(
                     w <= budget,
                     "{name} label {:?} is {w}px, budget {budget}px",
@@ -879,7 +1225,7 @@ mod tests {
                 );
             }
             let last = blocks.last().unwrap();
-            assert!(last.first_row + last.rows.len() as i32 <= STATUS_ROW);
+            assert!(last.first_row + (last.rows.len() as i32) < ROWS);
         }
     }
 

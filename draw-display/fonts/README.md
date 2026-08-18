@@ -8,7 +8,8 @@ Pre-rasterised u8g2 font blobs for the 5.79" panel, included by
 | `plex_net58_tn` | 58 px | 48 px | 1172 B | net power, the left column's headline |
 | `plex_big49_tn` | 49 px | 40 px | 1096 B | state of charge, the speed's dot and tenth, `%` |
 | `plex_mid30_tn` | 29 px | 24 px | 567 B | all three times, power in/out, temperatures |
-| `plex_small14_tf` | 14 px cap | 12 px | 1901 B | all labels |
+| `plex_small14_tf` | 14 px cap | 12 px | 1901 B | the dashboard's labels |
+| `plex_small12_tf` | 12 px cap | 10 px | 1586 B | the foiling screen, all of it |
 
 All [IBM Plex Sans](https://fonts.google.com/specimen/IBM+Plex+Sans) at **weight
 500 (Medium)**, from `ofl/ibmplexsans/IBMPlexSans[wdth,wght].ttf` in
@@ -27,8 +28,13 @@ The value fonts carry ` -.:0123456789`, plus `%` for `plex_big49_tn`, which draw
 the state of charge's sign. The label font carries printable ASCII, U+00B0 for
 `°C`, and U+2191/U+2193 for the foiling screen, which marks a diverged up/down
 parameter pair as `5.0↑ 8.0↓` and collapses a symmetric one to a single number.
-An arrow is 17 px wide — wider than a three-digit number — which is what sizes
-that screen's pitch column. 4677 B total, all in flash — blobs are decoded straight to the draw target,
+An arrow is 14 px wide at 12 px cap — wider than a two-digit number — which is
+what sizes that screen's pitch column.
+
+The foiling screen runs two points smaller than the dashboard because it puts four
+tables abreast. A separate blob rather than shrinking the shared one: every
+constant in `render/dashboard.rs` derives from a 14 px cap, and that layout is
+tuned. 6322 B total, all in flash — blobs are decoded straight to the draw target,
 so they cost no RAM.
 
 A glyph a font is asked to draw but does not have panics through `map_font_err`,
@@ -79,6 +85,15 @@ digits — at 79 px digits, `0` reported an advance of 89 and `1` reported 83.
 
 `bdfconv` has a second silent trap: it does not verify that the widest glyph fits
 the bits it allocated, and gave 6 bits (max 63) to a 64 px-wide glyph.
+
+Check that against the **per-glyph** maximum, not `bdfconv`'s `CalculateMaxBBX`.
+That reports the *union* of every glyph box — `max(y_off + h) - min(y_off)` — which
+for a text font is always a pixel or two taller than the tallest single glyph,
+because whatever reaches highest is not what descends deepest. A u8g2 glyph stores
+its own width and height in those fields, so the union is the wrong yardstick:
+comparing against it rejects sound fonts. It is what made a 12 px cap look
+impossible — `bdfconv` had correctly given `bbx.h` five bits for a 16 px glyph, and
+the check compared that against a 17 px union.
 
 `build-fonts.py` checks both and refuses to write a font that would be corrupt,
 so a too-large target fails loudly instead.

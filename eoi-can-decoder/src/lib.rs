@@ -18,6 +18,76 @@ pub enum EoiCanData {
     GanMppt(GanMpptData),
     Temperature(TemperatureData),
     DataLogger(DataLoggerData),
+    FoilTune(FoilTuneValue),
+}
+
+/// How the flight controller answered a parameter read or write.
+///
+/// From `foil_tune.lua`'s `0x261` status byte. Only `Ok`, `Clamped` and `Locked`
+/// carry a real reading: the other three are sent with a value of zero, so a
+/// consumer that trusted the float would display a gain of 0 for a parameter
+/// that simply is not there yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FoilParamStatus {
+    /// Read back as set.
+    Ok,
+    /// The index is not in the whitelist.
+    UnknownIndex,
+    /// The write was clamped to the parameter's range; the value is what stuck.
+    Clamped,
+    /// `param:set` failed.
+    SetFailed,
+    /// Not available yet -- `HYD_*` before `hydrofoils.lua` has created them.
+    Unavailable,
+    /// Refused: an envelope or mode change while the boat is enabled.
+    Locked,
+    /// A status byte this decoder does not know, kept so a protocol bump is
+    /// visible rather than silently reinterpreted.
+    Unknown(u8),
+}
+
+impl From<u8> for FoilParamStatus {
+    fn from(raw: u8) -> Self {
+        match raw {
+            0 => Self::Ok,
+            1 => Self::UnknownIndex,
+            2 => Self::Clamped,
+            3 => Self::SetFailed,
+            4 => Self::Unavailable,
+            5 => Self::Locked,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+impl FoilParamStatus {
+    /// Whether the frame's float is a real reading.
+    pub fn has_value(self) -> bool {
+        matches!(self, Self::Ok | Self::Clamped | Self::Locked)
+    }
+}
+
+/// A `0x261 PARAM_VALUE` frame from `foil_tune.lua`: the read-back of one tuning
+/// parameter, sent as the ack for every set and the reply to every request.
+///
+/// Two indices are not parameters at all, which is why they are separate
+/// variants rather than a magic number a consumer has to know.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FoilTuneValue {
+    /// One parameter, by its index in `foil_tune.lua`'s table.
+    Param {
+        index: u8,
+        status: FoilParamStatus,
+        value: f32,
+    },
+    /// Index `0xFE`: the flight controller's `PROTO_VERSION`.
+    ProtocolVersion(u8),
+    /// Index `0xFF`: end of a whole-table dump, carrying how many entries were
+    /// sent. Useful as the bracket around a dump, so a listener can tell a burst
+    /// of readings from a single one.
+    DumpComplete(u16),
 }
 
 #[derive(Debug)]
@@ -844,6 +914,22 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
     const MPPT_STOP_ADDRESS: u32 = MPPT_BASE_ADDRESS + (MPPT_MAX_DEVICES * MPPT_INFO_FIELDS) - 1;
 
     match id {
+        // foil_tune.lua's parameter read-back. Only 0x261 is decoded: 0x260 (set)
+        // and 0x262 (request) are the tuner talking to the flight controller, and
+        // nothing on this bus needs to overhear them.
+        0x261 => {
+            let index = *data.first()?;
+            let value = f32::from_le_bytes(data.get(2..6)?.try_into().ok()?);
+            Some(EoiCanData::FoilTune(match index {
+                0xFE => FoilTuneValue::ProtocolVersion(value as u8),
+                0xFF => FoilTuneValue::DumpComplete(value as u16),
+                index => FoilTuneValue::Param {
+                    index,
+                    status: (*data.get(1)?).into(),
+                    value,
+                },
+            }))
+        }
         0x10 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
             ServoData::Setpoint(bytes_le_to_u16(data.get(0..2)?)?),
         ))),
@@ -1878,5 +1964,76 @@ mod tests {
             &[0xC0, 0xA8, 0x01],
         );
         assert!(parse_eoi_can_data(&can_frame).is_none());
+    }
+}
+
+#[cfg(test)]
+mod foil_tune_tests {
+    use super::*;
+    use crate::can_frame::CanFrame;
+    use embedded_can::{Id, StandardId};
+
+    fn frame(id: u16, data: &[u8]) -> CanFrame {
+        CanFrame::from_encoded(Id::Standard(StandardId::new(id).unwrap()), data)
+    }
+
+    /// The wire format from `foil_tune.lua`: `[index, status, f32 LE]`.
+    #[test]
+    fn decodes_a_parameter_readback() {
+        // Index 16 is PTCH_RATE_P; 2.93 as float32 LE.
+        let bytes = 2.93_f32.to_le_bytes();
+        let data = [16, 0, bytes[0], bytes[1], bytes[2], bytes[3]];
+        let Some(EoiCanData::FoilTune(FoilTuneValue::Param {
+            index,
+            status,
+            value,
+        })) = parse_eoi_can_data(&frame(0x261, &data))
+        else {
+            panic!("not decoded");
+        };
+        assert_eq!(index, 16);
+        assert_eq!(status, FoilParamStatus::Ok);
+        assert!((value - 2.93).abs() < 1e-6);
+    }
+
+    /// A status other than ok/clamped/locked is sent with a value of zero, so the
+    /// float must not be believed -- `HYD_*` reads back unavailable until
+    /// `hydrofoils.lua` has created the parameters.
+    #[test]
+    fn an_unavailable_parameter_carries_no_value() {
+        let data = [32, 4, 0, 0, 0, 0];
+        let Some(EoiCanData::FoilTune(FoilTuneValue::Param { status, .. })) =
+            parse_eoi_can_data(&frame(0x261, &data))
+        else {
+            panic!("not decoded");
+        };
+        assert_eq!(status, FoilParamStatus::Unavailable);
+        assert!(!status.has_value(), "a zero would render as a real gain");
+        // Locked still reports the live value, so it does.
+        assert!(FoilParamStatus::Locked.has_value());
+        assert!(FoilParamStatus::Clamped.has_value());
+    }
+
+    /// The two reserved indices are not parameters.
+    #[test]
+    fn version_and_dump_markers_are_not_parameters() {
+        let seven = 7.0_f32.to_le_bytes();
+        let data = [0xFE, 0, seven[0], seven[1], seven[2], seven[3]];
+        assert!(matches!(
+            parse_eoi_can_data(&frame(0x261, &data)),
+            Some(EoiCanData::FoilTune(FoilTuneValue::ProtocolVersion(7)))
+        ));
+        let fifty = 50.0_f32.to_le_bytes();
+        let data = [0xFF, 0, fifty[0], fifty[1], fifty[2], fifty[3]];
+        assert!(matches!(
+            parse_eoi_can_data(&frame(0x261, &data)),
+            Some(EoiCanData::FoilTune(FoilTuneValue::DumpComplete(50)))
+        ));
+    }
+
+    /// A short frame is rejected rather than read past its end.
+    #[test]
+    fn a_truncated_frame_is_rejected() {
+        assert!(parse_eoi_can_data(&frame(0x261, &[16, 0, 1, 2])).is_none());
     }
 }

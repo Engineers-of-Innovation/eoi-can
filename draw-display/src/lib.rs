@@ -11,10 +11,11 @@ use core::net::Ipv4Addr;
 
 use eoi_can_decoder::{
     BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData,
-    GanMpptPacket, GnssData, GnssDateTime, HeightSensorData, MpptChannel, MpptInfo,
+    FoilTuneValue, GanMpptPacket, GnssData, GnssDateTime, HeightSensorData, MpptChannel, MpptInfo,
     TemperatureData, ThrottleData, ThrottleErrors, VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
+use render::foiling::{cell_for_index, PairHalf};
 
 const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
@@ -227,6 +228,123 @@ pub struct FoilingData {
     /// Held until the next edit arrives rather than timing out: the point of the
     /// line is to still be readable a while after the change.
     pub last_edit: Option<FoilEdit>,
+    /// Both halves of each collapsed up/down pair, kept raw.
+    ///
+    /// A pair arrives as two separate `0x261` frames, so writing straight into
+    /// the cell would lose whichever half came first. Indexed by
+    /// [`FoilingData::PAIRS`]: pitch RMAX, pitch LIMIT, height CMD.
+    pairs: [(Option<f32>, Option<f32>); 3],
+}
+
+impl FoilingData {
+    /// The cells that hold an up/down pair, in `pairs` order.
+    const PAIRS: [(FoilColumn, u8); 3] = [
+        (FoilColumn::Pitch, 7),
+        (FoilColumn::Pitch, 8),
+        (FoilColumn::Mid, 6),
+    ];
+
+    fn values_mut(&mut self, column: FoilColumn, row: u8) -> Option<&mut DisplayValue<Reading>> {
+        let index = usize::from(row);
+        match column {
+            FoilColumn::Pitch => self.pitch.get_mut(index - 1),
+            FoilColumn::Roll => self.roll.get_mut(index - 1),
+            // The stacked columns are several tables deep, so the row has to be
+            // resolved against the same block layout the renderer draws from.
+            FoilColumn::Mid | FoilColumn::Right => {
+                type Blocks<'a> = (&'a [(u8, u8)], [&'a mut [DisplayValue<Reading>]; 3]);
+                let (offsets, arrays): Blocks<'_> = if matches!(column, FoilColumn::Mid) {
+                    (
+                        &[(1, 7), (9, 4)],
+                        [&mut self.height, &mut self.rear, &mut []],
+                    )
+                } else {
+                    (
+                        &[(1, 6), (8, 4), (12, 1)],
+                        [&mut self.turn, &mut self.mode, &mut self.global],
+                    )
+                };
+                for (&(first, len), array) in offsets.iter().zip(arrays) {
+                    if row >= first && row < first + len {
+                        return array.get_mut(usize::from(row - first));
+                    }
+                }
+                None
+            }
+            FoilColumn::Slot => None,
+        }
+    }
+
+    /// Apply one `0x261` read-back.
+    fn ingest_param(&mut self, index: u8, value: Option<f32>) {
+        let Some((column, row, half)) = cell_for_index(index) else {
+            return;
+        };
+
+        let reading = match half {
+            PairHalf::Whole => value.map(Reading::One),
+            _ => {
+                let slot = Self::PAIRS
+                    .iter()
+                    .position(|&cell| cell == (column, row))
+                    .expect("every paired index maps to a PAIRS cell");
+                let pair = &mut self.pairs[slot];
+                if matches!(half, PairHalf::Up) {
+                    pair.0 = value;
+                } else {
+                    pair.1 = value;
+                }
+                // Published only once both halves are known: half a pair cannot be
+                // drawn honestly, and the tuner dumps the whole table at connect,
+                // so the gap is brief.
+                match *pair {
+                    (Some(up), Some(down)) => Some(Reading::UpDown(up, down)),
+                    _ => None,
+                }
+            }
+        };
+
+        let Some(reading) = reading else {
+            return;
+        };
+
+        // The status line's `from` is the value before this burst, so a run of
+        // steps on one cell reads as a single movement. A different cell starts a
+        // new burst.
+        if let Some(previous) = self.values_mut(column, row).and_then(|v| v.get().copied()) {
+            let (was, is) = (first_of(previous), first_of(reading));
+            if (was - is).abs() > f32::EPSILON {
+                let from = match self.last_edit {
+                    Some(edit) if edit.column == column && edit.row == row => edit.from,
+                    _ => was,
+                };
+                self.last_edit = Some(FoilEdit {
+                    column,
+                    row,
+                    from,
+                    to: is,
+                });
+            }
+        }
+
+        if let Some(slot) = self.values_mut(column, row) {
+            slot.update(reading);
+        }
+
+        // The tuner re-requests the selected cell once the cursor settles, so the
+        // most recent read-back is where it is. Fragile by construction -- during
+        // the connect-time dump this walks the whole table before settling -- but
+        // it is the mechanism the protocol offers, and the re-request corrects it
+        // within a second. An explicit cursor frame would be better.
+        self.cursor.update(FoilCursor { column, row });
+    }
+}
+
+/// The number a reading leads with, for comparing one against another.
+fn first_of(reading: Reading) -> f32 {
+    match reading {
+        Reading::One(v) | Reading::UpDown(v, _) => v,
+    }
 }
 
 #[derive(Debug, Default)]
@@ -290,6 +408,23 @@ pub struct DisplayData {
 impl DisplayData {
     pub fn ingest_eoi_can_data(&mut self, data: EoiCanData) {
         match data {
+            EoiCanData::FoilTune(value) => match value {
+                FoilTuneValue::Param {
+                    index,
+                    status,
+                    value,
+                } => {
+                    // A status other than ok/clamped/locked is sent with a value of
+                    // zero, so the float is dropped rather than drawn: an
+                    // unavailable `HYD_*` must read as dashes, not as a gain of 0.
+                    self.foiling
+                        .ingest_param(index, status.has_value().then_some(value));
+                }
+                // Neither is a parameter, and the display needs neither: the
+                // version is the tuner's concern and the dump marker only brackets
+                // a burst.
+                FoilTuneValue::ProtocolVersion(_) | FoilTuneValue::DumpComplete(_) => {}
+            },
             EoiCanData::EoiBattery(eoi_battery) => match eoi_battery {
                 EoiBattery::ChargeAndDischargeCurrent(data) => {
                     self.battery_current_in.update(data.charge_current);
@@ -521,5 +656,208 @@ impl MpptId {
     fn of_strap(strap: u8) -> Self {
         let (side, position) = gan_side_and_position(strap);
         Self { side, position }
+    }
+}
+
+#[cfg(test)]
+mod foil_ingest_tests {
+    use super::*;
+    use embedded_can::{Id, StandardId};
+    use eoi_can_decoder::can_frame::CanFrame;
+    use eoi_can_decoder::parse_eoi_can_data;
+
+    /// One `0x261 PARAM_VALUE` frame, as `foil_tune.lua` sends it.
+    fn value_frame(index: u8, status: u8, value: f32) -> CanFrame {
+        let bytes = value.to_le_bytes();
+        CanFrame::from_encoded(
+            Id::Standard(StandardId::new(0x261).unwrap()),
+            &[index, status, bytes[0], bytes[1], bytes[2], bytes[3]],
+        )
+    }
+
+    fn feed(data: &mut DisplayData, index: u8, status: u8, value: f32) {
+        let parsed = parse_eoi_can_data(&value_frame(index, status, value)).expect("decodes");
+        data.ingest_eoi_can_data(parsed);
+    }
+
+    /// Index 16 is `PTCH_RATE_P`, which the screen draws at Pitch row 1.
+    #[test]
+    fn a_readback_lands_in_its_cell() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 2.93);
+        assert_eq!(
+            data.foiling.pitch[0].get().copied(),
+            Some(Reading::One(2.93))
+        );
+        // The roll side of the same row is a different parameter and untouched.
+        assert_eq!(data.foiling.roll[0].get().copied(), None);
+        feed(&mut data, 1, 0, 0.33);
+        assert_eq!(
+            data.foiling.roll[0].get().copied(),
+            Some(Reading::One(0.33))
+        );
+    }
+
+    /// A parameter that does not exist yet is sent with a value of zero, which must
+    /// not be drawn: `HYD_*` reads back unavailable until `hydrofoils.lua` has
+    /// created them, and a gain of 0 would look like a deliberate setting.
+    #[test]
+    fn an_unavailable_parameter_leaves_the_cell_empty() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 32, 4, 0.0);
+        assert_eq!(data.foiling.height[0].get().copied(), None);
+        // Locked still carries the live value, so that one lands.
+        feed(&mut data, 32, 5, 1200.0);
+        assert_eq!(
+            data.foiling.height[0].get().copied(),
+            Some(Reading::One(1200.0))
+        );
+    }
+
+    /// The height command clamps are two parameters in one cell, so neither half
+    /// may overwrite the other, and nothing is drawn until both have arrived.
+    #[test]
+    fn a_pair_needs_both_halves() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 52, 0, 5.0); // HYD_CMDMAX
+        assert_eq!(
+            data.foiling.height[5].get().copied(),
+            None,
+            "half a pair cannot be drawn honestly"
+        );
+        feed(&mut data, 53, 0, -8.0); // HYD_CMDMIN
+        assert_eq!(
+            data.foiling.height[5].get().copied(),
+            Some(Reading::UpDown(5.0, -8.0))
+        );
+        // A later update to one half keeps the other.
+        feed(&mut data, 52, 0, 4.5);
+        assert_eq!(
+            data.foiling.height[5].get().copied(),
+            Some(Reading::UpDown(4.5, -8.0))
+        );
+    }
+
+    /// The pitch rate max is a pair too, and reads as one number while its halves
+    /// agree -- the renderer collapses it, so both are always stored.
+    #[test]
+    fn a_symmetric_pair_is_still_stored_as_two_halves() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 22, 0, 60.0);
+        feed(&mut data, 23, 0, 60.0);
+        assert_eq!(
+            data.foiling.pitch[6].get().copied(),
+            Some(Reading::UpDown(60.0, 60.0))
+        );
+    }
+
+    /// A run of steps on one cell reads as a single movement: `from` is the value
+    /// the burst started at, not the previous keypress.
+    #[test]
+    fn an_edit_burst_holds_its_starting_value() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 2.10);
+        assert!(
+            data.foiling.last_edit.is_none(),
+            "the first read is not an edit"
+        );
+
+        feed(&mut data, 16, 0, 2.15);
+        feed(&mut data, 16, 0, 2.20);
+        let edit = data.foiling.last_edit.expect("an edit");
+        assert_eq!((edit.column, edit.row), (FoilColumn::Pitch, 1));
+        assert!(
+            (edit.from - 2.10).abs() < 1e-6,
+            "from held across the burst"
+        );
+        assert!((edit.to - 2.20).abs() < 1e-6);
+
+        // A different cell starts a new burst.
+        feed(&mut data, 1, 0, 0.33);
+        feed(&mut data, 1, 0, 0.35);
+        let edit = data.foiling.last_edit.expect("an edit");
+        assert_eq!((edit.column, edit.row), (FoilColumn::Roll, 1));
+        assert!((edit.from - 0.33).abs() < 1e-6);
+    }
+
+    /// The tuner re-requests the selected cell once the cursor settles, so the most
+    /// recent read-back is where it is.
+    #[test]
+    fn the_cursor_follows_the_last_readback() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 44, 0, 4.0); // TRN_RATE -> Right row 5
+        assert_eq!(
+            data.foiling.cursor.get().copied(),
+            Some(FoilCursor {
+                column: FoilColumn::Right,
+                row: 5
+            })
+        );
+    }
+
+    /// The cursor is inferred from the last read-back, which is what the protocol
+    /// offers -- there is no cursor frame. During the connect-time dump that walks
+    /// the whole table and ends up wherever the dump ended, which is wrong; the
+    /// tuner's re-request of the selected cell then corrects it.
+    ///
+    /// This is the weakest part of the wire contract and the test says so: an
+    /// explicit cursor frame would remove the transient entirely.
+    #[test]
+    fn the_cursor_settles_after_a_dump_corrects_it() {
+        let mut data = DisplayData::default();
+        // A dump, in index order, ending on SCR_USER4 -> Right row 11.
+        for index in [16, 17, 32, 40, 48, 49, 50, 51] {
+            feed(&mut data, index, 0, 1.0);
+        }
+        assert_eq!(
+            data.foiling.cursor.get().copied(),
+            Some(FoilCursor {
+                column: FoilColumn::Right,
+                row: 11
+            }),
+            "mid-dump the cursor sits wherever the dump ended"
+        );
+
+        // The tuner re-requests the selected cell once the cursor settles.
+        feed(&mut data, 16, 0, 1.0);
+        assert_eq!(
+            data.foiling.cursor.get().copied(),
+            Some(FoilCursor {
+                column: FoilColumn::Pitch,
+                row: 1
+            }),
+            "the re-request puts it where the operator actually is"
+        );
+    }
+
+    /// Every index in the tuner's table has to land somewhere drawable, or a
+    /// parameter would arrive and vanish.
+    #[test]
+    fn every_tuner_index_maps_to_a_cell() {
+        let indices = [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
+            28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 52, 53,
+            54, 55, 56, 57,
+        ];
+        assert_eq!(indices.len(), 50, "foil_tune.lua PROTO_VERSION 7 has 50");
+        let mut data = DisplayData::default();
+        for index in indices {
+            let cell = render::foiling::cell_for_index(index);
+            assert!(cell.is_some(), "index {index} has no cell");
+            let (column, row, _) = cell.unwrap();
+            // Reachable in the data as well as on the map.
+            feed(&mut data, index, 0, 1.0);
+            assert!(
+                data.foiling.values_mut(column, row).is_some(),
+                "index {index} maps to {column:?} row {row}, which has no slot"
+            );
+        }
+        // Retired and unused indices must not resolve.
+        for index in [0, 13, 14, 15, 37, 38, 46, 47, 58, 200, 0xFD] {
+            assert!(
+                render::foiling::cell_for_index(index).is_none(),
+                "index {index} should not map anywhere"
+            );
+        }
     }
 }

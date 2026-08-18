@@ -33,13 +33,14 @@ DIGITS_PCT = DIGITS + "%"
 DIGIT_PCT_MAP = "32,37,45,46,48-58"
 # Printable ASCII, plus U+00B0 DEGREE SIGN for "°C" and U+2191/U+2193 ARROWS for
 # the foiling screen, which marks an asymmetric up/down parameter pair as
-# "5.0↑ 8.0↓" and collapses a symmetric one to a single number.
+# "5.0↑ 8.0↓" and collapses a symmetric one to a single number. U+00B5 MICRO SIGN
+# is for that screen's units column ("µs", the rear-foil jog PWM).
 #
 # Verify after regenerating: bdfconv drops a glyph the TTF does not have without
 # complaining, and a missing glyph only shows up as a `map_font_err` panic at
 # runtime. `fonts/README.md` has the check.
-ASCII = "".join(chr(c) for c in range(32, 127)) + "°↑↓"
-ASCII_MAP = "32-126,176,8593,8595"
+ASCII = "".join(chr(c) for c in range(32, 127)) + "°↑↓µ"
+ASCII_MAP = "32-126,176,8593,8595,181"
 
 # (blob name, measured glyph, target height in px, glyph set, bdfconv map, build mode)
 #   Everything uses build mode 0 (proportional). Plex Sans has tabular figures --
@@ -55,6 +56,10 @@ SPECS = [
     ("plex_big49_tn",   "0", 49, DIGITS_PCT, DIGIT_PCT_MAP, 0),
     ("plex_mid30_tn",   "0", 30, DIGITS, DIGIT_MAP, 0),
     ("plex_small14_tf", "T", 14, ASCII,  ASCII_MAP, 0),
+    # Two points smaller, for the foiling screen's four tables. A separate blob
+    # rather than shrinking the shared one: the dashboard's layout is tuned around
+    # a 14px cap and every constant in `render/dashboard.rs` derives from it.
+    ("plex_small12_tf", "T", 12, ASCII,  ASCII_MAP, 0),
 ]
 
 
@@ -88,7 +93,32 @@ def solve_em(ttf, weight, ch, target):
 MAX_FIELD_BITS = 7
 
 
-def check_bitfields(name, verbose_output):
+def glyph_maxima(bdf):
+    """Largest width and height of any single glyph in a BDF.
+
+    Not the same thing as bdfconv's `CalculateMaxBBX`, which reports the *union*
+    of every glyph box -- `max(y_off + h) - min(y_off)` and the same in x. The
+    union is one or two pixels larger than the tallest glyph whenever the
+    highest-reaching glyph is not also the deepest-descending one, which for a
+    text font is always. A u8g2 glyph stores its own width and height in those
+    bit fields, so the per-glyph maximum is what has to fit; comparing the union
+    rejects perfectly good fonts. That is what used to make a 12px cap look
+    impossible: bdfconv had correctly given `bbx.h` five bits for a 16px glyph,
+    and this check compared it against a 17px union.
+    """
+    widths, heights = [], []
+    with open(bdf) as handle:
+        for line in handle:
+            if line.startswith("BBX "):
+                _, w, h, _, _ = line.split()
+                widths.append(int(w))
+                heights.append(int(h))
+    if not widths:
+        sys.exit("%s: no glyphs found; refusing to ship an unverified font" % bdf)
+    return max(widths), max(heights)
+
+
+def check_bitfields(name, verbose_output, bdf):
     """Fail on a font bdfconv encoded in a way that cannot be decoded correctly.
 
     Two separate traps, both silent -- bdfconv exits 0 either way:
@@ -118,8 +148,10 @@ def check_bitfields(name, verbose_output):
                      "advances. Reduce the target size."
                      % (name, nbits, field, MAX_FIELD_BITS))
 
-    for what, value, nbits in (("width", int(maxbbx.group(1)), bits["w"]),
-                               ("height", int(maxbbx.group(2)), bits["h"]),
+    # Per-glyph maxima, not bdfconv's union box -- see glyph_maxima.
+    max_w, max_h = glyph_maxima(bdf)
+    for what, value, nbits in (("width", max_w, bits["w"]),
+                               ("height", max_h, bits["h"]),
                                ("advance", int(dwidth.group(2)), bits["dwidth"])):
         limit = (1 << nbits) - 1
         if value > limit:
@@ -149,7 +181,7 @@ def main():
         out = subprocess.run([BDFCONV, "-v", "-f", "1", "-b", str(mode), "-m", cmap,
                               bdf, "-o", cfile, "-n", "u8g2_font_" + name],
                              check=True, capture_output=True, text=True).stdout
-        check_bitfields(name, out)
+        check_bitfields(name, out, bdf)
         subprocess.run([sys.executable, C2BIN, cfile, blob],
                        check=True, stdout=subprocess.DEVNULL)
 

@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+mod demo;
+
 use clap::Parser;
 use embedded_can::Frame;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
@@ -25,6 +27,12 @@ struct Args {
     /// Screen layout to draw: dashboard or foiling
     #[arg(short, long, default_value_t = draw_display::Layout::default())]
     layout: draw_display::Layout,
+
+    /// Fill the foiling screen with plausible values instead of waiting for CAN.
+    /// Nothing broadcasts foiling parameters yet, so without this every cell of
+    /// that layout draws a dash.
+    #[arg(long)]
+    demo: bool,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -102,7 +110,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
     );
 
     let mut display_data = draw_display::DisplayData::default();
+    let mut tick = 0_u32;
 
+    if args.demo {
+        demo::populate(&mut display_data, tick);
+    }
     args.layout.draw(&mut display, &display_data).unwrap();
 
     tokio::time::sleep(Duration::from_millis(1000)).await; // load CAN data
@@ -133,6 +145,10 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 display_data.ip_address.update(ip);
             }
 
+            if args.demo {
+                tick = tick.wrapping_add(1);
+                demo::populate(&mut display_data, tick);
+            }
             args.layout.draw(&mut display, &display_data).unwrap();
             window.update(&display);
         }
