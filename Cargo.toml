@@ -4,6 +4,15 @@ resolver = "3"
 members = [ "eoi-can-display-simulator", "eoi-can-display-framebuffer", "draw-display", "eoi-can-decoder", "eoi-gnss-to-can" , "get-wifi-ip", "eoi-can-to-mqtt", "pisugar", "mppt-layout", "eoi-candump-to-csv", "eoi-can-control-cli"]
 exclude = [ "firmware", "firmware/flash-tool", "fuzz" ]
 
+# Debug symbols in release builds, for `cargo flamegraph` and `perf` on the host
+# tools -- added for the simulator (c0d4797) but declared in that package, where
+# Cargo ignores it: only the workspace root's profiles are honoured, and a member
+# that sets one gets the "profiles for the non root package will be ignored"
+# warning on every build. Applies to the whole workspace, which is what a shared
+# profile means; it costs binary size on disk and nothing at runtime.
+[profile.release]
+debug = true
+
 [workspace.dependencies]
 embedded-graphics = "0.8.1"
 clap = { version = "4.5.37", features = [ "derive" ] }
