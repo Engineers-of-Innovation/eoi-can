@@ -31,9 +31,15 @@ DIGIT_MAP = "32,45,46,48-58"
 # in its subset.
 DIGITS_PCT = DIGITS + "%"
 DIGIT_PCT_MAP = "32,37,45,46,48-58"
-# Printable ASCII plus U+00B0 DEGREE SIGN, which "°C" needs.
-ASCII = "".join(chr(c) for c in range(32, 127)) + "°"
-ASCII_MAP = "32-126,176"
+# Printable ASCII, plus U+00B0 DEGREE SIGN for "°C" and U+2191/U+2193 ARROWS for
+# the foiling screen, which marks an asymmetric up/down parameter pair as
+# "5.0↑ 8.0↓" and collapses a symmetric one to a single number.
+#
+# Verify after regenerating: bdfconv drops a glyph the TTF does not have without
+# complaining, and a missing glyph only shows up as a `map_font_err` panic at
+# runtime. `fonts/README.md` has the check.
+ASCII = "".join(chr(c) for c in range(32, 127)) + "°↑↓"
+ASCII_MAP = "32-126,176,8593,8595"
 
 # (blob name, measured glyph, target height in px, glyph set, bdfconv map, build mode)
 #   Everything uses build mode 0 (proportional). Plex Sans has tabular figures --

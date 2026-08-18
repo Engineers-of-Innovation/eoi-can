@@ -142,13 +142,14 @@ fn dashboard_renders_are_unchanged() {
 
 #[test]
 fn foiling_renders_are_unchanged() {
-    // Placeholder layout: the title and nothing else, so both data sets render
-    // identically until the real geometry lands.
+    // Only the stale case: a populated one would need every parameter set up
+    // here, which duplicates what the layout's own tests already pin. This
+    // catches the labels, hotkeys, headings and column positions moving.
     assert_render(
         "foiling/stale",
         draw_display::draw_foiling,
         &stale(),
-        0x0e13_0489_93f0_f761,
-        940,
+        0x0e10_1645_f652_abc9,
+        18876,
     );
 }

@@ -1,23 +1,34 @@
 # Display fonts
 
 Pre-rasterised u8g2 font blobs for the 5.79" panel, included by
-[`../src/render.rs`](../src/render.rs) via `include_bytes!`.
+[`../src/render/mod.rs`](../src/render/mod.rs) via `include_bytes!`.
 
 | Blob | Digit height | Advance | Size | Used for |
 | --- | --- | --- | --- | --- |
 | `plex_net58_tn` | 58 px | 48 px | 1172 B | net power, the left column's headline |
 | `plex_big49_tn` | 49 px | 40 px | 1096 B | state of charge, the speed's dot and tenth, `%` |
 | `plex_mid30_tn` | 29 px | 24 px | 567 B | all three times, power in/out, temperatures |
-| `plex_small14_tf` | 14 px cap | 12 px | 1842 B | all labels |
+| `plex_small14_tf` | 14 px cap | 12 px | 1901 B | all labels |
 
 All [IBM Plex Sans](https://fonts.google.com/specimen/IBM+Plex+Sans) at **weight
 500 (Medium)**, from `ofl/ibmplexsans/IBMPlexSans[wdth,wght].ttf` in
-google/fonts. The `wght` axis runs 100–700. OFL-licensed; [`OFL.txt`](OFL.txt)
+google/fonts — exactly:
+
+```
+https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsans/IBMPlexSans%5Bwdth%2Cwght%5D.ttf
+```
+
+The `wght` axis runs 100–700. Note the file name lists its axes alphabetically
+but `fvar` orders them `wght` then `wdth`, which is what `ttf2bdf.py` assumes
+when it pins the weight and leaves the rest at their defaults. OFL-licensed; [`OFL.txt`](OFL.txt)
 must ship alongside these blobs.
 
 The value fonts carry ` -.:0123456789`, plus `%` for `plex_big49_tn`, which draws
-the state of charge's sign. The label font carries printable ASCII plus U+00B0 for
-`°C`. 4677 B total, all in flash — blobs are decoded straight to the draw target,
+the state of charge's sign. The label font carries printable ASCII, U+00B0 for
+`°C`, and U+2191/U+2193 for the foiling screen, which marks a diverged up/down
+parameter pair as `5.0↑ 8.0↓` and collapses a symmetric one to a single number.
+An arrow is 17 px wide — wider than a three-digit number — which is what sizes
+that screen's pitch column. 4677 B total, all in flash — blobs are decoded straight to the draw target,
 so they cost no RAM.
 
 A glyph a font is asked to draw but does not have panics through `map_font_err`,
@@ -111,6 +122,27 @@ Then, from the repo root:
 BDFCONV=/path/to/u8g2/tools/font/bdfconv/bdfconv \
   support/build-fonts.py /path/to/IBMPlexSans.ttf 500 draw-display/fonts
 ```
+
+**Check the regeneration reproduced the old blobs.** The three digit fonts have a
+fixed glyph set, so any change to them means the face, weight or pipeline moved,
+not the subset:
+
+```sh
+cargo test -p draw-display          # font_metrics_match_their_consts pins every advance
+git status draw-display/fonts/       # only the blob whose subset you changed may differ
+```
+
+`font_metrics_match_their_consts` fails if an advance drifts, and the golden
+renders in [`../tests/golden.rs`](../tests/golden.rs) fail if a single pixel
+moves. Adding U+2191/U+2193 left `plex_net58_tn`, `plex_big49_tn` and
+`plex_mid30_tn` byte-identical and both dashboard hashes unchanged, which is what
+a subset-only change should look like.
+
+**A missing glyph is not an error.** `bdfconv` drops a character the TTF lacks
+without a word, and `u8g2-fonts` then panics *inside its own glyph search* when
+asked to draw it — before `map_font_err` can turn it into a `Result`. So coverage
+has to be tested, not handled: see `every_glyph_this_screen_draws_exists` in
+[`../src/render/foiling.rs`](../src/render/foiling.rs).
 
 The pipeline is `TTF → BDF → C array → raw blob`:
 

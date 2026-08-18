@@ -144,6 +144,91 @@ impl<T> Default for DisplayValue<T> {
     }
 }
 
+/// A parameter value: one number, or an up/down pair that has diverged.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub enum Reading {
+    /// One number, or an up/down pair that currently agrees.
+    One(f32),
+    /// An up/down pair that has diverged, drawn as `up^ down v`.
+    UpDown(f32, f32),
+}
+
+/// Which value column a cell is in. The row is the screen row, so the
+/// datalogger addresses a cell without either side agreeing a parameter numbering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub enum FoilColumn {
+    Pitch,
+    Roll,
+    /// The height and rear loops.
+    Mid,
+    /// Turn, mode and the global scaling speed.
+    Right,
+    /// A config slot.
+    Slot,
+}
+
+/// The cell the datalogger has selected, drawn inverted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct FoilCursor {
+    pub column: FoilColumn,
+    /// Screen row, the header being row 0.
+    pub row: u8,
+}
+
+/// The last parameter change, for the status line.
+///
+/// `from` is the value before the current edit *burst*, not before the last
+/// keypress: holding `+` walks `to` upwards while `from` stays put, so the line
+/// reads as one movement rather than a stream of single steps. The datalogger
+/// owns that distinction -- it decides when a burst starts.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct FoilEdit {
+    pub column: FoilColumn,
+    pub row: u8,
+    pub from: f32,
+    pub to: f32,
+}
+
+/// Everything the foiling screen draws.
+///
+/// Deliberately not one flat array indexed by ArduPilot parameter number: the
+/// screen is addressed by column and row, so a renumbering upstream cannot
+/// silently move a value to the wrong row.
+#[derive(Debug, Default)]
+pub struct FoilingData {
+    /// The axis rate loops, one entry per screen row.
+    pub pitch: [DisplayValue<Reading>; 13],
+    pub roll: [DisplayValue<Reading>; 13],
+    pub height: [DisplayValue<Reading>; 7],
+    pub rear: [DisplayValue<Reading>; 4],
+    pub turn: [DisplayValue<Reading>; 6],
+    pub mode: [DisplayValue<Reading>; 4],
+    pub global: [DisplayValue<Reading>; 1],
+    /// Store time per slot: `None` never stored, `Some(None)` stored without a
+    /// GNSS fix, `Some(Some((h, m)))` stored at that time.
+    pub slots: [DisplayValue<Option<(u8, u8)>>; 9],
+    pub cursor: DisplayValue<FoilCursor>,
+    /// Held until the next edit arrives rather than timing out: the point of the
+    /// line is to still be readable a while after the change.
+    pub last_edit: Option<FoilEdit>,
+}
+
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
@@ -198,6 +283,8 @@ pub struct DisplayData {
     pub height_sensor_front_right: DisplayValue<u16>,
     pub temperature_height_sensors_controller: DisplayValue<f32>,
     pub temperature_rudder_controller: DisplayValue<f32>,
+    /// Only the foiling layout draws these; the dashboard ignores them.
+    pub foiling: FoilingData,
 }
 
 impl DisplayData {
