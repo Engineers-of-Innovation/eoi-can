@@ -19,6 +19,7 @@ pub enum EoiCanData {
     Temperature(TemperatureData),
     DataLogger(DataLoggerData),
     FoilTune(FoilTuneValue),
+    FoilConfig(FoilConfig),
 }
 
 /// How the flight controller answered a parameter read or write.
@@ -88,6 +89,100 @@ pub enum FoilTuneValue {
     /// sent. Useful as the bracket around a dump, so a listener can tell a burst
     /// of readings from a single one.
     DumpComplete(u16),
+}
+
+/// What one of the datalogger's configuration slots holds.
+///
+/// The tunes themselves live in the datalogger's RAM; this is only what the
+/// display needs to label the slot with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FoilSlot {
+    /// Nothing stored, or wiped by a reboot.
+    Empty,
+    /// A tune, stored at this time of day: hour 0-23, minute 0-59.
+    StoredAt(u8, u8),
+    /// A tune stored while there was no GNSS fix, so there is no time to show it
+    /// by. Not expected in service -- nobody stores a tune without speed -- but
+    /// the display has a shape for it.
+    Stored,
+    /// A state byte this decoder does not know, kept so a protocol bump is visible
+    /// rather than silently reinterpreted.
+    Unknown(u8),
+}
+
+impl From<&[u8]> for FoilSlot {
+    /// From `[state, hour, minute]`, the tail of both slot messages. A truncated
+    /// frame reads as `Empty`: the fields are only meaningful for a stored tune.
+    fn from(fields: &[u8]) -> Self {
+        match fields.first() {
+            Some(0) | None => Self::Empty,
+            Some(1) => match (fields.get(1), fields.get(2)) {
+                (Some(&hour), Some(&minute)) => Self::StoredAt(hour, minute),
+                // Claims a time and does not carry one.
+                _ => Self::Stored,
+            },
+            Some(2) => Self::Stored,
+            Some(&other) => Self::Unknown(other),
+        }
+    }
+}
+
+/// What the datalogger just did to a configuration slot, which the display shows
+/// in words. The keyboard is on the datalogger, so this is the only way the
+/// display can know a key was pressed at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FoilConfigAction {
+    /// The live tune was written into the slot.
+    Stored,
+    /// The slot was written back to the flight controller.
+    Restored,
+    /// The last change was undone.
+    Undone,
+    /// The factory tune was restored.
+    FactoryReset,
+    /// The live tune was committed to the flight controller's flash, so it now
+    /// survives a power cycle. The nine slots are RAM; this is the one action that
+    /// leaves the boat retuned for good.
+    SavedToFlash,
+    /// An action byte this decoder does not know.
+    Unknown(u8),
+}
+
+impl From<u8> for FoilConfigAction {
+    fn from(raw: u8) -> Self {
+        match raw {
+            1 => Self::Stored,
+            2 => Self::Restored,
+            3 => Self::Undone,
+            4 => Self::FactoryReset,
+            5 => Self::SavedToFlash,
+            other => Self::Unknown(other),
+        }
+    }
+}
+
+/// The datalogger's half of the foil tuning protocol: the nine configuration
+/// slots it keeps, which the display only ever draws.
+///
+/// Two messages rather than one, because they answer different questions. The
+/// slot state is idempotent and repeated, so a display that reboots recovers the
+/// whole column; the event happens once and is what the status line reports. One
+/// message carrying both would make every repeat look like a fresh keypress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum FoilConfig {
+    /// `0x263`: what one slot holds. `slot` is 1-9, as printed on the screen.
+    Slot { slot: u8, contents: FoilSlot },
+    /// `0x264`: what just happened. `slot` is 1-9 for `Stored`/`Restored` and
+    /// meaningless for the other actions; `contents` is the tune involved, so the
+    /// status line can name its time without waiting for the next slot message.
+    Event {
+        action: FoilConfigAction,
+        slot: u8,
+        contents: FoilSlot,
+    },
 }
 
 #[derive(Debug)]
@@ -930,6 +1025,18 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 },
             }))
         }
+        // The datalogger's configuration slots. Sent by the datalogger, not the
+        // flight controller: it owns the stored tunes, and the display only draws
+        // them.
+        0x263 => Some(EoiCanData::FoilConfig(FoilConfig::Slot {
+            slot: *data.first()?,
+            contents: data.get(1..)?.into(),
+        })),
+        0x264 => Some(EoiCanData::FoilConfig(FoilConfig::Event {
+            action: (*data.first()?).into(),
+            slot: *data.get(1)?,
+            contents: data.get(2..)?.into(),
+        })),
         0x10 => Some(EoiCanData::RudderController(RudderControllerData::Servo(
             ServoData::Setpoint(bytes_le_to_u16(data.get(0..2)?)?),
         ))),
@@ -2035,5 +2142,71 @@ mod foil_tune_tests {
     #[test]
     fn a_truncated_frame_is_rejected() {
         assert!(parse_eoi_can_data(&frame(0x261, &[16, 0, 1, 2])).is_none());
+    }
+
+    /// The slot label the display draws: stored with a time, stored without one,
+    /// and never stored.
+    #[test]
+    fn a_slot_message_carries_what_the_slot_holds() {
+        for (name, bytes, expected) in [
+            (
+                "a stored tune",
+                [4, 1, 14, 32].as_slice(),
+                FoilSlot::StoredAt(14, 32),
+            ),
+            ("stored with no fix", &[4, 2, 0, 0], FoilSlot::Stored),
+            // Empty needs no time, so the two bytes may be left off entirely.
+            ("empty", &[4, 0], FoilSlot::Empty),
+            // A state this build does not know must not be read as a time, or a
+            // future state would come out as a plausible-looking 00:00.
+            (
+                "a state from a later protocol",
+                &[4, 9, 14, 32],
+                FoilSlot::Unknown(9),
+            ),
+        ] {
+            let Some(EoiCanData::FoilConfig(FoilConfig::Slot { slot, contents })) =
+                parse_eoi_can_data(&frame(0x263, bytes))
+            else {
+                panic!("{name}: not decoded as a slot");
+            };
+            assert_eq!((slot, contents), (4, expected), "{name}");
+        }
+    }
+
+    /// The event the status line reports. The actions without a slot still send the
+    /// bytes, so the frame is one shape.
+    #[test]
+    fn an_event_message_carries_the_action() {
+        let Some(EoiCanData::FoilConfig(FoilConfig::Event {
+            action,
+            slot,
+            contents,
+        })) = parse_eoi_can_data(&frame(0x264, &[2, 4, 1, 14, 32]))
+        else {
+            panic!("not decoded as an event");
+        };
+        assert_eq!(
+            (action, slot, contents),
+            (FoilConfigAction::Restored, 4, FoilSlot::StoredAt(14, 32))
+        );
+
+        assert!(matches!(
+            parse_eoi_can_data(&frame(0x264, &[4, 0, 0])),
+            Some(EoiCanData::FoilConfig(FoilConfig::Event {
+                action: FoilConfigAction::FactoryReset,
+                contents: FoilSlot::Empty,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            parse_eoi_can_data(&frame(0x264, &[7, 0, 0])),
+            Some(EoiCanData::FoilConfig(FoilConfig::Event {
+                action: FoilConfigAction::Unknown(7),
+                ..
+            }))
+        ));
+        // One byte is not an event: an action with no slot at all cannot be drawn.
+        assert!(parse_eoi_can_data(&frame(0x264, &[2])).is_none());
     }
 }

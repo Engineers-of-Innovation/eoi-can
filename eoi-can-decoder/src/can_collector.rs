@@ -10,7 +10,11 @@ use heapless::FnvIndexMap;
 /// overwrite each other and all but the last of a dump would be counted as
 /// dropped -- the display would learn one gain per redraw, which at a second per
 /// refresh is most of a minute to fill a screen.
-const MULTIPLEXED_IDS: [u32; 1] = [0x261];
+///
+/// `0x263` is the same shape for the nine configuration slots, keyed by the slot
+/// number in byte 0: eight of the nine would otherwise be dropped from every
+/// broadcast, and the column would show one slot's label at a time.
+const MULTIPLEXED_IDS: [u32; 2] = [0x261, 0x263];
 
 /// Key for one distinct reading: the raw ID, plus the sub-address for the IDs that
 /// carry several.

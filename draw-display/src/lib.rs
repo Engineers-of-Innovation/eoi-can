@@ -3,6 +3,10 @@
 mod render;
 mod time;
 
+/// Re-exported because [`FoilSlotEvent`] carries one: a consumer building or
+/// matching on a slot event needs to name the action without depending on the
+/// decoder directly.
+pub use eoi_can_decoder::FoilConfigAction;
 pub use render::dashboard::draw_display;
 pub use render::foiling::draw_foiling;
 pub use render::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
@@ -10,9 +14,10 @@ pub use render::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 use core::net::Ipv4Addr;
 
 use eoi_can_decoder::{
-    BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData,
-    FoilTuneValue, GanMpptPacket, GnssData, GnssDateTime, HeightSensorData, MpptChannel, MpptInfo,
-    TemperatureData, ThrottleData, ThrottleErrors, VescData,
+    BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData, FoilConfig,
+    FoilParamStatus, FoilSlot, FoilTuneValue, GanMpptPacket, GnssData, GnssDateTime,
+    HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors,
+    VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
 use render::foiling::{cell_for_index, PairHalf};
@@ -21,6 +26,15 @@ const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long a configuration-slot event keeps the status line to itself.
+///
+/// Restoring a slot writes the whole parameter table, so fifty read-backs arrive
+/// within milliseconds and each one is, to the display, a parameter that changed.
+/// Without this the line would report one of them instead of the restore that
+/// caused them. The cost is that a keypress within this window does not get the
+/// line, which at roughly a second per panel refresh is barely a frame or two.
+const SLOT_EVENT_HOLD: Duration = Duration::from_secs(3);
 
 /// Which screen to draw.
 ///
@@ -188,6 +202,26 @@ pub struct FoilCursor {
     pub row: u8,
 }
 
+/// Which end of a parameter's range a write ran into.
+///
+/// The flight controller clamps every write to the parameter's own min/max before
+/// setting it, and says so in the `0x261` status byte -- but the byte says only
+/// *that* it clamped, never which bound. Where the value moved, its direction
+/// gives that away; where the cell was already sitting on its limit, nothing on
+/// the bus says which way the helm pressed, and naming the wrong end would be
+/// worse than naming neither.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub enum FoilLimit {
+    Min,
+    Max,
+    /// Clamped against a bound that cannot be told apart from the bus alone.
+    Unknown,
+}
+
 /// The last parameter change, for the status line.
 ///
 /// `from` is the value before the current edit *burst*, not before the last
@@ -204,6 +238,44 @@ pub struct FoilEdit {
     pub row: u8,
     pub from: f32,
     pub to: f32,
+    /// Set where the flight controller clamped the write. `to` is then the value
+    /// that stuck, so a clamped edit with `from == to` is a keypress that moved
+    /// nothing -- which is exactly the case the status line has to explain.
+    pub clamped: Option<FoilLimit>,
+}
+
+/// A configuration slot action, for the status line.
+///
+/// The keyboard is on the datalogger and the slots live in its RAM, so this whole
+/// struct is read from the bus rather than worked out here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct FoilSlotEvent {
+    pub action: FoilConfigAction,
+    /// The slot as it is labelled on screen, 1-9. Not meaningful for the actions
+    /// that touch no slot.
+    pub slot: u8,
+    /// When the tune involved was stored, where that is known.
+    pub time: Option<(u8, u8)>,
+}
+
+/// Whatever the status line is currently reporting.
+///
+/// One field rather than one per kind: the line has room for a single sentence, so
+/// what it shows is simply the last thing that happened.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub enum FoilEvent {
+    /// A parameter moved, or a write was clamped.
+    Edit(FoilEdit),
+    /// A configuration slot was stored or restored.
+    Slot(FoilSlotEvent),
 }
 
 /// Everything the foiling screen draws.
@@ -217,7 +289,7 @@ pub struct FoilingData {
     pub pitch: [DisplayValue<Reading>; 13],
     pub roll: [DisplayValue<Reading>; 13],
     pub height: [DisplayValue<Reading>; 7],
-    pub rear: [DisplayValue<Reading>; 4],
+    pub rear: [DisplayValue<Reading>; 5],
     pub turn: [DisplayValue<Reading>; 6],
     pub mode: [DisplayValue<Reading>; 4],
     pub global: [DisplayValue<Reading>; 1],
@@ -225,9 +297,12 @@ pub struct FoilingData {
     /// GNSS fix, `Some(Some((h, m)))` stored at that time.
     pub slots: [DisplayValue<Option<(u8, u8)>>; 9],
     pub cursor: DisplayValue<FoilCursor>,
-    /// Held until the next edit arrives rather than timing out: the point of the
+    /// Held until the next event arrives rather than timing out: the point of the
     /// line is to still be readable a while after the change.
-    pub last_edit: Option<FoilEdit>,
+    pub last_event: Option<FoilEvent>,
+    /// When the last slot event arrived, which is how long its line is protected
+    /// from the read-backs it caused. See [`SLOT_EVENT_HOLD`].
+    slot_event_at: Option<Instant>,
     /// Both halves of each collapsed up/down pair, kept raw.
     ///
     /// A pair arrives as two separate `0x261` frames, so writing straight into
@@ -255,7 +330,7 @@ impl FoilingData {
                 type Blocks<'a> = (&'a [(u8, u8)], [&'a mut [DisplayValue<Reading>]; 3]);
                 let (offsets, arrays): Blocks<'_> = if matches!(column, FoilColumn::Mid) {
                     (
-                        &[(1, 7), (9, 4)],
+                        &[(1, 7), (8, 5)],
                         [&mut self.height, &mut self.rear, &mut []],
                     )
                 } else {
@@ -276,10 +351,15 @@ impl FoilingData {
     }
 
     /// Apply one `0x261` read-back.
-    fn ingest_param(&mut self, index: u8, value: Option<f32>) {
+    fn ingest_param(&mut self, index: u8, status: FoilParamStatus, value: f32) {
         let Some((column, row, half)) = cell_for_index(index) else {
             return;
         };
+
+        // A status other than ok/clamped/locked is sent with a value of zero, so
+        // the float is dropped rather than drawn: an unavailable `HYD_*` must read
+        // as dashes, not as a gain of 0.
+        let value = status.has_value().then_some(value);
 
         let reading = match half {
             PairHalf::Whole => value.map(Reading::One),
@@ -311,19 +391,44 @@ impl FoilingData {
         // The status line's `from` is the value before this burst, so a run of
         // steps on one cell reads as a single movement. A different cell starts a
         // new burst.
+        let clamped = matches!(status, FoilParamStatus::Clamped);
         if let Some(previous) = self.values_mut(column, row).and_then(|v| v.get().copied()) {
             let (was, is) = (first_of(previous), first_of(reading));
-            if (was - is).abs() > f32::EPSILON {
-                let from = match self.last_edit {
-                    Some(edit) if edit.column == column && edit.row == row => edit.from,
-                    _ => was,
-                };
-                self.last_edit = Some(FoilEdit {
+            let moved = (was - is).abs() > f32::EPSILON;
+            // A slot event owns the line for a moment: the read-backs a restore
+            // causes are exactly the ones that would otherwise replace it.
+            let held = self
+                .slot_event_at
+                .as_ref()
+                .is_some_and(|at| at.elapsed() < SLOT_EVENT_HOLD);
+            // A clamped write is an edit even when nothing moved: the helm pressed a
+            // key, the number stayed where it was, and the line is the only thing
+            // that can say why. An unchanged *unclamped* read is not an edit -- the
+            // tuner re-reads the whole table every second, and every one of those
+            // would otherwise replace the message.
+            if (moved || clamped) && !held {
+                let burst = self
+                    .last_edit()
+                    .filter(|edit| edit.column == column && edit.row == row);
+                // Which bound the write ran into, in order of how directly it is
+                // known: this frame's own movement; failing that the burst that led
+                // here, since a walk that was going up and has stopped is against
+                // its maximum; failing that the verdict of the press that first
+                // reached the stop. A burst that began against one says nothing
+                // about which it is.
+                let limit = clamped.then(|| {
+                    bound(is, was)
+                        .or_else(|| burst.and_then(|edit| bound(edit.to, edit.from)))
+                        .or_else(|| burst.and_then(|edit| edit.clamped))
+                        .unwrap_or(FoilLimit::Unknown)
+                });
+                self.last_event = Some(FoilEvent::Edit(FoilEdit {
                     column,
                     row,
-                    from,
+                    from: burst.map_or(was, |edit| edit.from),
                     to: is,
-                });
+                    clamped: limit,
+                }));
             }
         }
 
@@ -337,6 +442,73 @@ impl FoilingData {
         // it is the mechanism the protocol offers, and the re-request corrects it
         // within a second. An explicit cursor frame would be better.
         self.cursor.update(FoilCursor { column, row });
+    }
+
+    /// The last parameter edit, where that is what the line is showing. A slot
+    /// event ends a burst: the next keypress is a movement of its own.
+    fn last_edit(&self) -> Option<FoilEdit> {
+        match self.last_event {
+            Some(FoilEvent::Edit(edit)) => Some(edit),
+            _ => None,
+        }
+    }
+
+    /// Apply one configuration-slot message from the datalogger.
+    fn ingest_config(&mut self, message: FoilConfig) {
+        match message {
+            FoilConfig::Slot { slot, contents } => {
+                // Slots are numbered as they are labelled, from 1, so that the
+                // datalogger's key and this index cannot disagree.
+                let Some(cell) = slot
+                    .checked_sub(1)
+                    .and_then(|index| self.slots.get_mut(usize::from(index)))
+                else {
+                    return;
+                };
+                match contents {
+                    // Cleared rather than timed out, so wiping a slot shows up on
+                    // the next redraw instead of five seconds later.
+                    FoilSlot::Empty => *cell = DisplayValue::default(),
+                    FoilSlot::StoredAt(hour, minute) => cell.update(Some((hour, minute))),
+                    // A state from a later protocol still means "not empty", which
+                    // is the half of the label that matters: a slot drawn as empty
+                    // is one the helm would overwrite without thinking.
+                    FoilSlot::Stored | FoilSlot::Unknown(_) => cell.update(None),
+                }
+            }
+            FoilConfig::Event {
+                action,
+                slot,
+                contents,
+            } => {
+                // An action this build does not know is left alone: the line it
+                // would replace is at least true.
+                if matches!(action, FoilConfigAction::Unknown(_)) {
+                    return;
+                }
+                self.last_event = Some(FoilEvent::Slot(FoilSlotEvent {
+                    action,
+                    slot,
+                    time: match contents {
+                        FoilSlot::StoredAt(hour, minute) => Some((hour, minute)),
+                        _ => None,
+                    },
+                }));
+                self.slot_event_at = Some(Instant::now());
+            }
+        }
+    }
+}
+
+/// The bound a movement was heading for: up towards the maximum, down towards the
+/// minimum, and neither if it did not move.
+fn bound(to: f32, from: f32) -> Option<FoilLimit> {
+    if to > from {
+        Some(FoilLimit::Max)
+    } else if to < from {
+        Some(FoilLimit::Min)
+    } else {
+        None
     }
 }
 
@@ -414,17 +586,17 @@ impl DisplayData {
                     status,
                     value,
                 } => {
-                    // A status other than ok/clamped/locked is sent with a value of
-                    // zero, so the float is dropped rather than drawn: an
-                    // unavailable `HYD_*` must read as dashes, not as a gain of 0.
-                    self.foiling
-                        .ingest_param(index, status.has_value().then_some(value));
+                    // The status byte is passed on whole: it is what says whether a
+                    // frame carries a reading at all, and whether the write behind
+                    // it was clamped.
+                    self.foiling.ingest_param(index, status, value);
                 }
                 // Neither is a parameter, and the display needs neither: the
                 // version is the tuner's concern and the dump marker only brackets
                 // a burst.
                 FoilTuneValue::ProtocolVersion(_) | FoilTuneValue::DumpComplete(_) => {}
             },
+            EoiCanData::FoilConfig(message) => self.foiling.ingest_config(message),
             EoiCanData::EoiBattery(eoi_battery) => match eoi_battery {
                 EoiBattery::ChargeAndDischargeCurrent(data) => {
                     self.battery_current_in.update(data.charge_current);
@@ -680,6 +852,12 @@ mod foil_ingest_tests {
         data.ingest_eoi_can_data(parsed);
     }
 
+    /// Any frame by ID and bytes, for the slot messages the datalogger sends.
+    fn feed_raw(data: &mut DisplayData, id: u16, bytes: &[u8]) {
+        let frame = CanFrame::from_encoded(Id::Standard(StandardId::new(id).unwrap()), bytes);
+        data.ingest_eoi_can_data(parse_eoi_can_data(&frame).expect("decodes"));
+    }
+
     /// Index 16 is `PTCH_RATE_P`, which the screen draws at Pitch row 1.
     #[test]
     fn a_readback_lands_in_its_cell() {
@@ -758,13 +936,13 @@ mod foil_ingest_tests {
         let mut data = DisplayData::default();
         feed(&mut data, 16, 0, 2.10);
         assert!(
-            data.foiling.last_edit.is_none(),
+            data.foiling.last_edit().is_none(),
             "the first read is not an edit"
         );
 
         feed(&mut data, 16, 0, 2.15);
         feed(&mut data, 16, 0, 2.20);
-        let edit = data.foiling.last_edit.expect("an edit");
+        let edit = data.foiling.last_edit().expect("an edit");
         assert_eq!((edit.column, edit.row), (FoilColumn::Pitch, 1));
         assert!(
             (edit.from - 2.10).abs() < 1e-6,
@@ -775,9 +953,156 @@ mod foil_ingest_tests {
         // A different cell starts a new burst.
         feed(&mut data, 1, 0, 0.33);
         feed(&mut data, 1, 0, 0.35);
-        let edit = data.foiling.last_edit.expect("an edit");
+        let edit = data.foiling.last_edit().expect("an edit");
         assert_eq!((edit.column, edit.row), (FoilColumn::Roll, 1));
         assert!((edit.from - 0.33).abs() < 1e-6);
+    }
+
+    /// A write the flight controller clamped is an edit even when the number does
+    /// not move. Pressing `+` against a parameter's maximum changes nothing on
+    /// screen, so the status line is the only thing that can say why -- and it only
+    /// gets the chance if the clamped frame is recorded.
+    #[test]
+    fn a_clamped_write_is_an_edit_even_when_nothing_moves() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 7.98); // PTCH_RATE_P, an ordinary read-back
+        assert!(data.foiling.last_edit().is_none(), "a read is not an edit");
+
+        // Asked for more than 8, clamped to the parameter's maximum. The value did
+        // move, so which bound it hit is not in doubt.
+        feed(&mut data, 16, 2, 8.0);
+        let edit = data.foiling.last_edit().expect("an edit");
+        assert_eq!(edit.clamped, Some(FoilLimit::Max));
+        assert!((edit.from - 7.98).abs() < 1e-6);
+        assert!((edit.to - 8.0).abs() < 1e-6);
+
+        // Held against the stop: nothing moves now, and the bound is remembered
+        // from the press that reached it rather than being guessed again.
+        feed(&mut data, 16, 2, 8.0);
+        let edit = data.foiling.last_edit().expect("an edit");
+        assert_eq!(edit.clamped, Some(FoilLimit::Max));
+        assert!((edit.from - 7.98).abs() < 1e-6, "still one burst");
+    }
+
+    /// What a walk into a stop actually looks like on the bus: the step that lands
+    /// exactly on the bound reads back unclamped, and the *next* press is the
+    /// clamped one that moves nothing. The bound comes from the direction the burst
+    /// was already going.
+    #[test]
+    fn a_clamp_takes_its_bound_from_the_walk_that_reached_it() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 8, 0, 15.0); // ROLL_LIMIT_DEG, whose maximum is 20
+        feed(&mut data, 8, 0, 20.0); // a step that landed on it, so not clamped
+        feed(&mut data, 8, 2, 20.0); // and the press that goes nowhere
+        let edit = data.foiling.last_edit().expect("an edit");
+        assert_eq!(edit.clamped, Some(FoilLimit::Max));
+        assert!(
+            (edit.from - 15.0).abs() < 1e-6,
+            "one burst, from where it began"
+        );
+    }
+
+    /// Pressing against a cell that was already on its limit before the cursor
+    /// arrived: the value does not move and there is no earlier press to take a
+    /// direction from, so the bound is genuinely unknown and is not invented.
+    #[test]
+    fn a_clamp_with_no_history_does_not_name_the_bound() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 8.0);
+        feed(&mut data, 16, 2, 8.0);
+        let edit = data.foiling.last_edit().expect("an edit");
+        assert_eq!(edit.clamped, Some(FoilLimit::Unknown));
+        assert!((edit.from - edit.to).abs() < f32::EPSILON);
+    }
+
+    /// The tuner re-reads the whole table every second. Those re-reads carry the
+    /// same values and must not count as edits, or the status line would be
+    /// replaced by an empty movement several times a second.
+    #[test]
+    fn an_unchanged_readback_leaves_the_status_line_alone() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 4.05);
+        feed(&mut data, 16, 0, 4.07);
+        let edit = data.foiling.last_edit().expect("an edit");
+        feed(&mut data, 16, 0, 4.07);
+        assert_eq!(
+            data.foiling.last_edit(),
+            Some(edit),
+            "the dump changed nothing"
+        );
+        assert_eq!(edit.clamped, None);
+    }
+
+    /// The slot column is drawn from `0x263`, which the datalogger repeats: the
+    /// display keeps no configuration state of its own, so this is the only thing
+    /// that decides what a slot is labelled.
+    #[test]
+    fn a_slot_message_labels_its_slot() {
+        let mut data = DisplayData::default();
+        assert_eq!(
+            data.foiling.slots[3].get(),
+            None,
+            "empty until told otherwise"
+        );
+
+        feed_raw(&mut data, 0x263, &[4, 1, 14, 32]);
+        assert_eq!(data.foiling.slots[3].get().copied(), Some(Some((14, 32))));
+        // Slots are numbered as labelled, so slot 4 is the fourth cell and nothing
+        // else moved.
+        assert_eq!(data.foiling.slots[4].get(), None);
+
+        // Stored without a fix: something is there, but there is no time to show.
+        feed_raw(&mut data, 0x263, &[4, 2]);
+        assert_eq!(data.foiling.slots[3].get().copied(), Some(None));
+
+        // Wiped, which has to read as empty at once rather than after the staleness
+        // timeout.
+        feed_raw(&mut data, 0x263, &[4, 0]);
+        assert_eq!(data.foiling.slots[3].get(), None);
+
+        // Slot 0 does not exist -- the column is 1..9 -- and must not wrap onto the
+        // ninth.
+        feed_raw(&mut data, 0x263, &[0, 1, 9, 15]);
+        assert!(data.foiling.slots.iter().all(|slot| slot.get().is_none()));
+    }
+
+    /// Restoring a slot writes the whole table, so the read-backs that follow are
+    /// all parameters that changed. The line has to survive them, or the one thing
+    /// the helm needs to see -- that the restore happened -- is gone before the
+    /// panel has refreshed once.
+    #[test]
+    fn a_restore_holds_the_line_against_the_readbacks_it_causes() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 4.05);
+        feed_raw(&mut data, 0x264, &[2, 4, 1, 14, 32]); // config 4 restored
+
+        feed(&mut data, 16, 0, 2.10); // one of the fifty writes landing
+        assert_eq!(
+            data.foiling.last_event,
+            Some(FoilEvent::Slot(FoilSlotEvent {
+                action: FoilConfigAction::Restored,
+                slot: 4,
+                time: Some((14, 32)),
+            })),
+            "the restore still owns the line"
+        );
+        // The values themselves are not held back, only the sentence.
+        assert_eq!(
+            data.foiling.pitch[0].get().copied(),
+            Some(Reading::One(2.10))
+        );
+        assert!(data.foiling.last_edit().is_none());
+    }
+
+    /// An action from a later protocol tells the display nothing it can put into
+    /// words, so it leaves the line as it found it rather than blanking it.
+    #[test]
+    fn an_unknown_slot_action_is_ignored() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 4.05);
+        feed(&mut data, 16, 0, 4.07);
+        feed_raw(&mut data, 0x264, &[9, 4, 0]);
+        assert!(data.foiling.last_edit().is_some(), "the edit line stands");
     }
 
     /// The tuner re-requests the selected cell once the cursor settles, so the most
@@ -837,9 +1162,9 @@ mod foil_ingest_tests {
         let indices = [
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
             28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 52, 53,
-            54, 55, 56, 57,
+            54, 55, 56, 57, 59,
         ];
-        assert_eq!(indices.len(), 50, "foil_tune.lua PROTO_VERSION 7 has 50");
+        assert_eq!(indices.len(), 51, "foil_tune.lua PROTO_VERSION 9 has 51");
         let mut data = DisplayData::default();
         for index in indices {
             let cell = render::foiling::cell_for_index(index);

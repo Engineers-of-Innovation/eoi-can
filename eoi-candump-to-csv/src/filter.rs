@@ -130,6 +130,9 @@ impl Filter {
             // column per parameter would be mostly empty, since the flight
             // controller only answers what the tuner asks for.
             EoiCanData::FoilTune(_) => false,
+            // Configuration slots are a UI state for the foiling display, and the
+            // events are keypresses. Neither is a measurement.
+            EoiCanData::FoilConfig(_) => false,
         }
     }
 

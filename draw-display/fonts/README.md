@@ -8,12 +8,14 @@ Pre-rasterised u8g2 font blobs for the 5.79" panel, included by
 | `plex_net58_tn` | 58 px | 48 px | 1172 B | net power, the left column's headline |
 | `plex_big49_tn` | 49 px | 40 px | 1096 B | state of charge, the speed's dot and tenth, `%` |
 | `plex_mid30_tn` | 29 px | 24 px | 567 B | all three times, power in/out, temperatures |
-| `plex_small14_tf` | 14 px cap | 12 px | 1901 B | the dashboard's labels |
-| `plex_small12_tf` | 12 px cap | 10 px | 1586 B | the foiling screen, all of it |
+| `plex_small14_tf` | 14 px cap | 12 px | 1915 B | the dashboard's labels |
+| `plex_small12_tf` | 12 px cap | 10 px | 1599 B | the foiling screen's rows |
+| `plex_semi12_tf` | 12 px cap | 10 px | 1619 B | the foiling screen's table headings |
 
 All [IBM Plex Sans](https://fonts.google.com/specimen/IBM+Plex+Sans) at **weight
-500 (Medium)**, from `ofl/ibmplexsans/IBMPlexSans[wdth,wght].ttf` in
-google/fonts — exactly:
+500 (Medium)** except `plex_semi12_tf`, which is **600 (SemiBold)** so the foiling
+screen's headings read as headings, from
+`ofl/ibmplexsans/IBMPlexSans[wdth,wght].ttf` in google/fonts — exactly:
 
 ```
 https://raw.githubusercontent.com/google/fonts/main/ofl/ibmplexsans/IBMPlexSans%5Bwdth%2Cwght%5D.ttf
@@ -34,15 +36,25 @@ what sizes that screen's pitch column.
 The foiling screen runs two points smaller than the dashboard because it puts four
 tables abreast. A separate blob rather than shrinking the shared one: every
 constant in `render/dashboard.rs` derives from a 14 px cap, and that layout is
-tuned. 6322 B total, all in flash — blobs are decoded straight to the draw target,
+tuned. 7968 B total, all in flash — blobs are decoded straight to the draw target,
 so they cost no RAM.
+
+`plex_semi12_tf` is the same 12 px cap as `plex_small12_tf` and differs only in
+weight, so the headings sit on the same row grid as the rows beneath them. It stops
+at SemiBold rather than Bold because at this cap a bold `r` arm touches the
+following `n` and the Turn table's heading reads as "Tum"; the gap survives at 600
+and is gone by 650. Nothing can test that — both glyphs are drawn exactly where the
+font says — so it is checked by eye at 6x when the weight changes.
 
 A glyph a font is asked to draw but does not have panics through `map_font_err`,
 so subsets and call sites have to stay in step. Moving the `%` onto `FONT_BIG` hit
 exactly this.
 
-Weight does not affect advances or glyph heights, only stroke thickness, so
-changing it needs no layout changes. Every other property does: `render.rs`
+Weight leaves glyph *heights* alone but does widen advances: building the value
+fonts at 600 pushes `plex_big49_tn`'s advance to 64 px, which needs 8 bits and trips
+the decoder bug below. Anything measured from a font has to be measured from the one
+that draws it -- `headings_fit_beside_each_other` measures the headings against
+`FONT_HEADING`, not against `FONT_TINY`. Every other property is hardcoded: `render.rs`
 hardcodes `SPEED_DOT_W`, `NET_DIGIT_H`,
 `NET_DIGIT_W`, `NET_MINUS_W`, `BIG_DIGIT_H`, `BIG_DIGIT_W`, `MID_DIGIT_H`,
 `MID_DIGIT_W`, `MID_COLON_W`, `SMALL_CAP_H`, `SMALL_DIGIT_W`, `SMALL_DEG_C_W` and

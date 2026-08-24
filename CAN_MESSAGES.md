@@ -45,6 +45,11 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x203 | GnssLongitude | GNSS |
 | 0x204 | GnssDateTime | GNSS |
 | 0x205 | DataLoggerWifiIp | Data Logger |
+| 0x260 | FoilParamSet | Foil Tuner (Data Logger) |
+| 0x261 | FoilParamValue | Flight Controller (`foil_tune.lua`) |
+| 0x262 | FoilParamRequest | Foil Tuner (Data Logger) |
+| 0x263 | FoilConfigSlot | Data Logger |
+| 0x264 | FoilConfigEvent | Data Logger |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
@@ -206,6 +211,66 @@ the command ID against their own application type — rebooting one board leaves
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DataLoggerWifiIp | 0x205 | 4 | 0–3 | IPv4 address octets | u8 ×4 | | Address order: `192.168.1.5` → `C0 A8 01 05`. Sent every 1 s while the data logger has a WiFi IPv4; not sent otherwise |
+
+## Foil Tuning
+
+`0x260`-`0x262` are `foil_tune.lua`'s protocol, running between the tuning
+keyboard on the data logger and the flight controller. `0x263`-`0x264` are the
+data logger's own: it keeps the nine stored tunes in RAM, and the foiling display
+draws them.
+
+The display is read-only on all five. It holds no tuning or configuration state of
+its own, so everything it shows has to arrive on the bus, and anything it stops
+hearing about goes stale after 5 s.
+
+`index` is the parameter's number in `foil_tune.lua`'s table -- the wire contract
+between the two, listed with its range and step in `FOILING_PARAMETERS.md`.
+`0xFE` and `0xFF` are not parameters: they are the protocol version and the
+whole-table dump.
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FoilParamSet | 0x260 | 6 | 0 | Parameter index | u8 | | 1-59 |
+| | | | 1 | Flags | u8 bitfield | | bit 0 = write to EEPROM as well as RAM |
+| | | | 2-5 | Value | f32 | LE | In the units the screen shows |
+| FoilParamValue | 0x261 | 6 | 0 | Parameter index | u8 | | 1-59, or 0xFE version / 0xFF end-of-dump |
+| | | | 1 | Status | u8 enum | | 0=Ok, 1=UnknownIndex, 2=Clamped, 3=SetFailed, 4=Unavailable, 5=Locked |
+| | | | 2-5 | Value | f32 | LE | The read-back, post-clamp. Only statuses 0, 2 and 5 carry a real value; the others are sent as 0 |
+| FoilParamRequest | 0x262 | 1 | 0 | Parameter index | u8 | | 1-59, 0xFE for the version, 0xFF for a whole-table dump |
+| FoilConfigSlot | 0x263 | 4 | 0 | Slot | u8 | | 1-9, numbered as printed on the screen |
+| | | | 1 | State | u8 enum | | 0=Empty, 1=Stored (time in bytes 2-3), 2=Stored without a GNSS fix |
+| | | | 2 | Hour | u8 | | 0-23; ignored unless state 1 |
+| | | | 3 | Minute | u8 | | 0-59; ignored unless state 1 |
+| FoilConfigEvent | 0x264 | 5 | 0 | Action | u8 enum | | 1=Stored, 2=Restored, 3=Undone, 4=FactoryReset, 5=SavedToFlash |
+| | | | 1 | Slot | u8 | | 1-9 for actions 1 and 2; ignored otherwise |
+| | | | 2 | State | u8 enum | | As above, for the tune involved: 1 = the time in bytes 3-4 is good |
+| | | | 3 | Hour | u8 | | 0-23 |
+| | | | 4 | Minute | u8 | | 0-59 |
+
+**FoilConfigSlot** is what the slot column is labelled with, and it is idempotent:
+send all nine at ~1 Hz, alongside the tuner's own table read, and a display that
+reboots recovers the whole column. A slot sent as `Empty` reads as `empty`
+immediately; a slot nothing is sent for reads as `empty` after the 5 s timeout.
+
+**FoilConfigEvent** is one-shot, for the status line in the bottom-right corner.
+Action 5 is the `]` key: it is not a slot at all, but the live tune committed to
+the flight controller's flash with `0x260`'s persist flag, which is the one action
+here that outlives a power cycle.
+
+| Action | Slot | Time | Line |
+| --- | --- | --- | --- |
+| 1 Stored | 4 | 14:32 | `config 4 stored at 14:32` |
+| 1 Stored | 4 | state 2 | `config 4 stored` |
+| 2 Restored | 2 | 09:15 | `config 2 restored from 09:15` |
+| 3 Undone | -- | -- | `last change undone` |
+| 4 FactoryReset | -- | -- | `factory tune restored` |
+| 5 SavedToFlash | -- | -- | `tune saved to flash` |
+
+Send it *once* per keypress, not repeatedly: a repeat reads as another keypress.
+Send it **after** the `0x260` writes an action performs -- a restore writes the
+whole table, and each read-back is a parameter change the display would otherwise
+report instead. The display also keeps the line for 3 s against parameter edits
+after any event, which covers the acks arriving out of order.
 
 ## Controller Temperatures
 

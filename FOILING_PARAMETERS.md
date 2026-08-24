@@ -22,20 +22,26 @@ row  Pitch             Roll              Mid               Right             Slo
   5  M RATE_IMAX       M RATE_IMAX       t TARGET          H RATE            5 config 5
   6  C TCONST          C TCONST          g CMD             J REV             6 config 6
   7  R RMAX            R RMAX            b ARM             -                 7 config 7
-  8  L LIMIT           L LIMIT           -                 y MODE            8 config 8
-  9  T FLT_T           T FLT_T           K RKP             q TEST_P          9 config 9
+  8  L LIMIT           L LIMIT           K RKP             y MODE            8 config 8
+  9  T FLT_T           T FLT_T           r RTKI            q TEST_P          9 config 9
  10  E FLT_E           E FLT_E           W RSCALE          f TEST_R          ~ undo
  11  G FLT_D           G FLT_D           Y RSCHED          B JOG             0 factory
- 12  S SMAX            S SMAX            V FRNTFF          Q SPEED           -
+ 12  S SMAX            S SMAX            V FRNTFF          Q SPEED           ] store
  13  X RLL>PTCH        X RLL>PTCH (skip) -                 -                 -
 ```
 
 `-` is a gap, not a cell: a table's heading row, or a row past its last entry. The
-cursor has to skip them. Two are worth calling out:
+cursor has to skip them. Three are worth calling out:
 
 - **Roll row 13** is on screen but holds nothing -- `PTCH2SRV_RLL` is a pitch-only
   cross-feed, so the roll side draws a dash. It is in the CSV with `action=skip`.
-- **Mid row 8** and **Right row 7** are the `Rear` and `Mode` headings.
+- **Right row 7** is the `Mode` heading. `Rear` has none: row 13 is the status
+  line's everywhere but the axis column, so the rear block's fifth parameter took
+  the row its heading would have used. A `SECTION_GAP` still sets it apart, and the
+  status line names the group on every edit -- "REAR RTKI increased from ...".
+- **Mid and Right row 13** are unusable, not merely empty. The status line's
+  longest sentence is 472px of the 497px from the axis column to the right edge, so
+  it reaches back across both stacked columns on the row it shares with them.
 
 ## One hotkey, two cells
 
@@ -47,12 +53,13 @@ has a single value column and no such ambiguity.
 
 ## Keys
 
-35 parameters, unique across the whole screen so one press selects one cell and
+36 parameters, unique across the whole screen so one press selects one cell and
 nothing has to be cycled -- which matters on a panel that takes a second to redraw.
-Case carries meaning: `P` is the rate loop's P gain, `p` the height loop's.
+Case carries meaning: `P` is the rate loop's P gain, `p` the height loop's, and
+`r` the rear trim's I gain against `R` for the axis rate maximum.
 
 Excluded on purpose: `l`, `i`, `o` and `O` (unreadable beside `I`, `1` and the `0`
-that means factory reset), and every lowercase without an ascender or descender,
+that means factory reset), and most lowercase without an ascender or descender,
 which at a 12px cap reads as a small capital.
 
 | Key | Column | Row | Label | Parameter | Min | Max | Step fine/coarse | Locked |
@@ -90,7 +97,8 @@ which at a 12px cap reads as a small capital.
 | `t` | Mid | 5 | TARGET | `HYD_TARGET` | 0 | 1 | 0.01 / 0.05 |  |
 | `g` | Mid | 6 | CMD | `HYD_CMDMAX+HYD_CMDMIN` | -8 | 5 | 0.1 / 0.5 |  |
 | `b` | Mid | 7 | ARM | `HYD_ARM` | 0 | 3.8 | 0.05 / 0.2 |  |
-| `K` | Mid | 9 | RKP | `HYD_RKP` | 0.15 | 1.2 | 0.02 / 0.1 |  |
+| `K` | Mid | 8 | RKP | `HYD_RKP` | 0.15 | 1.2 | 0.02 / 0.1 |  |
+| `r` | Mid | 9 | RTKI | `HYD_RTKI` | 0 | 0.2 | 0.005 / 0.02 |  |
 | `W` | Mid | 10 | RSCALE | `HYD_RSCALE` | 0.5 | 1.2 | 0.02 / 0.1 |  |
 | `Y` | Mid | 11 | RSCHED | `HYD_RSCHED` | 0 | 1200 | 5 / 25 |  |
 | `V` | Mid | 12 | FRNTFF | `HYD_FRNTFF` | 0 | 0.5 | 0.01 / 0.05 |  |
@@ -121,7 +129,15 @@ which at a 12px cap reads as a small capital.
 | `9` | 9 | short restore, long store |
 | `~` | 10 | undo |
 | `0` | 11 | factory reset |
+| `]` | 12 | save the live tune to flash |
 
 Slots are volatile -- wiped on boat reset -- so nothing goes to flash, and a slot's
 label is the time it was taken, `--:--` if there was no GNSS fix, or `empty`. The
 display holds none of it: it renders what the datalogger sends.
+
+`]` is the exception, and the only key here that outlives a power cycle: it commits
+the *live* tune to the flight controller's flash, which is `0x260`'s persist flag
+(bit 0 of the flags byte) rather than anything to do with a slot.
+
+The slot column and the status line are driven by `0x263` and `0x264`, documented
+in [`CAN_MESSAGES.md`](CAN_MESSAGES.md).

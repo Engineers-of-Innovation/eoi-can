@@ -8,8 +8,12 @@ writes the raw .u8g2font blobs the Font impls include_bytes!.
 Needs Pillow (with FreeType) and u8g2's bdfconv. See draw-display/fonts/README.md
 for how to get bdfconv; point BDFCONV at it if it is not on PATH.
 
-Usage: build-fonts.py <font.ttf> <weight> <outdir>
+Usage: build-fonts.py <font.ttf> <weight> <outdir> [blob ...]
    eg: support/build-fonts.py ~/IBMPlexSans.ttf 500 draw-display/fonts
+       support/build-fonts.py ~/IBMPlexSans.ttf 500 /tmp/f plex_semi12_tf
+
+Naming blobs builds only those, which is how one font is re-tuned without
+rebuilding -- or having to satisfy the size checks of -- the other four.
 """
 import os
 import re
@@ -42,7 +46,12 @@ DIGIT_PCT_MAP = "32,37,45,46,48-58"
 ASCII = "".join(chr(c) for c in range(32, 127)) + "°↑↓µ"
 ASCII_MAP = "32-126,176,8593,8595,181"
 
-# (blob name, measured glyph, target height in px, glyph set, bdfconv map, build mode)
+# (blob name, measured glyph, target height in px, glyph set, bdfconv map, build
+#  mode, weight override)
+#   The weight override is None for everything that takes the weight given on the
+#   command line. Only the foiling screen's headings differ: they are the same size
+#   as the rows below them and are told apart by stroke weight alone, which is the
+#   one font property that costs no layout (see fonts/README.md).
 #   Everything uses build mode 0 (proportional). Plex Sans has tabular figures --
 #   all ten digits share one advance -- so values don't jitter without forcing
 #   monospace, and '-', '.' and ':' keep their natural narrow widths. Monospace
@@ -51,15 +60,24 @@ ASCII_MAP = "32-126,176,8593,8595,181"
 SPECS = [
     # Net power: between the speed and the plain values, and wide enough for
     # "-2000" in the left column.
-    ("plex_net58_tn",   "0", 58, DIGITS, DIGIT_MAP, 0),
+    ("plex_net58_tn",   "0", 58, DIGITS, DIGIT_MAP, 0, None),
     # The right column's three values.
-    ("plex_big49_tn",   "0", 49, DIGITS_PCT, DIGIT_PCT_MAP, 0),
-    ("plex_mid30_tn",   "0", 30, DIGITS, DIGIT_MAP, 0),
-    ("plex_small14_tf", "T", 14, ASCII,  ASCII_MAP, 0),
+    ("plex_big49_tn",   "0", 49, DIGITS_PCT, DIGIT_PCT_MAP, 0, None),
+    ("plex_mid30_tn",   "0", 30, DIGITS, DIGIT_MAP, 0, None),
+    ("plex_small14_tf", "T", 14, ASCII,  ASCII_MAP, 0, None),
     # Two points smaller, for the foiling screen's four tables. A separate blob
     # rather than shrinking the shared one: the dashboard's layout is tuned around
     # a 14px cap and every constant in `render/dashboard.rs` derives from it.
-    ("plex_small12_tf", "T", 12, ASCII,  ASCII_MAP, 0),
+    ("plex_small12_tf", "T", 12, ASCII,  ASCII_MAP, 0, None),
+    # The foiling screen's table headings, at the same 12px cap as its rows: the
+    # tables are read by finding a heading first, and at this size a heavier stroke
+    # separates them from the parameter labels without costing a pixel of layout.
+    #
+    # 600 and not 700, which is as bold as Plex goes: at this cap a bold `r` arm
+    # touches the following `n`, and the Turn table's heading reads as "Tum". The
+    # gap survives at 600 and is gone by 650. Checked by eye at 6x -- no test can
+    # see two glyphs merge, because both are drawn exactly where the font says.
+    ("plex_semi12_tf",  "T", 12, ASCII,  ASCII_MAP, 0, 600),
 ]
 
 
@@ -165,11 +183,18 @@ def main():
         sys.exit("bdfconv not found; set BDFCONV=/path/to/bdfconv "
                  "(see draw-display/fonts/README.md)")
 
-    ttf, weight, outdir = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+    ttf, default_weight, outdir = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+    only = sys.argv[4:]
+    unknown = [name for name in only if name not in [spec[0] for spec in SPECS]]
+    if unknown:
+        sys.exit("no such blob: %s" % ", ".join(unknown))
     os.makedirs(outdir, exist_ok=True)
     total = 0
 
-    for name, probe, target, glyphs, cmap, mode in SPECS:
+    for name, probe, target, glyphs, cmap, mode, override in SPECS:
+        if only and name not in only:
+            continue
+        weight = default_weight if override is None else float(override)
         em, got = solve_em(ttf, weight, probe, target)
         bdf = os.path.join(outdir, name + ".bdf")
         cfile = os.path.join(outdir, name + ".c")
@@ -187,8 +212,8 @@ def main():
 
         size = os.path.getsize(blob)
         total += size
-        print("%-16s em=%-3d %s height %2d px (target %2d)  %5d B"
-              % (name, em, probe, got, target, size))
+        print("%-16s em=%-3d w=%-3d %s height %2d px (target %2d)  %5d B"
+              % (name, em, weight, probe, got, target, size))
         os.remove(bdf)
         os.remove(cfile)
 

@@ -32,7 +32,8 @@ h,Mid,2,4,IMAX,HEIGHT,HYD_IMAX,35,0,500,10,50,,0,adjust
 t,Mid,2,5,TARGET,HEIGHT,HYD_TARGET,36,0,1,0.01,0.05,,2,adjust
 g,Mid,2,6,CMD,HEIGHT,HYD_CMDMAX+HYD_CMDMIN,52+53,-8,5,0.1,0.5,,1,adjust
 b,Mid,2,7,ARM,HEIGHT,HYD_ARM,39,0,3.8,0.05,0.2,,2,adjust
-K,Mid,2,9,RKP,REAR,HYD_RKP,54,0.15,1.2,0.02,0.1,,2,adjust
+K,Mid,2,8,RKP,REAR,HYD_RKP,54,0.15,1.2,0.02,0.1,,2,adjust
+r,Mid,2,9,RTKI,REAR,HYD_RTKI,59,0,0.2,0.005,0.02,,3,adjust
 W,Mid,2,10,RSCALE,REAR,HYD_RSCALE,55,0.5,1.2,0.02,0.1,,2,adjust
 Y,Mid,2,11,RSCHED,REAR,HYD_RSCHED,56,0,1200,5,25,,0,adjust
 V,Mid,2,12,FRNTFF,REAR,HYD_FRNTFF,57,0,0.5,0.01,0.05,,2,adjust
@@ -58,3 +59,4 @@ Q,Right,3,12,SPEED,GLOBAL,SCALING_SPEED,31,4,15,0.5,1,,1,adjust
 9,Slot,4,9,config 9,CONFIG,,,,,,,,,short_restore;long_store
 ~,Slot,4,10,undo,CONFIG,,,,,,,,,undo
 0,Slot,4,11,factory,CONFIG,,,,,,,,,factory_reset
+],Slot,4,12,store,CONFIG,,,,,,,,,save_to_flash

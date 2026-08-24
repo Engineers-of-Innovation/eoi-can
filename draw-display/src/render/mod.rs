@@ -289,6 +289,7 @@ plex_font!(PlexBig49, "plex_big49_tn.u8g2font");
 plex_font!(PlexMid30, "plex_mid30_tn.u8g2font");
 plex_font!(PlexSmall14, "plex_small14_tf.u8g2font");
 plex_font!(PlexSmall12, "plex_small12_tf.u8g2font");
+plex_font!(PlexSemi12, "plex_semi12_tf.u8g2font");
 
 /// Net power, the left column's headline.
 const FONT_NET: FontRenderer = FontRenderer::new::<PlexNet58>();
@@ -299,7 +300,13 @@ const FONT_SMALL: FontRenderer = FontRenderer::new::<PlexSmall14>();
 /// Two points smaller, for the foiling screen: four tables abreast need the width
 /// back, and it is a screen read leaning in rather than at a glance.
 const FONT_TINY: FontRenderer = FontRenderer::new::<PlexSmall12>();
-/// Cap height of [`FONT_TINY`], pinned by `font_metrics_match_their_consts`.
+/// The foiling screen's table headings: the same 12px cap as [`FONT_TINY`] in a
+/// heavier weight, so a heading is told from the parameter labels under it without
+/// moving a single row. Only the weight differs, which is the one font property
+/// this layout does not derive anything from.
+const FONT_HEADING: FontRenderer = FontRenderer::new::<PlexSemi12>();
+/// Cap height of [`FONT_TINY`] and [`FONT_HEADING`], pinned by
+/// `font_metrics_match_their_consts`.
 const TINY_CAP_H: i32 = 12;
 
 /// Offset applied to the GNSS (UTC) time for display, in hours.
@@ -623,6 +630,10 @@ mod tests {
         for (name, font, expected) in [
             ("FONT_SMALL", &FONT_SMALL, SMALL_CAP_H),
             ("FONT_TINY", &FONT_TINY, TINY_CAP_H),
+            // The heading font shares the row grid with FONT_TINY, so it has to
+            // share its cap height too -- a weight that came out taller would push
+            // the top row off the screen edge.
+            ("FONT_HEADING", &FONT_HEADING, TINY_CAP_H),
         ] {
             let cap = font
                 .get_rendered_dimensions("T", Point::zero(), VerticalPosition::Center)

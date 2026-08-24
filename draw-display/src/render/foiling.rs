@@ -11,7 +11,8 @@
 //! The block is parked against the top edge -- the heading row's ink starts on
 //! y=0 -- because the panel is white past its active area, so text on the edge
 //! reads as a margin rather than as clipping. What that frees pays for the gap
-//! above the `Rear` and `Mode` headings and for the status line's own baseline.
+//! above the `Mode` heading and the rear block, and for the status line's own
+//! baseline.
 //!
 //! Three ideas do the heavy lifting:
 //!
@@ -41,7 +42,10 @@ use heapless::String;
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::*;
-use crate::{DisplayData, DisplayValue, FoilColumn, FoilingData, Reading};
+use crate::{
+    DisplayData, DisplayValue, FoilColumn, FoilConfigAction, FoilEdit, FoilEvent, FoilLimit,
+    FoilSlotEvent, FoilingData, Reading,
+};
 
 /// One row of a table. `decimals` belongs to the parameter, not the value, so a
 /// gain renders to the same precision whatever it currently reads.
@@ -82,10 +86,11 @@ struct Block {
 
 /// Extra space above a stacked column's second and later blocks.
 ///
-/// On the row grid alone a `Rear` or `Mode` heading sits one pitch below the last
-/// row of the block above, which reads as another entry rather than as a new
-/// table. This offsets everything from the heading down, so the gap lands where
-/// the eye needs it. Paid for by [`BLOCK_TOP`] moving the whole grid up.
+/// On the row grid alone a second block's first row -- its `Mode` heading, or the
+/// rear table's `RKP` -- sits one pitch below the last row of the block above,
+/// which reads as another entry rather than as a new table. This offsets
+/// everything from there down, so the gap lands where the eye needs it. Paid for
+/// by [`BLOCK_TOP`] moving the whole grid up.
 const SECTION_GAP: i32 = 6;
 
 impl Block {
@@ -136,8 +141,15 @@ const HEIGHT: [Row; 7] = [
 ];
 
 /// The rear foil: artificial tailplane, decalage and speed schedule.
-const REAR: [Row; 4] = [
+///
+/// `RTKI` sits under `RKP` because it is that loop's I gain, the order the axis
+/// and height tables already read in. Drawn without a heading: the fifth row is
+/// the one the heading would have taken, and only the axis column can use row 13
+/// -- the status line's sentence reaches back across this column. `SECTION_GAP`
+/// still sets the block apart, and the status line names the group on every edit.
+const REAR: [Row; 5] = [
     row("K", "RKP", 2, ""),
+    row("r", "RTKI", 3, ""),
     row("W", "RSCALE", 2, ""),
     row("Y", "RSCHED", 0, ""),
     row("V", "FRNTFF", 2, ""),
@@ -177,8 +189,8 @@ const MID_BLOCKS: [Block; 2] = [
     Block {
         name: "REAR",
         rows: &REAR,
-        first_row: 9,
-        heading: true,
+        first_row: 8,
+        heading: false,
     },
 ];
 
@@ -205,6 +217,11 @@ const RIGHT_BLOCKS: [Block; 3] = [
 
 /// Nine stores, plus undo and factory reset, keyed by the number row.
 const SLOT_COUNT: usize = 9;
+
+/// The keys under the slots. `store` is not a slot: it commits the live tune to
+/// the flight controller's flash, so what is on the boat now survives a power
+/// cycle -- the nine slots above it are RAM and do not.
+const SLOT_ACTIONS: [(&str, &str); 3] = [("~", "undo"), ("0", "factory"), ("]", "store")];
 
 // ---------------------------------------------------------------------------
 // Geometry
@@ -356,7 +373,11 @@ const STATUS_W: i32 = DISPLAY_WIDTH as i32 - COLS[0].right() - GUTTER;
 const _: () = assert!(AXIS.len() as i32 == ROWS - 1);
 const _: () = assert!(MID_BLOCKS[1].first_row + (REAR.len() as i32) < ROWS);
 const _: () = assert!(RIGHT_BLOCKS[2].first_row + (GLOBAL.len() as i32) < ROWS);
-const _: () = assert!((SLOT_COUNT as i32) + 3 < ROWS);
+const _: () = assert!((SLOT_COUNT + SLOT_ACTIONS.len()) as i32 + 1 < ROWS);
+// The slot column is the status line's own side of the screen, so its last row --
+// the actions, which sit below the nine slots -- has to stay above that ink.
+const LOWEST_SLOT_INK: i32 = row_y((SLOT_COUNT + SLOT_ACTIONS.len()) as i32) + INK_TOP + INK_H;
+const _: () = assert!(LOWEST_SLOT_INK < STATUS_Y + INK_TOP);
 // The lowest stacked row, pushed down by SECTION_GAP, must not reach the status
 // line's ink -- they share the right-hand side of the screen.
 const LOWEST_STACKED_INK: i32 = row_y(ROWS - 2) + SECTION_GAP + INK_TOP + INK_H;
@@ -381,7 +402,7 @@ where
     for (right, name) in [(AXIS_PITCH_R, "Pitch"), (AXIS_ROLL_R, "Roll")] {
         draw_text(
             display,
-            &FONT_TINY,
+            &FONT_HEADING,
             HorizontalAlignment::Right,
             right,
             row_y(0),
@@ -456,18 +477,10 @@ where
     if block.heading {
         // Over the label column, not the values: these tables have one value
         // column, so the name belongs to the group rather than the numbers.
-        let mut title: String<16> = String::new();
-        for (index, ch) in block.name.chars().enumerate() {
-            let ch = if index == 0 {
-                ch
-            } else {
-                ch.to_ascii_lowercase()
-            };
-            title.push(ch).ok();
-        }
+        let title = heading_title(block.name);
         draw_text(
             display,
-            &FONT_TINY,
+            &FONT_HEADING,
             HorizontalAlignment::Left,
             label_x,
             row_y(block.first_row - 1) + offset,
@@ -608,6 +621,24 @@ fn format_slot(buf: &mut String<16>, slot: Option<&Option<(u8, u8)>>) {
     }
 }
 
+/// A block's heading as it is drawn: `HEIGHT` reads as `Height`.
+///
+/// The name is stored in capitals because the status line says "HEIGHT CMD
+/// increased ...", where it stands beside a parameter label that is capitals too.
+/// A heading is a word rather than a label, so it is drawn as one.
+fn heading_title(name: &str) -> String<16> {
+    let mut title: String<16> = String::new();
+    for (index, ch) in name.chars().enumerate() {
+        let ch = if index == 0 {
+            ch
+        } else {
+            ch.to_ascii_lowercase()
+        };
+        title.push(ch).ok();
+    }
+    title
+}
+
 fn draw_slots<D, C>(
     display: &mut D,
     foil: &FoilingData,
@@ -619,7 +650,7 @@ where
 {
     draw_text(
         display,
-        &FONT_TINY,
+        &FONT_HEADING,
         HorizontalAlignment::Right,
         SLOT_KEY_R,
         row_y(0),
@@ -649,7 +680,7 @@ where
         )?;
     }
 
-    for (offset, (key, label)) in [("~", "undo"), ("0", "factory")].iter().enumerate() {
+    for (offset, (key, label)) in SLOT_ACTIONS.iter().enumerate() {
         let y = row_y(1 + SLOT_COUNT as i32 + offset as i32);
         draw_text(
             display,
@@ -687,8 +718,9 @@ pub enum PairHalf {
 /// agree with; `FOILING_PARAMETERS.csv` carries the same mapping outwards for the
 /// datalogger, and a test checks the two agree.
 ///
-/// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 7. 13-15 and 46-47
-/// are unused; 37-38 are retired and must never be reused.
+/// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 9. 13-15 and 46-47
+/// are unused; 37-38 and 58 are retired and must never be reused, which is why
+/// the newest parameter is 59 and not the gap below it.
 pub const fn cell_for_index(index: u8) -> Option<(FoilColumn, u8, PairHalf)> {
     use FoilColumn::{Mid, Pitch, Right, Roll};
     use PairHalf::{Down, Up, Whole};
@@ -733,8 +765,10 @@ pub const fn cell_for_index(index: u8) -> Option<(FoilColumn, u8, PairHalf)> {
         52 => (Mid, 6, Up),
         53 => (Mid, 6, Down),
         39 => (Mid, 7, Whole),
-        // Rear foil.
-        54 => (Mid, 9, Whole),
+        // Rear foil. The trim I gain is the newest of them, so it took the free
+        // index rather than a place in the run.
+        54 => (Mid, 8, Whole),
+        59 => (Mid, 9, Whole),
         55 => (Mid, 10, Whole),
         56 => (Mid, 11, Whole),
         57 => (Mid, 12, Whole),
@@ -781,36 +815,108 @@ fn locate(column: FoilColumn, screen_row: i32) -> Option<(&'static str, &'static
     }
 }
 
+/// The sentence the status line shows, composed here from the row tables so that
+/// nothing on the bus has to carry text.
+///
+/// The buffer is sized in [`the_longest_status_line_fits`].
+fn status_line(event: FoilEvent) -> Option<String<80>> {
+    match event {
+        FoilEvent::Edit(edit) => edit_line(edit),
+        FoilEvent::Slot(slot) => slot_line(slot),
+    }
+}
+
+/// What the last configuration-slot key did.
+///
+/// Whether the timestamp is the moment of storing or the age of the tune being put
+/// back depends on the action, so the preposition changes with it: `stored at
+/// 14:32` against `restored from 14:32`.
+fn slot_line(event: FoilSlotEvent) -> Option<String<80>> {
+    let mut line: String<80> = String::new();
+    match event.action {
+        action @ (FoilConfigAction::Stored | FoilConfigAction::Restored) => {
+            let stored = matches!(action, FoilConfigAction::Stored);
+            // A slot number outside the column is not drawn at all: the sentence
+            // would name a config the screen does not have.
+            if !(1..=SLOT_COUNT as u8).contains(&event.slot) {
+                return None;
+            }
+            let verb = if stored { "stored" } else { "restored" };
+            write!(&mut line, "config {} {verb}", event.slot).ok()?;
+            if let Some((hour, minute)) = event.time {
+                let preposition = if stored { "at" } else { "from" };
+                write!(&mut line, " {preposition} {hour:02}:{minute:02}").ok()?;
+            }
+        }
+        FoilConfigAction::Undone => line.push_str("last change undone").ok()?,
+        FoilConfigAction::FactoryReset => line.push_str("factory tune restored").ok()?,
+        // The one action that outlives a power cycle, so it says so plainly.
+        FoilConfigAction::SavedToFlash => line.push_str("tune saved to flash").ok()?,
+        // Nothing to say about an action this build does not know.
+        FoilConfigAction::Unknown(_) => return None,
+    }
+    Some(line)
+}
+
+/// What the last parameter edit did.
+///
+/// Three wordings, because an edit can end three ways. A write that went through
+/// reads as a movement; a write the flight controller clamped says so, since the
+/// number that appears is the bound and not what was asked for; and a write that
+/// was clamped without moving at all -- the cell was already on its limit -- has
+/// no movement to report and would otherwise read as a display fault ("increased
+/// from 8.00 to 8.00").
+fn edit_line(edit: FoilEdit) -> Option<String<80>> {
+    let (group, entry) = locate(edit.column, edit.row as i32)?;
+    let decimals = entry.decimals;
+    let bound = match edit.clamped {
+        Some(FoilLimit::Min) => "min",
+        Some(FoilLimit::Max) => "max",
+        // Clamped against a bound the bus does not name. Vague on purpose: see
+        // `FoilLimit::Unknown`.
+        Some(FoilLimit::Unknown) => "its limit",
+        None => "",
+    };
+
+    let mut line: String<80> = String::new();
+    if edit.clamped.is_some() && (edit.to - edit.from).abs() <= f32::EPSILON {
+        write!(
+            &mut line,
+            "{group} {} already at {bound} {:.decimals$}",
+            entry.label, edit.to
+        )
+        .ok()?;
+    } else {
+        let verb = if edit.to >= edit.from {
+            "increased"
+        } else {
+            "decreased"
+        };
+        write!(
+            &mut line,
+            "{group} {} {verb} from {:.decimals$} to {:.decimals$}",
+            entry.label, edit.from, edit.to
+        )
+        .ok()?;
+        if edit.clamped.is_some() {
+            write!(&mut line, ", clamped at {bound}").ok()?;
+        }
+    }
+    Some(line)
+}
+
 /// The status line: what the last edit did, in words.
 ///
 /// Held until the next edit replaces it -- there is no timeout, because the
-/// point of the line is to still be readable a while after the change. The
-/// sentence is composed here from the row tables, so nothing on the bus carries
-/// text.
+/// point of the line is to still be readable a while after the change.
 fn draw_status<D, C>(display: &mut D, foil: &FoilingData) -> Result<(), D::Error>
 where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
-    let Some(edit) = foil.last_edit else {
+    let Some(line) = foil.last_event.and_then(status_line) else {
         return Ok(());
     };
-    let Some((group, entry)) = locate(edit.column, edit.row as i32) else {
-        return Ok(());
-    };
-
-    let mut line: String<64> = String::new();
-    let verb = if edit.to >= edit.from {
-        "increased"
-    } else {
-        "decreased"
-    };
-    write!(
-        &mut line,
-        "{group} {} {verb} from {:.*} to {:.*}",
-        entry.label, entry.decimals, edit.from, entry.decimals, edit.to
-    )
-    .ok();
 
     draw_text(
         display,
@@ -882,7 +988,7 @@ where
         }
     }
 
-    let y = row_y(row);
+    let y = cell_y(cursor.column, row);
     // Padded on the right as well: `right` is the value's right-align anchor, so
     // an unpadded fill would end exactly on the last digit's edge. The field gap
     // to the next column absorbs it.
@@ -905,6 +1011,24 @@ where
         )
         .map_err(map_font_err)?;
     Ok(())
+}
+
+/// Centre y of a cell, which is not `row_y` alone for the stacked columns: a
+/// block below the first is pushed down by [`SECTION_GAP`], so anything placed on
+/// the bare row grid lands on the row above it. `draw_block` adds the offset when
+/// it draws the value; the cursor has to add the same one to invert it.
+fn cell_y(column: FoilColumn, row: i32) -> i32 {
+    let blocks: &'static [Block] = match column {
+        FoilColumn::Mid => &MID_BLOCKS,
+        FoilColumn::Right => &RIGHT_BLOCKS,
+        // One table each, drawn straight off the grid.
+        FoilColumn::Pitch | FoilColumn::Roll | FoilColumn::Slot => return row_y(row),
+    };
+    let offset = blocks
+        .iter()
+        .find(|block| row >= block.first_row && row < block.first_row + block.rows.len() as i32)
+        .map_or(0, Block::y_offset);
+    row_y(row) + offset
 }
 
 /// The array and index a stacked column's row draws from, so the inverted copy
@@ -956,23 +1080,36 @@ mod tests {
             let _ = width(&FONT_TINY, entry.hotkey);
             let _ = width(&FONT_TINY, entry.label);
         }
+        // The config column's keys are not letters, and `]` is the newest of them.
+        for (key, label) in SLOT_ACTIONS {
+            let _ = width(&FONT_TINY, key);
+            let _ = width(&FONT_TINY, label);
+        }
+        // Every heading, in the font that actually draws them: the bold blob is a
+        // separate subset, so a glyph missing there panics just the same.
+        for heading in ["Pitch", "Roll", "Configs"] {
+            let _ = width(&FONT_HEADING, heading);
+        }
+        for block in MID_BLOCKS.iter().chain(RIGHT_BLOCKS.iter()) {
+            // As drawn, not as stored: the title case is what puts lowercase
+            // letters on screen.
+            let _ = width(&FONT_HEADING, heading_title(block.name).as_str());
+        }
         for extra in [
-            "Pitch",
-            "Roll",
-            "Height",
-            "Rear",
-            "Turn",
-            "Mode",
-            "Configs",
             "empty",
-            "undo",
-            "factory",
             "--",
             "--:--",
             "0123456789",
             "~",
             "PITCH RATE_P increased from 2.10 to 2.60",
             "HEIGHT CMD decreased from 5.0 to 4.5",
+            "PITCH RATE_P increased from 7.98 to 8.00, clamped at max",
+            "PITCH RATE_P already at max 8.00",
+            "config 4 stored at 14:32",
+            "config 4 restored from 14:32",
+            "last change undone",
+            "factory tune restored",
+            "tune saved to flash",
             "5.0\u{2191} 8.0\u{2193}",
         ] {
             let _ = width(&FONT_TINY, extra);
@@ -1105,8 +1242,8 @@ mod tests {
             }
         }
         assert_eq!(
-            checked, 50,
-            "foil_tune.lua PROTO_VERSION 7 has 50 parameters"
+            checked, 51,
+            "foil_tune.lua PROTO_VERSION 9 has 51 parameters"
         );
     }
 
@@ -1119,7 +1256,7 @@ mod tests {
         for (index, key) in keys.iter().enumerate() {
             assert!(!keys[..index].contains(key), "hotkey {key:?} is used twice");
         }
-        assert_eq!(keys.len(), 35, "every parameter needs a key");
+        assert_eq!(keys.len(), 36, "every parameter needs a key");
     }
 
     /// The number row belongs to the config slots, and lowercase is only
@@ -1135,7 +1272,7 @@ mod tests {
             assert!(
                 !matches!(
                     key,
-                    "a" | "c" | "e" | "m" | "n" | "r" | "s" | "u" | "v" | "w" | "x" | "z"
+                    "a" | "c" | "e" | "m" | "n" | "s" | "u" | "v" | "w" | "x" | "z"
                 ),
                 "lowercase {key:?} has no ascender or descender, so it reads as a \
                  small capital"
@@ -1156,6 +1293,11 @@ mod tests {
             (
                 "status line",
                 "PITCH RATE_IMAX decreased from 20.0 to 18.5",
+                STATUS_W,
+            ),
+            (
+                "clamped status line",
+                "PITCH RATE_IMAX decreased from 20.0 to 18.5, clamped at min",
                 STATUS_W,
             ),
         ] {
@@ -1186,6 +1328,51 @@ mod tests {
                 width(&FONT_TINY, label)
             );
         }
+    }
+
+    /// The headings are set in a heavier weight than the rows, and weight *does*
+    /// change advances in this variable font, so they are measured in the font that
+    /// draws them rather than assumed to match the labels.
+    ///
+    /// Each is checked against what stands beside it on its own row: the two axis
+    /// headings against each other, a block heading against the width of its
+    /// column, and `Configs` against the right-hand table's heading, which is the
+    /// nearest thing to it on the top row.
+    #[test]
+    fn headings_fit_beside_each_other() {
+        let (pitch, roll) = (width(&FONT_HEADING, "Pitch"), width(&FONT_HEADING, "Roll"));
+        assert!(
+            AXIS_ROLL_R - roll >= AXIS_PITCH_R,
+            "Roll's heading starts at {} and Pitch's ends at {AXIS_PITCH_R}",
+            AXIS_ROLL_R - roll
+        );
+        assert!(
+            AXIS_PITCH_R - pitch >= AXIS_LABEL_X,
+            "Pitch's heading reaches back into the hotkey strip"
+        );
+
+        for (blocks, label_x, value_r) in [
+            (MID_BLOCKS.as_slice(), MID_LABEL_X, MID_VALUE_R),
+            (RIGHT_BLOCKS.as_slice(), RIGHT_LABEL_X, RIGHT_VALUE_R),
+        ] {
+            for block in blocks.iter().filter(|block| block.heading) {
+                let title = heading_title(block.name);
+                let w = width(&FONT_HEADING, title.as_str());
+                assert!(
+                    label_x + w <= value_r,
+                    "{title} is {w}px and runs past its column"
+                );
+            }
+        }
+
+        let configs = width(&FONT_HEADING, "Configs");
+        let turn = width(&FONT_HEADING, heading_title(RIGHT_BLOCKS[0].name).as_str());
+        assert!(
+            SLOT_KEY_R - configs >= RIGHT_LABEL_X + turn,
+            "Configs starts at {} and Turn ends at {}",
+            SLOT_KEY_R - configs,
+            RIGHT_LABEL_X + turn
+        );
     }
 
     /// Every label has to fit the column it is drawn in.
@@ -1229,6 +1416,39 @@ mod tests {
         }
     }
 
+    /// The inverted cell has to land on the row whose value was drawn, and a
+    /// stacked block below the first is pushed down by `SECTION_GAP`. Placing the
+    /// cursor on the bare row grid inverts the row above instead, which reads as
+    /// two half-covered values rather than as a selection.
+    #[test]
+    fn the_cursor_sits_on_the_row_it_selects() {
+        for (blocks, column) in [
+            (MID_BLOCKS.as_slice(), FoilColumn::Mid),
+            (RIGHT_BLOCKS.as_slice(), FoilColumn::Right),
+        ] {
+            for block in blocks {
+                for index in 0..block.rows.len() as i32 {
+                    let row = block.first_row + index;
+                    assert_eq!(
+                        cell_y(column, row),
+                        row_y(row) + block.y_offset(),
+                        "{} row {row}",
+                        block.name
+                    );
+                }
+            }
+        }
+        // Not vacuous: the second block really is off the grid.
+        assert_ne!(
+            cell_y(FoilColumn::Mid, MID_BLOCKS[1].first_row),
+            row_y(MID_BLOCKS[1].first_row),
+            "the rear block is offset, so its cursor must be too"
+        );
+        // The single-table columns are drawn straight off the grid.
+        assert_eq!(cell_y(FoilColumn::Pitch, 13), row_y(13));
+        assert_eq!(cell_y(FoilColumn::Slot, 12), row_y(12));
+    }
+
     /// `locate` has to agree with what `draw_*` puts on screen, or the status
     /// line would name a different parameter than the one that changed.
     #[test]
@@ -1243,14 +1463,197 @@ mod tests {
 
         let (group, entry) = locate(FoilColumn::Mid, 1).unwrap();
         assert_eq!((group, entry.label), ("HEIGHT", "KP"));
-        let (group, entry) = locate(FoilColumn::Mid, 9).unwrap();
+        let (group, entry) = locate(FoilColumn::Mid, 8).unwrap();
         assert_eq!((group, entry.label), ("REAR", "RKP"));
+        let (group, entry) = locate(FoilColumn::Mid, 9).unwrap();
+        assert_eq!((group, entry.label), ("REAR", "RTKI"));
         let (group, entry) = locate(FoilColumn::Right, 12).unwrap();
         assert_eq!((group, entry.label), ("GLOBAL", "SPEED"));
         assert!(
-            locate(FoilColumn::Mid, 8).is_none(),
-            "row 8 is Rear's heading"
+            locate(FoilColumn::Right, 7).is_none(),
+            "row 7 is Mode's heading"
         );
+    }
+
+    fn edit(from: f32, to: f32, clamped: Option<FoilLimit>) -> FoilEdit {
+        FoilEdit {
+            column: FoilColumn::Pitch,
+            row: 1,
+            from,
+            to,
+            clamped,
+        }
+    }
+
+    /// The three wordings, in the words the helm reads. The clamped ones exist
+    /// because the number that lands is the parameter's bound and not what was
+    /// asked for -- without them a key that does nothing looks like a dead panel.
+    #[test]
+    fn the_status_line_reports_a_clamped_write() {
+        for (name, edit, expected) in [
+            (
+                "plain",
+                edit(4.05, 4.07, None),
+                "PITCH RATE_P increased from 4.05 to 4.07",
+            ),
+            (
+                "clamped at the top",
+                edit(7.98, 8.00, Some(FoilLimit::Max)),
+                "PITCH RATE_P increased from 7.98 to 8.00, clamped at max",
+            ),
+            (
+                "clamped at the bottom",
+                edit(0.04, 0.02, Some(FoilLimit::Min)),
+                "PITCH RATE_P decreased from 0.04 to 0.02, clamped at min",
+            ),
+            // Nothing moved: the cell was already on its limit, so there is no
+            // movement to report and the line has to say why instead.
+            (
+                "pressed against the top",
+                edit(8.00, 8.00, Some(FoilLimit::Max)),
+                "PITCH RATE_P already at max 8.00",
+            ),
+            (
+                "pressed against an unnamed bound",
+                edit(8.00, 8.00, Some(FoilLimit::Unknown)),
+                "PITCH RATE_P already at its limit 8.00",
+            ),
+        ] {
+            assert_eq!(
+                status_line(FoilEvent::Edit(edit))
+                    .expect("row 1 exists")
+                    .as_str(),
+                expected,
+                "{name}"
+            );
+        }
+    }
+
+    /// What a configuration key did, in the words the helm reads. The slot labels
+    /// on screen are lowercase, so these are too.
+    #[test]
+    fn the_status_line_reports_a_slot_action() {
+        let slot = |action, slot, time| FoilEvent::Slot(FoilSlotEvent { action, slot, time });
+        for (name, event, expected) in [
+            (
+                "stored",
+                slot(FoilConfigAction::Stored, 4, Some((14, 32))),
+                Some("config 4 stored at 14:32"),
+            ),
+            // Restoring names the same timestamp, but it says *which* tune went
+            // back rather than when anything happened, hence "from".
+            (
+                "restored",
+                slot(FoilConfigAction::Restored, 9, Some((9, 15))),
+                Some("config 9 restored from 09:15"),
+            ),
+            // Nobody stores a tune without GNSS speed, but the slot column has a
+            // shape for it, so the line needs one too.
+            (
+                "stored with no time",
+                slot(FoilConfigAction::Stored, 1, None),
+                Some("config 1 stored"),
+            ),
+            (
+                "undone",
+                slot(FoilConfigAction::Undone, 0, None),
+                Some("last change undone"),
+            ),
+            (
+                "factory reset",
+                slot(FoilConfigAction::FactoryReset, 0, None),
+                Some("factory tune restored"),
+            ),
+            (
+                "saved to flash",
+                slot(FoilConfigAction::SavedToFlash, 0, None),
+                Some("tune saved to flash"),
+            ),
+            // A slot the column does not have would put a sentence on screen about
+            // a config the helm cannot see.
+            (
+                "a slot off the end",
+                slot(FoilConfigAction::Stored, 10, None),
+                None,
+            ),
+            (
+                "an action from a later protocol",
+                slot(FoilConfigAction::Unknown(9), 4, None),
+                None,
+            ),
+        ] {
+            let line = status_line(event);
+            assert_eq!(line.as_ref().map(|line| line.as_str()), expected, "{name}");
+        }
+    }
+
+    /// The sentence is composed into a fixed buffer and then right-aligned on the
+    /// screen edge, so the longest one any cell can produce has to fit both. A
+    /// buffer overrun drops the line entirely rather than truncating it, which is
+    /// silent -- hence every cell rather than a hand-picked worst case.
+    ///
+    /// The numbers are each parameter's own range, from the export, so widening a
+    /// range upstream shows up here as a failing test rather than as a sentence
+    /// running off the edge of the screen.
+    #[test]
+    fn the_longest_status_line_fits() {
+        let csv = include_str!("../../../FOILING_PARAMETERS.csv");
+        for line in csv.lines().skip(1) {
+            let f: heapless::Vec<&str, 16> = line.split(',').collect();
+            // Config slots hold no parameter, and neither does the roll side of the
+            // pitch-only cross-feed row; nothing can edit either.
+            if f[5] == "CONFIG" || f[8].is_empty() {
+                continue;
+            }
+            let column = match f[1] {
+                "Pitch" => FoilColumn::Pitch,
+                "Roll" => FoilColumn::Roll,
+                "Mid" => FoilColumn::Mid,
+                "Right" => FoilColumn::Right,
+                other => panic!("unknown column {other:?} in the export"),
+            };
+            let row: u8 = f[3].parse().unwrap();
+            let (min, max): (f32, f32) = (f[8].parse().unwrap(), f[9].parse().unwrap());
+
+            // A write that moved names its bound, so `Unknown` cannot appear there;
+            // a write that moved nothing carries only one number, and either end of
+            // the range can be the one it is stuck at.
+            let cases = [
+                (min, max, None),
+                (min, max, Some(FoilLimit::Max)),
+                (min, min, Some(FoilLimit::Unknown)),
+                (max, max, Some(FoilLimit::Unknown)),
+            ];
+            for (from, to, clamped) in cases {
+                let mut edit = edit(from, to, clamped);
+                (edit.column, edit.row) = (column, row);
+                let line = status_line(FoilEvent::Edit(edit))
+                    .unwrap_or_else(|| panic!("{column:?} row {row} overran the buffer"));
+                let w = width(&FONT_TINY, line.as_str());
+                assert!(w <= STATUS_W, "{line:?} is {w}px, budget {STATUS_W}px");
+            }
+        }
+
+        // The slot lines are short by comparison, but they share the buffer and the
+        // corner, so they are held to the same budget.
+        for action in [
+            FoilConfigAction::Stored,
+            FoilConfigAction::Restored,
+            FoilConfigAction::Undone,
+            FoilConfigAction::FactoryReset,
+            FoilConfigAction::SavedToFlash,
+        ] {
+            for slot in 1..=SLOT_COUNT as u8 {
+                let event = FoilEvent::Slot(FoilSlotEvent {
+                    action,
+                    slot,
+                    time: Some((23, 59)),
+                });
+                let line = status_line(event).expect("a slot line");
+                let w = width(&FONT_TINY, line.as_str());
+                assert!(w <= STATUS_W, "{line:?} is {w}px, budget {STATUS_W}px");
+            }
+        }
     }
 
     #[test]
