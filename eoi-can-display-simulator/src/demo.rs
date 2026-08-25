@@ -21,7 +21,10 @@ const ROLL: [f32; 13] = [
     0.35, 0.10, 0.012, 0.55, 12.0, 0.50, 75.0, 14.0, 20.0, 20.0, 10.0, 60.0, 0.0,
 ];
 const HEIGHT: [f32; 7] = [1200.0, 80.0, 900.0, 250.0, 0.45, 0.0, 2.40];
-const REAR: [f32; 5] = [0.45, 0.05, 0.85, 600.0, 0.15];
+// Four, not five: `RTKI` (0.05) left the screen with the rear trim's I gain on
+// 2026-08-25. `zip` against a 4-slot array truncates rather than failing, so a
+// stale fifth entry silently shifted RSCALE/RSCHED/FRNTFF up a row here.
+const REAR: [f32; 4] = [0.45, 0.85, 600.0, 0.15];
 /// Bank limit at 20 deg, which is `TRN_MAX`'s own maximum -- the demo presses
 /// against it below, and a stop the value is not actually sitting on would make
 /// that a lie.

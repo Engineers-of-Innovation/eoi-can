@@ -219,9 +219,29 @@ keyboard on the data logger and the flight controller. `0x263`-`0x264` are the
 data logger's own: it keeps the nine stored tunes in RAM, and the foiling display
 draws them.
 
-The display is read-only on all five. It holds no tuning or configuration state of
-its own, so everything it shows has to arrive on the bus, and anything it stops
-hearing about goes stale after 5 s.
+The display is read-only on all five: it originates none of these frames, and
+everything it shows has to arrive on the bus. What it does with silence differs by
+kind, because the two halves are not the same sort of data.
+
+**Parameters (`0x261`) are held until replaced.** They are configuration, not
+telemetry -- `foil_tune.lua` sends one whole-table dump ~5 s after the flight
+controller boots and after that a `0x261` only as the ack for a `0x260` set or the
+reply to a `0x262` request. A value the flight controller last acknowledged is
+still the value in effect, so the display latches it. What keeps that honest is the
+ack on every set, plus the tuner re-requesting the selected cell once the cursor
+settles: navigating to a cell refreshes it, so a display that missed the boot dump
+recovers cell by cell. A cell nothing has ever been heard for still reads as
+dashes.
+
+**The slot column (`0x263`) and the cursor go stale after 5 s.** The datalogger
+republishes all nine slots at ~1 Hz, so a column that stops arriving really is
+unknown, and a slot wiped on the tuner has to stop being labelled here. The cursor
+is where the helm is *now*, so the highlight should not outlive the tuner.
+
+A consequence worth knowing: a parameter changed out of band -- by `hydrofoils.lua`
+or over MAVLink, neither of which sends a `0x260` -- is not seen, and the cell keeps
+its last acknowledged value until something re-reads it. Landing the cursor on the
+cell, or a reboot, corrects it.
 
 `index` is the parameter's number in `foil_tune.lua`'s table -- the wire contract
 between the two, listed with its range and step in `FOILING_PARAMETERS.md`.
@@ -248,9 +268,10 @@ whole-table dump.
 | | | | 4 | Minute | u8 | | 0-59 |
 
 **FoilConfigSlot** is what the slot column is labelled with, and it is idempotent:
-send all nine at ~1 Hz, alongside the tuner's own table read, and a display that
-reboots recovers the whole column. A slot sent as `Empty` reads as `empty`
-immediately; a slot nothing is sent for reads as `empty` after the 5 s timeout.
+send all nine at ~1 Hz and a display that reboots recovers the whole column. A slot
+sent as `Empty` reads as `empty` immediately; a slot nothing is sent for reads as
+`empty` after the 5 s timeout. Nothing has to re-read the parameter table alongside
+it -- the display latches those, as above.
 
 **FoilConfigEvent** is one-shot, for the status line in the bottom-right corner.
 Action 5 is the `]` key: it is not a slot at all, but the live tune committed to

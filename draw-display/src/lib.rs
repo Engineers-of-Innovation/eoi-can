@@ -20,7 +20,7 @@ use eoi_can_decoder::{
     VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
-use render::foiling::{cell_for_index, PairHalf};
+use render::foiling::{cell_for_index, stacked_slot, PairHalf};
 
 const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
@@ -159,6 +159,60 @@ impl<T> Default for DisplayValue<T> {
     }
 }
 
+/// A value held until it is replaced, with no staleness timeout.
+///
+/// The counterpart to [`DisplayValue`], and the distinction is telemetry versus
+/// configuration. A speed or a cell voltage that stops arriving is *unknown* --
+/// drawing the last one would be a lie, so `DisplayValue` expires it. A tuning
+/// parameter that stops arriving is *unchanged*: the flight controller is not
+/// reporting it, it is storing it, and the value it last acknowledged is still
+/// the value in effect.
+///
+/// So the foiling screen's parameter cells latch. `foil_tune.lua` is
+/// event-driven -- one whole-table dump ~5 s after the flight controller boots,
+/// and after that a `0x261` only as the ack for a `0x260` set or the reply to a
+/// `0x262` request. Expiring these cells meant the screen went to dashes ~5 s
+/// after that one burst and stayed there, with nothing on the bus that would
+/// ever refresh it. Two mechanisms keep a latched cell honest instead:
+///
+/// - every set is acknowledged, so an edit is seen as it happens;
+/// - the tuner re-requests the selected cell once the cursor settles, so a cell
+///   is refreshed from the flight controller whenever the helm navigates to it.
+///   A screen that missed the boot dump therefore heals cell by cell, starting
+///   with the ones being tuned.
+///
+/// `None` still renders as dashes, so "never heard" stays distinguishable from a
+/// real reading -- it is only *ageing out* that is gone.
+///
+/// A separate type rather than a second accessor on `DisplayValue`: which
+/// semantics a cell has is then checked by the compiler instead of resting on
+/// every call site picking the right getter.
+#[derive(Debug)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct Latched<T> {
+    value: Option<T>,
+}
+
+impl<T> Latched<T> {
+    pub fn update(&mut self, value: T) {
+        self.value = Some(value);
+    }
+
+    /// The last value received, or `None` if none ever was.
+    pub fn get(&self) -> Option<&T> {
+        self.value.as_ref()
+    }
+}
+
+impl<T> Default for Latched<T> {
+    fn default() -> Self {
+        Self { value: None }
+    }
+}
+
 /// A parameter value: one number, or an up/down pair that has diverged.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[cfg_attr(
@@ -286,16 +340,25 @@ pub enum FoilEvent {
 #[derive(Debug, Default)]
 pub struct FoilingData {
     /// The axis rate loops, one entry per screen row.
-    pub pitch: [DisplayValue<Reading>; 13],
-    pub roll: [DisplayValue<Reading>; 13],
-    pub height: [DisplayValue<Reading>; 7],
-    pub rear: [DisplayValue<Reading>; 5],
-    pub turn: [DisplayValue<Reading>; 6],
-    pub mode: [DisplayValue<Reading>; 4],
-    pub global: [DisplayValue<Reading>; 1],
+    ///
+    /// [`Latched`], not [`DisplayValue`]: these are configuration the flight
+    /// controller reports on change, not telemetry it streams. See `Latched`.
+    pub pitch: [Latched<Reading>; 13],
+    pub roll: [Latched<Reading>; 13],
+    pub height: [Latched<Reading>; 7],
+    pub rear: [Latched<Reading>; 4],
+    pub turn: [Latched<Reading>; 6],
+    pub mode: [Latched<Reading>; 4],
+    pub global: [Latched<Reading>; 1],
     /// Store time per slot: `None` never stored, `Some(None)` stored without a
     /// GNSS fix, `Some(Some((h, m)))` stored at that time.
+    ///
+    /// Stays a [`DisplayValue`]: the datalogger republishes all nine at ~1 Hz, so
+    /// a column that stops arriving really is unknown, and a slot wiped on the
+    /// tuner has to go back to `empty` here.
     pub slots: [DisplayValue<Option<(u8, u8)>>; 9],
+    /// Also a [`DisplayValue`]: this is where the helm is *now*, so the inverted
+    /// highlight should not outlive the tuner that put it there.
     pub cursor: DisplayValue<FoilCursor>,
     /// Held until the next event arrives rather than timing out: the point of the
     /// line is to still be readable a while after the change.
@@ -319,32 +382,25 @@ impl FoilingData {
         (FoilColumn::Mid, 6),
     ];
 
-    fn values_mut(&mut self, column: FoilColumn, row: u8) -> Option<&mut DisplayValue<Reading>> {
+    fn values_mut(&mut self, column: FoilColumn, row: u8) -> Option<&mut Latched<Reading>> {
         let index = usize::from(row);
         match column {
             FoilColumn::Pitch => self.pitch.get_mut(index - 1),
             FoilColumn::Roll => self.roll.get_mut(index - 1),
-            // The stacked columns are several tables deep, so the row has to be
-            // resolved against the same block layout the renderer draws from.
+            // The stacked columns are several tables deep, so the row is resolved
+            // against the very block tables the renderer draws from -- not a copy
+            // of their offsets, which is what went stale when `REAR` lost a row.
             FoilColumn::Mid | FoilColumn::Right => {
-                type Blocks<'a> = (&'a [(u8, u8)], [&'a mut [DisplayValue<Reading>]; 3]);
-                let (offsets, arrays): Blocks<'_> = if matches!(column, FoilColumn::Mid) {
-                    (
-                        &[(1, 7), (8, 5)],
-                        [&mut self.height, &mut self.rear, &mut []],
-                    )
-                } else {
-                    (
-                        &[(1, 6), (8, 4), (12, 1)],
-                        [&mut self.turn, &mut self.mode, &mut self.global],
-                    )
+                let (block, index) = stacked_slot(column, i32::from(row))?;
+                let array: &mut [Latched<Reading>] = match (column, block) {
+                    (FoilColumn::Mid, 0) => &mut self.height,
+                    (FoilColumn::Mid, 1) => &mut self.rear,
+                    (FoilColumn::Right, 0) => &mut self.turn,
+                    (FoilColumn::Right, 1) => &mut self.mode,
+                    (FoilColumn::Right, 2) => &mut self.global,
+                    _ => return None,
                 };
-                for (&(first, len), array) in offsets.iter().zip(arrays) {
-                    if row >= first && row < first + len {
-                        return array.get_mut(usize::from(row - first));
-                    }
-                }
-                None
+                array.get_mut(index)
             }
             FoilColumn::Slot => None,
         }
@@ -404,8 +460,9 @@ impl FoilingData {
             // A clamped write is an edit even when nothing moved: the helm pressed a
             // key, the number stayed where it was, and the line is the only thing
             // that can say why. An unchanged *unclamped* read is not an edit -- the
-            // tuner re-reads the whole table every second, and every one of those
-            // would otherwise replace the message.
+            // tuner re-requests the selected cell while the cursor sits on it, and
+            // the boot dump re-sends the whole table, so the same value arrives
+            // repeatedly and every one of those would otherwise replace the message.
             if (moved || clamped) && !held {
                 let burst = self
                     .last_edit()
@@ -438,9 +495,13 @@ impl FoilingData {
 
         // The tuner re-requests the selected cell once the cursor settles, so the
         // most recent read-back is where it is. Fragile by construction -- during
-        // the connect-time dump this walks the whole table before settling -- but
-        // it is the mechanism the protocol offers, and the re-request corrects it
-        // within a second. An explicit cursor frame would be better.
+        // the boot dump this walks the whole table before settling -- but it is the
+        // mechanism the protocol offers, and the re-request corrects it within a
+        // second. An explicit cursor frame would be better.
+        //
+        // That re-request is also what keeps a latched cell honest: navigating to a
+        // cell refreshes it from the flight controller, so a screen that missed the
+        // boot dump heals cell by cell. See [`Latched`].
         self.cursor.update(FoilCursor { column, row });
     }
 
@@ -1015,9 +1076,10 @@ mod foil_ingest_tests {
         assert!((edit.from - edit.to).abs() < f32::EPSILON);
     }
 
-    /// The tuner re-reads the whole table every second. Those re-reads carry the
-    /// same values and must not count as edits, or the status line would be
-    /// replaced by an empty movement several times a second.
+    /// The same value arrives repeatedly -- the tuner re-requests the selected cell
+    /// while the cursor rests on it, and the boot dump re-sends every parameter.
+    /// Those re-reads must not count as edits, or the status line would be replaced
+    /// by an empty movement whenever the helm stops moving.
     #[test]
     fn an_unchanged_readback_leaves_the_status_line_alone() {
         let mut data = DisplayData::default();
@@ -1162,9 +1224,13 @@ mod foil_ingest_tests {
         let indices = [
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
             28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 52, 53,
-            54, 55, 56, 57, 59,
+            54, 55, 56, 57,
         ];
-        assert_eq!(indices.len(), 51, "foil_tune.lua PROTO_VERSION 9 has 51");
+        assert_eq!(
+            indices.len(),
+            50,
+            "foil_tune.lua PROTO_VERSION 9 has 50 the screen draws"
+        );
         let mut data = DisplayData::default();
         for index in indices {
             let cell = render::foiling::cell_for_index(index);
@@ -1178,10 +1244,100 @@ mod foil_ingest_tests {
             );
         }
         // Retired and unused indices must not resolve.
-        for index in [0, 13, 14, 15, 37, 38, 46, 47, 58, 200, 0xFD] {
+        for index in [0, 13, 14, 15, 37, 38, 46, 47, 58, 59, 200, 0xFD] {
             assert!(
                 render::foiling::cell_for_index(index).is_none(),
                 "index {index} should not map anywhere"
+            );
+        }
+    }
+
+    /// A tuning parameter outlives the telemetry timeout, because nothing on the
+    /// bus would ever refresh it. `foil_tune.lua` dumps the table once ~5 s after
+    /// the flight controller boots and is event-driven after that, so expiring
+    /// these cells sent the whole screen to dashes seconds after the only burst
+    /// it was ever going to get.
+    #[tokio::test(start_paused = true)]
+    async fn a_parameter_is_held_past_the_telemetry_timeout() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 2.93);
+        tokio::time::advance(core::time::Duration::from_secs(600)).await;
+        assert_eq!(
+            data.foiling.pitch[0].get().copied(),
+            Some(Reading::One(2.93)),
+            "a gain the flight controller acknowledged is still the gain in effect"
+        );
+        // Never heard is still distinguishable from held: only ageing out is gone.
+        assert_eq!(data.foiling.roll[0].get().copied(), None);
+    }
+
+    /// The slot column is the other way round: the datalogger republishes all nine
+    /// at ~1 Hz, so one that stops arriving really is unknown -- and a slot wiped
+    /// on the tuner has to stop being labelled here.
+    #[tokio::test(start_paused = true)]
+    async fn a_config_slot_still_expires() {
+        let mut data = DisplayData::default();
+        feed_raw(&mut data, 0x263, &[4, 1, 14, 32]);
+        assert_eq!(data.foiling.slots[3].get().copied(), Some(Some((14, 32))));
+        tokio::time::advance(core::time::Duration::from_secs(6)).await;
+        assert_eq!(data.foiling.slots[3].get(), None, "the column is telemetry");
+    }
+
+    /// The status line's `from` is read back out of the cell, so latching has to
+    /// reach that path too: after a long quiet spell the next edit must still
+    /// report the movement rather than finding an empty cell and saying nothing.
+    #[tokio::test(start_paused = true)]
+    async fn an_edit_after_a_long_quiet_spell_still_reports_its_movement() {
+        let mut data = DisplayData::default();
+        feed(&mut data, 16, 0, 2.00);
+        tokio::time::advance(core::time::Duration::from_secs(600)).await;
+        feed(&mut data, 16, 0, 2.50);
+        let edit = data.foiling.last_edit().expect("an edit");
+        assert_eq!((edit.from, edit.to), (2.00, 2.50));
+    }
+
+    /// Which semantics a cell has is the compiler's job, not a convention every
+    /// call site has to remember. This fails to build if a parameter array is
+    /// given telemetry semantics again.
+    #[test]
+    fn parameter_cells_latch_and_the_rest_do_not() {
+        let data = FoilingData::default();
+        let _: &Latched<Reading> = &data.pitch[0];
+        let _: &Latched<Reading> = &data.roll[0];
+        let _: &Latched<Reading> = &data.height[0];
+        let _: &Latched<Reading> = &data.rear[0];
+        let _: &Latched<Reading> = &data.turn[0];
+        let _: &Latched<Reading> = &data.mode[0];
+        let _: &Latched<Reading> = &data.global[0];
+        let _: &DisplayValue<Option<(u8, u8)>> = &data.slots[0];
+        let _: &DisplayValue<FoilCursor> = &data.cursor;
+    }
+
+    /// Where a read-back is *stored* has to be where the screen *draws* it. The
+    /// map and the slot existing is not enough: the rear block was written one
+    /// slot past the cell it is drawn in for a day, so `RKP` showed dashes and the
+    /// three rows under it showed their neighbour's gain.
+    #[test]
+    fn a_readback_is_drawn_in_the_cell_it_lands_in() {
+        for (nth, index) in [
+            1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 24, 27, 28, 29, 30, 31,
+            32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 54, 55, 56, 57,
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            // A distinct value per index, so a cell holding its neighbour's
+            // reading cannot pass by coincidence.
+            let sent = 1.0 + nth as f32;
+            let mut data = DisplayData::default();
+            feed(&mut data, index, 0, sent);
+
+            let (column, row, _) = render::foiling::cell_for_index(index).expect("a cell");
+            let drawn = render::foiling::drawn_reading(&data.foiling, column, row);
+            assert_eq!(
+                drawn,
+                Some(Reading::One(sent)),
+                "index {index} is stored at {column:?} row {row} but drawn elsewhere"
             );
         }
     }

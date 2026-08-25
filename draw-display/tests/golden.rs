@@ -149,7 +149,7 @@ fn foiling_renders_are_unchanged() {
         "foiling/stale",
         draw_display::draw_foiling,
         &stale(),
-        0x474b_e9b7_f9f2_5a84,
-        15839,
+        0x4d6c_bd40_8314_c586,
+        15797,
     );
 }

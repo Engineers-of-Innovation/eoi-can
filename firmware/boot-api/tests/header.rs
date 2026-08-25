@@ -98,8 +98,10 @@ fn from_bytes_rejects_every_kind_of_malformed_header() {
         Err(HeaderError::ZeroLength)
     ));
 
-    // 0x00 and 0x04 bracket the valid app types; neither may parse.
-    for byte in [0x00, 0x04, 0xFF] {
+    // 0x00 and 0x05 bracket the valid app types (0x01-0x04, `FoilTuning` being
+    // the newest); neither may parse. 0x05 is spoken for by the bootloader's CAN
+    // address allocation but has no board, so it must still be rejected.
+    for byte in [0x00, 0x05, 0xFF] {
         let mut bad_type = good;
         bad_type[0x0D] = byte;
         assert!(
@@ -194,13 +196,15 @@ fn app_type_byte_values_match_the_documented_table() {
     assert_eq!(AppType::RudderController as u8, 0x01);
     assert_eq!(AppType::HeightSensorController as u8, 0x02);
     assert_eq!(AppType::Dashboard as u8, 0x03);
+    assert_eq!(AppType::FoilTuning as u8, 0x04);
     for t in [
         AppType::RudderController,
         AppType::HeightSensorController,
         AppType::Dashboard,
+        AppType::FoilTuning,
     ] {
         assert_eq!(AppType::from_u8(t as u8), Some(t));
     }
     assert_eq!(AppType::from_u8(0x00), None);
-    assert_eq!(AppType::from_u8(0x04), None);
+    assert_eq!(AppType::from_u8(0x05), None);
 }

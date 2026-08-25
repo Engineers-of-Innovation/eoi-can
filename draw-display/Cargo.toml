@@ -31,3 +31,7 @@ mppt-layout = { path = "../mppt-layout" }
 [dev-dependencies]
 # Only to hand-build CAN frames in tests, so the decode path is covered end to end.
 embedded-can = { workspace = true }
+# `test-util` for a paused clock: the staleness rules are the point of several
+# tests, and they have to be checked by moving time rather than by sleeping.
+# Kept out of the normal dependency so it cannot reach a shipped build.
+tokio = { version = "1.43.0", features = [ "test-util" ] }

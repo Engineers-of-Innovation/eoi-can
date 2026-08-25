@@ -42,8 +42,8 @@ use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 
 use super::*;
 use crate::{
-    DisplayData, DisplayValue, FoilColumn, FoilConfigAction, FoilEdit, FoilEvent, FoilLimit,
-    FoilSlotEvent, FoilingData, Reading,
+    DisplayData, FoilColumn, FoilConfigAction, FoilEdit, FoilEvent, FoilLimit, FoilSlotEvent,
+    FoilingData, Latched, Reading,
 };
 
 /// One row of a table. `decimals` belongs to the parameter, not the value, so a
@@ -459,7 +459,7 @@ where
 fn draw_block<D, C>(
     display: &mut D,
     block: &Block,
-    values: &[DisplayValue<Reading>],
+    values: &[Latched<Reading>],
     hotkey_x: i32,
     label_x: i32,
     value_r: i32,
@@ -581,7 +581,7 @@ fn value<D, C>(
     right: i32,
     y: i32,
     entry: &Row,
-    reading: &DisplayValue<Reading>,
+    reading: &Latched<Reading>,
     buf: &mut String<16>,
 ) -> Result<(), D::Error>
 where
@@ -1033,23 +1033,66 @@ fn stacked_cell<'a>(
     column: FoilColumn,
     foil: &'a FoilingData,
     row: i32,
-) -> Option<(&'a DisplayValue<Reading>, &'static Row)> {
-    let (blocks, arrays): (&'static [Block], [&'a [DisplayValue<Reading>]; 3]) =
-        if matches!(column, FoilColumn::Mid) {
-            (&MID_BLOCKS, [&foil.height[..], &foil.rear[..], &[]])
-        } else {
-            (
-                &RIGHT_BLOCKS,
-                [&foil.turn[..], &foil.mode[..], &foil.global[..]],
-            )
-        };
-    for (block, values) in blocks.iter().zip(arrays) {
-        let index = usize::try_from(row - block.first_row).ok()?;
-        if let (Some(value), Some(entry)) = (values.get(index), block.rows.get(index)) {
-            return Some((value, entry));
-        }
+) -> Option<(&'a Latched<Reading>, &'static Row)> {
+    let (block, index) = stacked_slot(column, row)?;
+    let arrays: [&'a [Latched<Reading>]; 3] = if matches!(column, FoilColumn::Mid) {
+        [&foil.height[..], &foil.rear[..], &[]]
+    } else {
+        [&foil.turn[..], &foil.mode[..], &foil.global[..]]
+    };
+    let entry = blocks_of(column)?.get(block)?.rows.get(index)?;
+    Some((arrays.get(block)?.get(index)?, entry))
+}
+
+/// The block tables a stacked column is drawn from, in the order their value
+/// arrays are listed.
+fn blocks_of(column: FoilColumn) -> Option<&'static [Block]> {
+    match column {
+        FoilColumn::Mid => Some(&MID_BLOCKS),
+        FoilColumn::Right => Some(&RIGHT_BLOCKS),
+        FoilColumn::Pitch | FoilColumn::Roll | FoilColumn::Slot => None,
     }
-    None
+}
+
+/// The reading the screen actually draws in a cell, straight out of the arrays
+/// `draw_foiling` reads. Lets a test assert that a read-back is drawn where it was
+/// stored, which neither side can check alone.
+#[cfg(test)]
+pub(crate) fn drawn_reading(
+    foil: &FoilingData,
+    column: FoilColumn,
+    row: u8,
+) -> Option<crate::Reading> {
+    let row = i32::from(row);
+    let values = match column {
+        // `draw_foiling` walks AXIS with the array, so row 1 is index 0.
+        FoilColumn::Pitch => &foil.pitch[..],
+        FoilColumn::Roll => &foil.roll[..],
+        FoilColumn::Mid | FoilColumn::Right => {
+            return stacked_cell(column, foil, row).and_then(|(v, _)| v.get().copied());
+        }
+        FoilColumn::Slot => return None,
+    };
+    values.get(usize::try_from(row - 1).ok()?)?.get().copied()
+}
+
+/// Which of a stacked column's value arrays a screen row belongs to, and its
+/// index within that array.
+///
+/// Read off the block tables the renderer draws from, so the write side and the
+/// draw side cannot disagree. `FoilingData::values_mut` carried its own copy of
+/// these offsets until 2026-08-25, and it went stale the moment `REAR` lost a row
+/// and moved down one: every rear parameter was stored one slot past the cell it
+/// is drawn in, so the block showed its neighbour's number and `RKP` never showed
+/// at all.
+pub(crate) fn stacked_slot(column: FoilColumn, row: i32) -> Option<(usize, usize)> {
+    blocks_of(column)?
+        .iter()
+        .enumerate()
+        .find_map(|(block, table)| {
+            let index = usize::try_from(row - table.first_row).ok()?;
+            (index < table.rows.len()).then_some((block, index))
+        })
 }
 
 #[cfg(test)]
@@ -1238,8 +1281,8 @@ mod tests {
             }
         }
         assert_eq!(
-            checked, 51,
-            "foil_tune.lua PROTO_VERSION 9 has 51 parameters"
+            checked, 50,
+            "foil_tune.lua PROTO_VERSION 9 has 50 parameters the screen draws"
         );
     }
 
@@ -1252,7 +1295,7 @@ mod tests {
         for (index, key) in keys.iter().enumerate() {
             assert!(!keys[..index].contains(key), "hotkey {key:?} is used twice");
         }
-        assert_eq!(keys.len(), 36, "every parameter needs a key");
+        assert_eq!(keys.len(), 35, "every parameter needs a key");
     }
 
     /// The number row belongs to the config slots, and lowercase is only
