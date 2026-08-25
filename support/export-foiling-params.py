@@ -42,7 +42,9 @@ AXIS_PARAMS = {
 # ArduPilot name -> foil_tune.lua PT index, the wire contract for 0x260/0x261/0x262.
 # Mirrors tools/foil_tune.py's PARAMS at PROTO_VERSION 9. 13-15 and 46-47 are
 # unused; 37-38 and 58 are retired (HYD_HSRC, HYD_HDIV, HYD_IGATE) and must never
-# be reused -- which is why HYD_RTKI took 59 rather than the gap below it.
+# be reused. 59 (HYD_RTKI) is absent because the screen no longer draws it -- the
+# parameter and its whitelist entry still exist on the flight controller, so the
+# index is not free either.
 INDEX = {
     "RLL_RATE_P": 1, "RLL_RATE_I": 2, "RLL_RATE_D": 3, "RLL_RATE_FF": 4,
     "RLL_RATE_IMAX": 5, "RLL2SRV_TCONST": 6, "RLL2SRV_RMAX": 7,
@@ -56,7 +58,6 @@ INDEX = {
     "HYD_KP": 32, "HYD_KI": 33, "HYD_KD": 34, "HYD_IMAX": 35, "HYD_TARGET": 36,
     "HYD_ARM": 39, "HYD_CMDMAX": 52, "HYD_CMDMIN": 53,
     "HYD_RKP": 54, "HYD_RSCALE": 55, "HYD_RSCHED": 56, "HYD_FRNTFF": 57,
-    "HYD_RTKI": 59,
     "TRN_ENABLE": 40, "TRN_ON": 41, "TRN_FULL": 42, "TRN_MAX": 43,
     "TRN_RATE": 44, "TRN_REV": 45,
     "SCR_USER1": 48, "SCR_USER2": 49, "SCR_USER3": 50, "SCR_USER4": 51,
@@ -101,11 +102,6 @@ LIMITS = {
     "HYD_CMDMIN":         (-8,  -0.5,  0.1,   0.5,  False),
     "HYD_ARM":            (0,    3.8,  0.05,  0.2,  False),
     "HYD_RKP":            (0.15, 1.2,  0.02,  0.1,  False),
-    # Degrees of rear per degree of front deflection per second. Against the ~1
-    # degree standing error rev 19 measured, 0.1 walks the 1.2 degree clamp out in
-    # about 12s, so 0.1 is the tau ~= 10s setting and 0.2 the tau ~= 5s one. The
-    # default 0 is off.
-    "HYD_RTKI":           (0,    0.2,  0.005, 0.02, False),
     "HYD_RSCALE":         (0.5,  1.2,  0.02,  0.1,  False),
     "HYD_RSCHED":         (0,    1200, 5,     25,   False),
     "HYD_FRNTFF":         (0,    0.5,  0.01,  0.05, False),
@@ -125,7 +121,7 @@ LIMITS = {
 SINGLE_PARAMS = {
     "KP": "HYD_KP", "KI": "HYD_KI", "KD": "HYD_KD", "IMAX": "HYD_IMAX",
     "TARGET": "HYD_TARGET", "CMD": "HYD_CMDMAX+HYD_CMDMIN", "ARM": "HYD_ARM",
-    "RKP": "HYD_RKP", "RTKI": "HYD_RTKI",
+    "RKP": "HYD_RKP",
     "RSCALE": "HYD_RSCALE", "RSCHED": "HYD_RSCHED",
     "FRNTFF": "HYD_FRNTFF",
     "ENABLE": "TRN_ENABLE", "ON": "TRN_ON", "FULL": "TRN_FULL",

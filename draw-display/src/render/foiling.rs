@@ -11,8 +11,7 @@
 //! The block is parked against the top edge -- the heading row's ink starts on
 //! y=0 -- because the panel is white past its active area, so text on the edge
 //! reads as a margin rather than as clipping. What that frees pays for the gap
-//! above the `Mode` heading and the rear block, and for the status line's own
-//! baseline.
+//! above the `Rear` and `Mode` headings and for the status line's own baseline.
 //!
 //! Three ideas do the heavy lifting:
 //!
@@ -86,11 +85,10 @@ struct Block {
 
 /// Extra space above a stacked column's second and later blocks.
 ///
-/// On the row grid alone a second block's first row -- its `Mode` heading, or the
-/// rear table's `RKP` -- sits one pitch below the last row of the block above,
-/// which reads as another entry rather than as a new table. This offsets
-/// everything from there down, so the gap lands where the eye needs it. Paid for
-/// by [`BLOCK_TOP`] moving the whole grid up.
+/// On the row grid alone a `Rear` or `Mode` heading sits one pitch below the last
+/// row of the block above, which reads as another entry rather than as a new
+/// table. This offsets everything from the heading down, so the gap lands where
+/// the eye needs it. Paid for by [`BLOCK_TOP`] moving the whole grid up.
 const SECTION_GAP: i32 = 6;
 
 impl Block {
@@ -142,14 +140,12 @@ const HEIGHT: [Row; 7] = [
 
 /// The rear foil: artificial tailplane, decalage and speed schedule.
 ///
-/// `RTKI` sits under `RKP` because it is that loop's I gain, the order the axis
-/// and height tables already read in. Drawn without a heading: the fifth row is
-/// the one the heading would have taken, and only the axis column can use row 13
-/// -- the status line's sentence reaches back across this column. `SECTION_GAP`
-/// still sets the block apart, and the status line names the group on every edit.
-const REAR: [Row; 5] = [
+/// Four rows, so the heading fits: the block runs 9..12 and row 13 belongs to the
+/// status line everywhere but the axis column. `RTKI`, the rear trim's I gain,
+/// held row 9 here until 2026-08-25 and cost the heading to do it -- it is off
+/// the grid now, and `HYD_RTKI` stays at 0 over MAVLink.
+const REAR: [Row; 4] = [
     row("K", "RKP", 2, ""),
-    row("r", "RTKI", 3, ""),
     row("W", "RSCALE", 2, ""),
     row("Y", "RSCHED", 0, ""),
     row("V", "FRNTFF", 2, ""),
@@ -189,8 +185,8 @@ const MID_BLOCKS: [Block; 2] = [
     Block {
         name: "REAR",
         rows: &REAR,
-        first_row: 8,
-        heading: false,
+        first_row: 9,
+        heading: true,
     },
 ];
 
@@ -719,8 +715,9 @@ pub enum PairHalf {
 /// datalogger, and a test checks the two agree.
 ///
 /// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 9. 13-15 and 46-47
-/// are unused; 37-38 and 58 are retired and must never be reused, which is why
-/// the newest parameter is 59 and not the gap below it.
+/// are unused; 37-38 and 58 are retired and must never be reused. 59 (`HYD_RTKI`)
+/// is still on the flight controller's whitelist but has no cell here, so the
+/// screen cannot reach it -- the index stays spoken for either way.
 pub const fn cell_for_index(index: u8) -> Option<(FoilColumn, u8, PairHalf)> {
     use FoilColumn::{Mid, Pitch, Right, Roll};
     use PairHalf::{Down, Up, Whole};
@@ -765,10 +762,9 @@ pub const fn cell_for_index(index: u8) -> Option<(FoilColumn, u8, PairHalf)> {
         52 => (Mid, 6, Up),
         53 => (Mid, 6, Down),
         39 => (Mid, 7, Whole),
-        // Rear foil. The trim I gain is the newest of them, so it took the free
-        // index rather than a place in the run.
-        54 => (Mid, 8, Whole),
-        59 => (Mid, 9, Whole),
+        // Rear foil. 58 and 59 are absent by design: 58 is retired, and 59
+        // (HYD_RTKI) is off the screen while it stays on the FC whitelist.
+        54 => (Mid, 9, Whole),
         55 => (Mid, 10, Whole),
         56 => (Mid, 11, Whole),
         57 => (Mid, 12, Whole),
@@ -1463,10 +1459,12 @@ mod tests {
 
         let (group, entry) = locate(FoilColumn::Mid, 1).unwrap();
         assert_eq!((group, entry.label), ("HEIGHT", "KP"));
-        let (group, entry) = locate(FoilColumn::Mid, 8).unwrap();
-        assert_eq!((group, entry.label), ("REAR", "RKP"));
+        assert!(
+            locate(FoilColumn::Mid, 8).is_none(),
+            "row 8 is Rear's heading"
+        );
         let (group, entry) = locate(FoilColumn::Mid, 9).unwrap();
-        assert_eq!((group, entry.label), ("REAR", "RTKI"));
+        assert_eq!((group, entry.label), ("REAR", "RKP"));
         let (group, entry) = locate(FoilColumn::Right, 12).unwrap();
         assert_eq!((group, entry.label), ("GLOBAL", "SPEED"));
         assert!(

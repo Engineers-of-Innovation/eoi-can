@@ -92,7 +92,7 @@ TUNE = {
     "HYD_KP": 960.0, "HYD_KI": 96.0, "HYD_KD": 1800.0, "HYD_IMAX": 150.0,
     "HYD_TARGET": 0.30, "HYD_ARM": 2.4,
     "HYD_CMDMAX": 2.0, "HYD_CMDMIN": -3.0,
-    "HYD_RKP": 0.4, "HYD_RTKI": 0.0, "HYD_RSCALE": 0.8,
+    "HYD_RKP": 0.4, "HYD_RSCALE": 0.8,
     "HYD_RSCHED": 493.0, "HYD_FRNTFF": 0.2,
     "SCR_USER1": 0.0, "SCR_USER2": 0.0, "SCR_USER3": 0.0, "SCR_USER4": 0.0,
     "TRN_ENABLE": 0.0, "TRN_REV": 0.0,
