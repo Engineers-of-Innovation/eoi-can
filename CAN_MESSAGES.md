@@ -216,14 +216,26 @@ the command ID against their own application type — rebooting one board leaves
 
 ## Motor NTC Sensor
 
-A standalone node — STM32G491 on CANable 2.5 hardware with a 10 kΩ NTC on the motor,
-transmit only, never receives. It supersedes reading the motor NTC through the VESC,
-whose own reading is broken, and through the rudder controller's retired 0x217. It is
-what the display shows as `Motor` and the only motor temperature on the bus.
+A standalone node with a 10 kΩ NTC on the motor, transmit only, never receives. It
+supersedes reading the motor NTC through the VESC, whose own reading is broken, and
+through the rudder controller's retired 0x217. It is what the display shows as
+`Motor` and the only motor temperature on the bus.
+
+Two firmwares produce this frame, identically, and **only one of them may be on a bus
+at a time** — both transmit unprompted on `0x219`, which is a collision, not a
+redundancy:
+
+- `can-motor-temperature`, an STM32G491 on CANable 2.5 hardware. Period comes from
+  its internal LSI, so 1 s ±5 %.
+- [`motor-ntc-sensor`](firmware/README.md#motor-ntc-sensor), rudder controller
+  hardware with the NTC on the steering potentiometer input. Period comes from the
+  PLL, so a solid 1 s. It never sets bit 4 (AcquisitionError), and its bit 5
+  (CanTxFailed) means the frame could not be queued rather than that it went
+  unacknowledged.
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| MotorNtc | 0x219 | 4 | 0–1 | Temperature | i16 | LE | Decidegrees Celsius — note, not the centidegrees 0x210–0x217 use. `0x8000` (`-32768`) is the explicit invalid sentinel: no reading, see the status byte. Valid readings are clamped to -40.0…+150.0 °C. Sent every 1 s ±5 %, from the node's internal LSI. |
+| MotorNtc | 0x219 | 4 | 0–1 | Temperature | i16 | LE | Decidegrees Celsius — note, not the centidegrees 0x210–0x217 use. `0x8000` (`-32768`) is the explicit invalid sentinel: no reading, see the status byte. Valid readings are clamped to -40.0…+150.0 °C. Sent every 1 s (±5 % on the CANable node, whose timebase is its internal LSI). |
 | | | | 2 | Status | u8 | | Bit flags, see below. |
 | | | | 3 | Frame counter | u8 | | Increments once per transmission and wraps. A gap means frames never reached the bus. The node can be built with DLC 2, which omits this byte and the status byte. |
 

@@ -1,6 +1,6 @@
 # EoI Firmware
 
-Embedded firmware for the STM32L471 microcontroller. Contains three application binaries that share common code (clock configuration, temperature sensor, CAN bus), a CAN bootloader for field updates, and a host-side flash tool. Communicates over CAN bus at 1 Mbps.
+Embedded firmware for the STM32L471 microcontroller. Contains four application binaries that share common code (clock configuration, temperature sensor, CAN bus), a CAN bootloader for field updates, and a host-side flash tool. Communicates over CAN bus at 1 Mbps.
 
 ## Application Binaries
 
@@ -26,11 +26,20 @@ Same board as the height sensor controller, with a Waveshare 5.79" e-paper displ
 
 Rendering lives in the [`draw-display`](../draw-display) crate at the repo root, shared with the simulator and framebuffer tools.
 
+### Motor NTC Sensor (`motor-ntc-sensor`)
+
+Rudder-controller hardware doing one job: read a 10 kΩ NTC on the steering
+potentiometer input and broadcast the motor temperature on `0x219` at 1 Hz.
+See [Motor NTC sensor](#motor-ntc-sensor-1) below.
+
+- No bootloader, no persistent config, no servo, no pump — transmit only
+- Wire-identical to the standalone [`can-motor-temperature`](https://github.com/Engineers-of-Innovation) node, so nothing downstream has to know which board is fitted
+
 ## Bootloader (`eoi-boot`)
 
 CAN-based bootloader that lives in the first 80K of flash. Allows firmware updates over CAN bus without a debug probe.
 
-The bootloader is compiled for exactly one board variant — select it with a cargo feature (`rudder-controller`, `height-sensor-controller` or `dashboard`). It refuses to boot an application whose header app type doesn't match.
+The bootloader is compiled for exactly one board variant — select it with a cargo feature (`rudder-controller`, `height-sensor-controller` or `dashboard`). It refuses to boot an application whose header app type doesn't match. `motor-ntc-sensor` deliberately has no variant and no app type; it owns all of flash and is flashed with a probe.
 
 - Validates application on boot (header magic + CRC32)
 - Auto-boots the application 2 seconds after the last command addressed to this board
@@ -288,6 +297,107 @@ accepted: full-left may read either above or below full-right.
 `0x02`, steer fully right -> send `0x03`. Order does not matter. The set becomes
 active on the next 10 Hz sample once all three are captured and plausible.
 
+## Motor NTC Sensor
+
+The `motor-ntc-sensor` binary turns a rudder controller board into the standalone
+motor temperature node, broadcasting `0x219` at 1 Hz in 0.1 °C. The frame and the
+conversion chain are ported unchanged from the `can-motor-temperature` firmware
+(STM32G491 on CANable 2.5 hardware), so the two are interchangeable on the wire —
+see the `MotorNtc` rows in [CAN_MESSAGES.md](../CAN_MESSAGES.md) for the layout and
+the status bits.
+
+**Only one of the two may be on a bus at a time.** They share `0x219` and each
+transmits unprompted; two transmitters on one identifier is a collision, not a
+redundancy.
+
+### Wiring
+
+```
+      PB2 ─────[ 10k ]───── PB1 ─────[ 47R ]─────[ 10k NTC ]───── GND
+  pot_feedback               │  pot_analog_in
+ (bias, switched)            └─ ADC1_IN16 + any filter capacitor to GND
+```
+
+| Function | Pin | Net | Notes |
+| --- | --- | --- | --- |
+| NTC sense | PB1 | `pot_analog_in` | ADC1_IN16, the steering potentiometer input |
+| Divider bias | PB2 | `pot_feedback` | Push-pull, driven high only while measuring |
+
+The 47 Ω is the resistor already on the board in series with the sensor leg; it is
+subtracted in `motor_ntc.rs` (`R_SERIES_LOW_OHMS`). It is worth ~0.1 °C at room
+temperature, so if it turns out to sit between the connector and the MCU pin rather
+than in the divider leg, set that constant to 0 — an ADC input draws no DC, so a
+resistor there divides nothing.
+
+**Why bias from a GPIO rather than from 3V3.** The divider is fed from VDD through
+PB2 and the ADC reference is VDDA, the same rail, so the supply voltage cancels out
+of the ratio: no VREFINT correction, and supply ripple from the motor drive does not
+appear in the reading. The NTC is also biased only ~215 ms per second, so
+self-heating is far below 0.1 °C. Between measurements PB2 is driven **low**, not
+left floating, so both ends of the divider sit at ground and the sense node cannot
+be pumped around by capacitive coupling from the motor cables.
+
+### Filtering
+
+| Stage | What |
+| --- | --- |
+| analog | whatever filter capacitor is fitted on the sense node |
+| ADC hardware oversampler | 256 accumulations per read, right-shifted 4 for a 16-bit result (full scale 65520), zero CPU cost |
+| trimmed mean | 16 reads spread over 64 ms, sorted, highest 4 and lowest 4 **discarded** |
+| IIR + slew limit | first-order IIR (shift 2, ~3 s), then at most 5.0 °C change per update |
+
+4096 hardware samples per second, of which 2048 can be arbitrarily corrupted without
+moving the result. The trimming is the part that matters next to motor cables: an
+interference burst landing inside one read is thrown away outright rather than
+averaged in, which a plain mean cannot do.
+
+One second, from the top:
+
+| t | |
+| --- | --- |
+| 0 ms | divider bias on |
+| 150 ms | ADC burst starts — 15 τ of settling for a 1 µF cap on a 10 kΩ source |
+| 150–214 ms | 16 oversampled reads, ~1.7 ms each, spread 4 ms apart |
+| 214 ms | trimmed mean, IIR, convert, transmit, bias off |
+
+Unlike the standalone node this one does not sleep, and its period comes from the
+80 MHz PLL rather than an LSI, so the rate is a solid 1 Hz rather than 1 Hz ±5 %.
+
+### Differences from the standalone node
+
+- **`0x10` (acquisition error) is never set.** The ADC is read synchronously here;
+  there is no DMA burst that can fail to arrive.
+- **`0x20` (CAN Tx failed) is weaker.** It means the previous frame could not be
+  queued, not that it went unacknowledged — `BufferedCanSender` does not surface
+  the acknowledge.
+- **No bootloader, no low-power modes, no `GetVersion` over CAN.** `eoi-flash-tool
+  scan` will not see this board; it reports its build over defmt at boot only.
+
+### Bring-up
+
+```sh
+cargo run --release --bin motor-ntc-sensor
+```
+
+Under WSL that goes through the Windows-side J-Link Commander and flashes without
+streaming logs; with the probe passed through by `usbipd attach --wsl`, force
+`FLASH_BACKEND=probe-rs` to get defmt output as well. Note this image owns all of
+flash, so flashing it over a board that already has the bootloader erases the
+bootloader — re-flash `eoi-boot --features rudder-controller` to get it back.
+
+With the divider unpopulated the sense node floats up to the bias rail, so a board
+with no NTC fitted reports `0x8000` with status `0x01` (SensorOpen), once a second.
+That is the correct answer and a good sign the loop is running. With the 10 kΩ
+pull-up and a 10 kΩ NTC fitted, room temperature should read a filtered code near
+32800 and about 25 °C.
+
+### Other rudder controller hardware
+
+Nothing else on the board is driven. The stepper enable (PB5, active-low) and the
+cooling pump enable (PA6, active-high) are parked in their off state at boot rather
+than left as inputs, so a board that is still wired to a motor or a pump cannot have
+either come alive by accident.
+
 ## Getting Started
 
 This project is written in Rust for an embedded (bare-metal) ARM target. If you don't have Rust installed yet, follow these steps.
@@ -318,6 +428,7 @@ cargo install probe-rs-tools
 cargo build --release --bin height-sensor-controller
 cargo build --release --bin rudder-controller
 cargo build --release --bin dashboard
+cargo build --release --bin motor-ntc-sensor   # probe only, no bootloader variant
 
 # Application binaries for use with bootloader (linked at app offset 0x08014800)
 cargo build --release --bin height-sensor-controller --features bootloader
@@ -369,6 +480,7 @@ Then flash the application:
 cargo run --release --bin height-sensor-controller
 cargo run --release --bin rudder-controller
 cargo run --release --bin dashboard
+cargo run --release --bin motor-ntc-sensor
 ```
 
 This will compile, flash the firmware onto the chip, and show log output via defmt.

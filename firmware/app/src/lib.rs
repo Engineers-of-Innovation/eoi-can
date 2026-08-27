@@ -9,6 +9,7 @@ pub mod cooling_pump;
 pub mod dashboard;
 pub mod flow_sensor;
 pub mod height_sensor;
+pub mod motor_ntc;
 pub mod rudder_can;
 pub mod servo_rudder;
 pub mod steering_angle;

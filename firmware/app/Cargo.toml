@@ -15,6 +15,11 @@ path = "src/bin/rudder_controller.rs"
 name = "dashboard"
 path = "src/bin/dashboard.rs"
 
+# Rudder-controller hardware repurposed as a standalone motor temperature node.
+[[bin]]
+name = "motor-ntc-sensor"
+path = "src/bin/motor_ntc_sensor.rs"
+
 [build-dependencies]
 built = { version = "0.8", features = [ "git2" ] }
 

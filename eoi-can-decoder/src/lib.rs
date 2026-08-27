@@ -776,10 +776,14 @@ pub enum TemperatureData {
     MotorNtc(MotorNtc),
 }
 
-/// The standalone motor NTC node, `0x219` -- an STM32G491 on CANable 2.5 hardware
-/// with a 10 kΩ NTC, transmit only, once per second. It has replaced reading the motor
-/// NTC through the VESC, whose own reading is broken, and through the rudder controller's
-/// `0x217`, which was a stopgap and is retired.
+/// The standalone motor NTC node, `0x219` -- a 10 kΩ NTC on the motor, transmit only,
+/// once per second. It has replaced reading the motor NTC through the VESC, whose own
+/// reading is broken, and through the rudder controller's `0x217`, which was a stopgap
+/// and is retired.
+///
+/// Two firmwares produce this frame identically, and only one of them may be on a bus
+/// at a time: `can-motor-temperature` (an STM32G491 on CANable 2.5 hardware) and the
+/// `motor-ntc-sensor` binary on rudder controller hardware.
 ///
 /// `temperature` is `None` when the frame carried the node's invalid sentinel, which
 /// it always does for an open sensor, a short, or a failed acquisition. `OutOfRange`

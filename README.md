@@ -38,7 +38,7 @@ You do **not** need to be a Rust expert to get started! This guide will help you
   - Original designed for an black and white e-ink display
 - `eoi-can-decoder/` — CAN data decoding utilities
   - Made in a way so it can be used for displaying data but also can easily be converted to JSON (to be send over MQTT)
-- `firmware/` — STM32L471 board firmware: rudder controller, height sensor controller, dashboard (e-paper display), CAN bootloader, and host-side flash tool
+- `firmware/` — STM32L471 board firmware: rudder controller, height sensor controller, dashboard (e-paper display), motor NTC sensor (rudder controller hardware, temperature only), CAN bootloader, and host-side flash tool
   - Its own Cargo workspace (builds for `thumbv7em-none-eabihf`); see [firmware/README.md](firmware/README.md)
 - `eoi-can-display-framebuffer/` — Framebuffer-based display application
   - Can be run on a linux machine with a standard Raspberry Pi display; the 792x272 rendering is centered in the framebuffer
