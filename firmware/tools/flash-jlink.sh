@@ -85,15 +85,55 @@ if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     "$FLASH_TOOL" image "$ELF" --output "$APP_IMAGE"
 fi
 
+# Locate the Windows-side J-Link Commander. The SEGGER installer does not put
+# itself on PATH, and WSL does not inherit the Windows PATH in every setup, so
+# fall back to the default install directories. `JLink` is the current install;
+# `JLink_V###` are the versioned ones the installer leaves behind, so prefer the
+# former and otherwise take the highest version. Override with JLINK_EXE.
+find_jlink_exe() {
+    if [ -n "${JLINK_EXE:-}" ]; then
+        echo "$JLINK_EXE"
+        return
+    fi
+    if command -v JLink.exe >/dev/null 2>&1; then
+        command -v JLink.exe
+        return
+    fi
+    for dir in "/mnt/c/Program Files/SEGGER" "/mnt/c/Program Files (x86)/SEGGER"; do
+        [ -d "$dir" ] || continue
+        if [ -x "$dir/JLink/JLink.exe" ]; then
+            echo "$dir/JLink/JLink.exe"
+            return
+        fi
+        # `sort -V` so V798e beats V7100 the way SEGGER means it to.
+        newest=$(ls -d "$dir"/JLink_V* 2>/dev/null | sort -V | tail -1)
+        if [ -n "$newest" ] && [ -x "$newest/JLink.exe" ]; then
+            echo "$newest/JLink.exe"
+            return
+        fi
+    done
+}
+
 case "$backend" in
 jlink)
-    for tool in arm-none-eabi-objcopy JLink.exe wslpath; do
+    for tool in arm-none-eabi-objcopy wslpath; do
         if ! command -v "$tool" >/dev/null 2>&1; then
             echo "flash-jlink.sh: '$tool' not found; needed for the jlink backend" >&2
             echo "  (set FLASH_BACKEND=probe-rs to use probe-rs instead)" >&2
             exit 1
         fi
     done
+
+    JLINK=$(find_jlink_exe)
+    if [ -z "$JLINK" ]; then
+        echo "flash-jlink.sh: JLink.exe not found; needed for the jlink backend" >&2
+        echo "  Looked on PATH and in C:\\Program Files[ (x86)]\\SEGGER." >&2
+        echo "  Point JLINK_EXE at it, or set FLASH_BACKEND=probe-rs to use" >&2
+        echo "  probe-rs instead (needs the probe attached to Linux with" >&2
+        echo "  'usbipd attach --wsl', and gives defmt logs)." >&2
+        exit 1
+    fi
+    echo "flash-jlink.sh: using $JLINK"
 
     SCRIPT=$(mktemp /tmp/flash_XXXXXX.jlink)
     # Clean up even when JLink.exe fails and `set -e` aborts.
@@ -120,7 +160,7 @@ jlink)
         echo "exit"
     } > "$SCRIPT"
 
-    JLink.exe -commanderscript "$WIN_SCRIPT"
+    "$JLINK" -commanderscript "$WIN_SCRIPT"
     ;;
 probe-rs)
     if ! command -v probe-rs >/dev/null 2>&1; then
