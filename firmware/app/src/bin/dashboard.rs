@@ -10,7 +10,7 @@ use embassy_stm32::{bind_interrupts, dma};
 use eoi_firmware::app_type::AppType;
 use eoi_firmware::clock::clock_config;
 use eoi_firmware::declare_app_type;
-use eoi_firmware::display::run_display;
+use eoi_firmware::display::{PanelMounting, run_display};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::Dashboard);
@@ -36,6 +36,7 @@ async fn main(spawner: Spawner) {
         Irqs,
         MY_APP_TYPE,
         draw_display::Layout::Dashboard,
+        PanelMounting::Upright,
     )
     .await
 }

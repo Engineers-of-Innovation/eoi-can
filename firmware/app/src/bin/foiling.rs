@@ -10,7 +10,7 @@ use embassy_stm32::{bind_interrupts, dma};
 use eoi_firmware::app_type::AppType;
 use eoi_firmware::clock::clock_config;
 use eoi_firmware::declare_app_type;
-use eoi_firmware::display::run_display;
+use eoi_firmware::display::{PanelMounting, run_display};
 use {defmt_rtt as _, panic_probe as _};
 
 declare_app_type!(AppType::FoilTuning);
@@ -28,5 +28,15 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
-    run_display(spawner, p, Irqs, MY_APP_TYPE, draw_display::Layout::Foiling).await
+    // Starboard side of the boat, in a mirrored case: the panel hangs upside
+    // down, so the image is rotated 180 degrees to match.
+    run_display(
+        spawner,
+        p,
+        Irqs,
+        MY_APP_TYPE,
+        draw_display::Layout::Foiling,
+        PanelMounting::Inverted,
+    )
+    .await
 }

@@ -33,6 +33,7 @@ use embedded_graphics::prelude::*;
 use eoi_can_decoder::can_collector::CanCollector;
 use eoi_can_decoder::can_frame::CanFrame;
 use epd_waveshare::epd5in79::{Display5in79, Epd5in79};
+use epd_waveshare::graphics::DisplayRotation;
 use epd_waveshare::prelude::Color;
 use static_cell::StaticCell;
 
@@ -58,9 +59,41 @@ pub static COLLECTOR: Mutex<ThreadModeRawMutex, CanCollector> = Mutex::new(CanCo
 /// bench, flip the mapping here — single point of change.
 pub struct EpdDisplay(pub Display5in79);
 
+/// Which way up the panel sits in its case.
+///
+/// A property of the installation, not of the layout, so each binary states it
+/// for its own board. Deliberately not [`DisplayRotation`]: both layouts are
+/// drawn for a 792x272 landscape panel, and the quarter-turn rotations swap
+/// [`OriginDimensions::size`] to 272x792, which would put most of the screen
+/// off the panel.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum PanelMounting {
+    /// Ribbon cable at the bottom, the orientation the panel is drawn for.
+    #[default]
+    Upright,
+    /// Rotated 180°: the panel hangs upside down in its case, so the image has
+    /// to be turned to match.
+    Inverted,
+}
+
+impl PanelMounting {
+    const fn rotation(self) -> DisplayRotation {
+        match self {
+            Self::Upright => DisplayRotation::Rotate0,
+            Self::Inverted => DisplayRotation::Rotate180,
+        }
+    }
+}
+
 impl EpdDisplay {
-    pub fn new() -> Self {
-        Self(Display5in79::default())
+    pub fn new(mounting: PanelMounting) -> Self {
+        let mut display = Display5in79::default();
+        // Rotating the draw target rather than the layout keeps the render code
+        // writing in normal top-left coordinates: `set_pixel` remaps each pixel
+        // on its way into the framebuffer, so what is clocked out to the panel
+        // is already the right way up. Free, and invisible to `draw_display`.
+        display.set_rotation(mounting.rotation());
+        Self(display)
     }
 
     pub fn buffer(&self) -> &[u8] {
@@ -70,7 +103,7 @@ impl EpdDisplay {
 
 impl Default for EpdDisplay {
     fn default() -> Self {
-        Self::new()
+        Self::new(PanelMounting::default())
     }
 }
 
@@ -247,14 +280,16 @@ async fn heartbeat_task(
 /// Bring up the panel and CAN, then render `layout` forever. Never returns.
 ///
 /// Owns the whole board: both display boards are the same hardware, so the pin
-/// choices belong here rather than being repeated per binary. The only thing a
-/// binary decides is which layout to draw and which app type it reports.
+/// choices belong here rather than being repeated per binary. The only things a
+/// binary decides are which layout to draw, which app type it reports, and how
+/// its panel is mounted.
 pub async fn run_display<I: DisplayIrqs>(
     spawner: Spawner,
     p: Peripherals,
     irqs: I,
     app_type: AppType,
     layout: Layout,
+    mounting: PanelMounting,
 ) -> ! {
     info!("Display board: {}", layout.name());
     crate::build_info::log();
@@ -348,7 +383,7 @@ pub async fn run_display<I: DisplayIrqs>(
     info!("Init done");
     red_led.set_high();
 
-    let display = DISPLAY.init_with(EpdDisplay::new);
+    let display = DISPLAY.init_with(|| EpdDisplay::new(mounting));
     let mut display_data = DisplayData::default();
     layout.draw(display, &display_data).unwrap();
 
