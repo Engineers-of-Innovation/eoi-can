@@ -578,6 +578,9 @@ fn flatten_temperature(t: &TemperatureData, out: &mut Vec<(String, String)>) {
                     counter.to_string(),
                 ));
             }
+            if let Some(raw) = ntc.raw_adc {
+                out.push(("temperature.motor_ntc.raw_adc".into(), raw.to_string()));
+            }
         }
     }
 }

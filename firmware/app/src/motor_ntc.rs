@@ -127,6 +127,19 @@ const UPDATE_PERIOD_MS: u64 = 1000;
 /// The cost is only the divider's bias current, not CPU time.
 const BIAS_SETTLE_MS: u64 = 150;
 
+/// Leave the divider permanently biased instead of switching it per measurement.
+///
+/// Costs the divider's ~165 µA continuously and gives up the duty cycling that
+/// keeps NTC self-heating negligible — at 10 k over 10 k that is ~0.27 mW in the
+/// NTC, tens of millikelvin in still air, so it is a real but small effect.
+///
+/// What it buys is a node you can put a multimeter on: switched, the sense node
+/// only has a voltage on it for ~215 ms per second and a handheld meter reads
+/// the average of that, which is neither of the two states. It also lets a large
+/// filter capacitor average across the whole second rather than the measurement
+/// window alone.
+const BIAS_ALWAYS_ON: bool = true;
+
 // ---- Oversampling and filtering.
 /// Hardware oversampling ratio, accumulated and shifted by the ADC itself.
 const OVERSAMPLE_RATIO: u32 = 256;
@@ -340,13 +353,23 @@ pub async fn motor_ntc_task(
     let mut tx_failed_last = false;
     let mut frame_counter: u8 = 0;
 
-    let mut ticker = Ticker::every(Duration::from_millis(UPDATE_PERIOD_MS));
-    loop {
+    if BIAS_ALWAYS_ON {
         bias.set_high();
         Timer::after(Duration::from_millis(BIAS_SETTLE_MS)).await;
+    }
+
+    let mut ticker = Ticker::every(Duration::from_millis(UPDATE_PERIOD_MS));
+    loop {
+        if !BIAS_ALWAYS_ON {
+            bias.set_high();
+            Timer::after(Duration::from_millis(BIAS_SETTLE_MS)).await;
+        }
 
         let mean_q8 = trimmed_mean_q8(&mut adc, &mut input).await;
-        bias.set_low();
+
+        if !BIAS_ALWAYS_ON {
+            bias.set_low();
+        }
 
         let mut status = if tx_failed_last {
             STATUS_CAN_TX_FAILED
@@ -377,9 +400,17 @@ pub async fn motor_ntc_task(
         }
 
         let decideg_le = decideg.to_le_bytes();
+        let code_le = (code as u16).to_le_bytes();
         let frame = Frame::new_data(
             CAN_ID_MOTOR_NTC,
-            &[decideg_le[0], decideg_le[1], status, frame_counter],
+            &[
+                decideg_le[0],
+                decideg_le[1],
+                status,
+                frame_counter,
+                code_le[0],
+                code_le[1],
+            ],
         )
         .unwrap();
         // `try_write` only reports a full TX buffer, not a frame the bus never

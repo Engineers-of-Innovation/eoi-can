@@ -346,12 +346,17 @@ be pumped around by capacitive coupling from the motor cables.
 | trimmed mean | 16 reads spread over 64 ms, sorted, highest 4 and lowest 4 **discarded** |
 | IIR + slew limit | first-order IIR (shift 2, ~3 s), then at most 5.0 °C change per update |
 
+The filtered code that comes out of this goes on the wire in bytes 4–5, which is
+what makes a wiring fault diagnosable from a `candump` line alone — see
+[Reading the raw code](#reading-the-raw-code).
+
 4096 hardware samples per second, of which 2048 can be arbitrarily corrupted without
 moving the result. The trimming is the part that matters next to motor cables: an
 interference burst landing inside one read is thrown away outright rather than
 averaged in, which a plain mean cannot do.
 
-One second, from the top:
+`BIAS_ALWAYS_ON` (currently `true`) decides whether the divider is switched per
+measurement or left powered. Switched, one second looks like this:
 
 | t | |
 | --- | --- |
@@ -360,8 +365,39 @@ One second, from the top:
 | 150–214 ms | 16 oversampled reads, ~1.7 ms each, spread 4 ms apart |
 | 214 ms | trimmed mean, IIR, convert, transmit, bias off |
 
+Leaving it on costs the divider's ~165 µA continuously and gives up the duty
+cycling that keeps NTC self-heating negligible — ~0.27 mW in the NTC, tens of
+millikelvin in still air. What it buys is a node you can put a multimeter on:
+switched, the sense node only has a voltage on it for ~215 ms per second, and a
+handheld meter reads the average of that, which is neither of the two states.
+
 Unlike the standalone node this one does not sleep, and its period comes from the
 80 MHz PLL rather than an LSI, so the rate is a solid 1 Hz rather than 1 Hz ±5 %.
+
+### Reading the raw code
+
+Bytes 4–5 carry the filtered ADC code, full scale 65520. `candump can0,219:7FF -x`
+and read it back to a node voltage and a leg resistance:
+
+```
+ratio = code / 65520            V(PB1) = ratio * 3.3 V
+Rlow  = 10030 * ratio / (1 - ratio)      # the whole low leg, 47R + NTC
+```
+
+| Code | ratio | V(PB1) | Low leg | Means |
+| --- | --- | --- | --- | --- |
+| 65520 | 1.000 | 3.30 V | ∞ | NTC or its ground return is open (`0x01`) |
+| 63979 | 0.977 | 3.22 V | 416 kΩ | -40 °C, the cold clamp |
+| 50616 | 0.773 | 2.55 V | 34 kΩ | 0 °C |
+| 32788 | 0.500 | 1.65 V | 10 kΩ | 25 °C |
+| 29165 | 0.445 | 1.47 V | 8.0 kΩ | 30 °C |
+| 13073 | 0.200 | 0.66 V | 2.5 kΩ | 60 °C |
+| 1527 | 0.023 | 0.08 V | 239 Ω | +150 °C, the hot clamp |
+| 0 | 0.000 | 0.00 V | 0 Ω | NTC shorted, or the bias never rose (`0x02`) |
+
+A code that disagrees with what a meter reads on PB1 is a firmware or ADC problem.
+A code that agrees with the meter but not with the resistance you measured at the
+connector is a wiring problem, and the table says which way.
 
 ### Differences from the standalone node
 

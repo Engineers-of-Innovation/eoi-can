@@ -1223,6 +1223,18 @@ fn add_motor(v: &mut Vec<HaEntity>) {
         .diagnostic()
         .icon("mdi:counter"),
     );
+    // Only the rudder-controller-hardware build sends this, so it is absent on a
+    // bus running the CANable node. It is the field that separates a miswired
+    // divider from a genuinely cold NTC.
+    v.push(
+        sensor(
+            "motor_ntc_raw_adc",
+            "Motor NTC Raw ADC",
+            "Temperature.MotorNtc.raw_adc",
+        )
+        .diagnostic()
+        .icon("mdi:sine-wave"),
+    );
 }
 
 fn add_height_sensors(v: &mut Vec<HaEntity>) {
@@ -1778,6 +1790,7 @@ mod tests {
                 temperature: Some(0.0),
                 status: MotorNtcStatus::default(),
                 frame_counter: Some(0),
+                raw_adc: Some(0),
             })),
             // GNSS
             EoiCanData::Gnss(GnssData::GnssStatus(GnssStatus {

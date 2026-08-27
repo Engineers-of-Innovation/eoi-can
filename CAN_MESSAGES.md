@@ -235,9 +235,10 @@ redundancy:
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| MotorNtc | 0x219 | 4 | 0–1 | Temperature | i16 | LE | Decidegrees Celsius — note, not the centidegrees 0x210–0x217 use. `0x8000` (`-32768`) is the explicit invalid sentinel: no reading, see the status byte. Valid readings are clamped to -40.0…+150.0 °C. Sent every 1 s (±5 % on the CANable node, whose timebase is its internal LSI). |
+| MotorNtc | 0x219 | 4 or 6 | 0–1 | Temperature | i16 | LE | Decidegrees Celsius — note, not the centidegrees 0x210–0x217 use. `0x8000` (`-32768`) is the explicit invalid sentinel: no reading, see the status byte. Valid readings are clamped to -40.0…+150.0 °C. Sent every 1 s (±5 % on the CANable node, whose timebase is its internal LSI). |
 | | | | 2 | Status | u8 | | Bit flags, see below. |
 | | | | 3 | Frame counter | u8 | | Increments once per transmission and wraps. A gap means frames never reached the bus. The node can be built with DLC 2, which omits this byte and the status byte. |
+| | | | 4–5 | Raw ADC | u16 | LE | Filtered ADC code the temperature was derived from, full scale 65520 (12-bit conversions oversampled 256x and right-shifted 4). **`motor-ntc-sensor` only** — the CANable node sends DLC 4 and omits it. It is what separates a miswired divider from a genuinely cold NTC, since both come through as OutOfRange. |
 
 Status bits in byte 2:
 

@@ -799,6 +799,12 @@ pub struct MotorNtc {
     /// Absent on a two-byte build of the node, which sends no counter.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frame_counter: Option<u8>,
+    /// The filtered ADC code the temperature was derived from, full scale 65520.
+    /// Present only on the `motor-ntc-sensor` firmware, which sends six bytes; it
+    /// is what tells a divider that is wired wrong from an NTC that is genuinely
+    /// cold, since both report as out of range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_adc: Option<u16>,
 }
 
 /// Status flags from byte 2 of `0x219`, matching `eSensorStatus` in the node's
@@ -932,6 +938,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                     // have reported is already in the sentinel above.
                     status: MotorNtcStatus::from(data.get(2).copied().unwrap_or(0)),
                     frame_counter: data.get(3).copied(),
+                    raw_adc: data.get(4..6).and_then(bytes_le_to_u16),
                 },
             )))
         }
@@ -1616,6 +1623,26 @@ mod tests {
         assert!(ntc.temperature == Some(23.5));
         assert!(ntc.status == MotorNtcStatus::default());
         assert!(ntc.frame_counter == Some(0x42));
+        // Four-byte frame: no raw code to report.
+        assert!(ntc.raw_adc.is_none());
+    }
+
+    #[test]
+    fn motor_ntc_six_byte_frame_carries_the_raw_code() {
+        // The `motor-ntc-sensor` firmware appends the filtered ADC code.
+        let ntc = motor_ntc(&[0xEB, 0x00, 0x00, 0x42, 0x14, 0x80]);
+        assert!(ntc.temperature == Some(23.5));
+        assert!(ntc.frame_counter == Some(0x42));
+        assert!(ntc.raw_adc == Some(0x8014));
+    }
+
+    #[test]
+    fn motor_ntc_raw_code_survives_a_faulted_reading() {
+        // Out of range, clamped: the code is what says which way it went wrong.
+        let ntc = motor_ntc(&[0x70, 0xFE, 0x04, 0x00, 0xD3, 0xF9]);
+        assert!(ntc.temperature == Some(-40.0));
+        assert!(ntc.status.out_of_range);
+        assert!(ntc.raw_adc == Some(0xF9D3));
     }
 
     #[test]
