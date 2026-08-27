@@ -10,3 +10,12 @@ linker = "flip-link"
 
 [build]
 target = "thumbv7em-none-eabihf"
+
+# defmt filters logs at compile time and defaults to ERROR when DEFMT_LOG is
+# unset, which builds a firmware that says nothing over RTT. Default to info so
+# `cargo run`/`attach.sh` show the boot banner, sensor lines and servo state
+# without anyone having to remember the variable. Cargo does not force this
+# over an existing value, so `DEFMT_LOG=trace cargo run` (TMC UART errors,
+# ignored setpoints) and `DEFMT_LOG=error` (lean production image) still win.
+[env]
+DEFMT_LOG = "info"

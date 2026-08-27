@@ -35,10 +35,37 @@ const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 // TODO(bench): raise IRUN (max 19 = rated rms heating) only if torque is
 // short under real load, watching motor temperature.
 const IRUN: u8 = 13;
-const IRUN_HOMING: u8 = 8;
+// Homing at 8 (0.30 A rms, 45% of rated) left the motor twitching without
+// turning: a 32-step false home with SG_RESULT 2. 19 is the most the motor
+// takes continuously (0.66 A rms = rated read as rms), picked to settle
+// whether homing is torque-limited at all rather than as a final value.
+// TODO(bench): homing is meant to run *below* the run current so the sweep
+// does not slam the mechanical stop. Once it homes reliably, walk this back
+// down — 13 (matching IRUN) first, then toward 8.
+const IRUN_HOMING: u8 = 19;
 const IHOLD: u8 = 4;
 const IHOLD_DELAY: u8 = 8;
-const MRES_8_MICROSTEPS: u32 = 5;
+/// STEP-input microstep resolution. CHOPCONF keeps intpol=1, so the driver
+/// interpolates whatever we send up to 256 microsteps internally and coarse
+/// input still comes out mechanically smooth at the motor. Lowering this
+/// multiplies shaft speed at a given step rate and coarsens position
+/// resolution by the same factor; the travel constants below scale with it.
+const MICROSTEPS: i32 = 4;
+const fn mres(microsteps: i32) -> u32 {
+    match microsteps {
+        256 => 0,
+        128 => 1,
+        64 => 2,
+        32 => 3,
+        16 => 4,
+        8 => 5,
+        4 => 6,
+        2 => 7,
+        1 => 8,
+        _ => core::panic!("MICROSTEPS must be a power of two between 1 and 256"),
+    }
+}
+const MRES_VALUE: u32 = mres(MICROSTEPS);
 // TMC2209 CHOPCONF reset value (toff=3, hstrt=5, tbl=2, intpol=1); writing
 // CHOPCONF from all-zeroes would set toff=0 and disable the driver.
 const CHOPCONF_RESET: u32 = 0x1000_0053;
@@ -49,19 +76,48 @@ const CHOPCONF_RESET: u32 = 0x1000_0053;
 // tripped at <120 and stalled instantly against the free-running 70.
 // TODO(bench): verify a hand-stall still trips DIAG reliably under real load.
 const SGTHRS_HOMING: u32 = 17;
-const TCOOLTHRS_VAL: u32 = 0xF_FFFF;
+// StallGuard drives DIAG only while TSTEP < TCOOLTHRS, i.e. only above a
+// minimum step rate. TSTEP = fCLK / step_freq with fCLK ~12 MHz, so the
+// ~404 Hz homing rate is TSTEP ~29,700; 40,000 keeps StallGuard live there
+// while switching it off below ~300 Hz.
+//
+// The old 0xF_FFFF was the register maximum, which left StallGuard enabled
+// down to a crawl — so SG_RESULT read 0 at standstill and during the pauses
+// the SG/DRV_STATUS reads introduce, and DIAG sat high whenever it was
+// sampled ("DIAG before homing: true" with the motor stationary). Homing then
+// "found" the stop at exactly the end of the blanking window, wherever that
+// window happened to end: 48, 500 and 900 steps as the constants moved.
+const TCOOLTHRS_VAL: u32 = 40_000;
 // Ignore DIAG for the first steps of a move (StallGuard is unreliable while
 // accelerating from standstill).
 const STALL_BLANK_STEPS: u32 = 32;
+// Homing steps at a constant HOMING_DELAY_TICKS with no ramp, so the rotor is
+// still catching up with the pulse train well after a move would have settled,
+// and StealthChop2 has not finished its automatic tuning either. 32 microsteps
+// is 4 full steps / 80 ms, which read SG_RESULT 2 against a trip threshold of
+// 34 and false-homed instantly. Give it ~1 s of spin-up before believing DIAG.
+const HOMING_SPINUP_BLANK_STEPS: u32 = 400;
+// DIAG has to stay asserted this many consecutive steps to count as a stall.
+// SG_RESULT averages a healthy ~275 on a free motor but dips to 0 in bursts,
+// and a single sampled dip ended the sweep — including with SGTHRS at 0, where
+// the trip condition SG_RESULT <= 2*SGTHRS still fires on an exact zero. A real
+// stall holds DIAG high indefinitely, so ~80 ms of agreement costs nothing.
+const STALL_CONFIRM_STEPS: u32 = 32;
+// Mid-sweep telemetry. Each read pauses the pulse train, which is what made
+// the old 40-step sampling false-trip; at this spacing, and with DIAG now
+// debounced over STALL_CONFIRM_STEPS, a pause costs nothing.
+const TELEMETRY_EVERY_STEPS: u32 = 2_000;
 
 // Full travel (setpoint 1000..2000) in microsteps.
 // TODO(bench): calibrate on the real mechanics: home, then drive slowly into
 // the far stop and take the position from the "Stall detected at position"
 // log message.
-const TRAVEL_STEPS: i32 = 20_000;
+const TRAVEL_FULL_STEPS: i32 = 2_500;
+const TRAVEL_STEPS: i32 = TRAVEL_FULL_STEPS * MICROSTEPS;
 // TODO(bench): verify the backoff clears the stop with enough margin that
 // normal moves to setpoint 1000 never re-touch it.
-const BACKOFF_STEPS: i32 = 200;
+const BACKOFF_FULL_STEPS: i32 = 25;
+const BACKOFF_STEPS: i32 = BACKOFF_FULL_STEPS * MICROSTEPS;
 const HOMING_BUDGET_PERCENT: u32 = 120;
 // Which DIR level moves toward the home stop.
 // TODO(bench): verify before first homing; if wrong, the foil runs to the
@@ -74,11 +130,41 @@ const START_DELAY_TICKS: u64 = TICK_HZ / 400; // ~400 Hz ramp start
 // TODO(bench): ~2 kHz cruise = ~33 deg/s at the foil shaft (8 microsteps,
 // 13.73:1 gearbox); drop MRES to 4 microsteps if the rudder must be faster.
 const MIN_DELAY_TICKS: u64 = TICK_HZ / 2000; // ~2 kHz cruise
-// TODO(bench): StallGuard needs enough speed for a usable SG_RESULT signal;
-// raise the homing rate if SG_RESULT sits near zero while running free.
-const HOMING_DELAY_TICKS: u64 = TICK_HZ / 400;
+// SG_RESULT reads a steady 274-278 on a free motor, so there is speed to spare
+// for StallGuard. 800 Hz doubles the old 400 Hz (1 motor rev every 2 s, ~30 s
+// full sweep) and still leaves the tick timing usable: at 32.768 kHz a step is
+// 41 ticks here, so neighbouring rates differ by ~2%. 1600 Hz was tried and
+// lost synchronism — 20 ticks per step means consecutive rates are 5% apart.
+// TODO(bench): to go faster, drop MRES rather than raising this. CHOPCONF has
+// intpol=1, so the driver interpolates to 256 microsteps internally and coarse
+// step input stays mechanically smooth. Note TRAVEL_STEPS/BACKOFF_STEPS and
+// setpoint_to_steps all scale with MRES.
+// TODO(bench): re-tune SGTHRS at this rate once the mechanism is back on —
+// SG_RESULT scales with velocity, so the old threshold no longer applies.
+const HOMING_DELAY_TICKS: u64 = TICK_HZ / 800;
+// Homing has to start below the velocity at which StallGuard drives DIAG, or
+// it asserts on the stationary rotor during the first steps and latches: with
+// no ramp the loop jumped straight to ~404 Hz (TSTEP ~29,700, already under
+// TCOOLTHRS), DIAG went high before the motor moved and stayed high, so every
+// blanking window merely postponed the false home to its own end — 400 steps
+// with no driver reads in the sweep at all, while SG_RESULT sat at 274.
+// ~100 Hz is TSTEP ~120,000, well above TCOOLTHRS, so StallGuard stays off
+// until the ramp has the rotor following the pulse train.
+const HOMING_START_DELAY_TICKS: u64 = TICK_HZ / 200;
+// Shed one tick every N steps rather than every step. Decrementing the delay
+// is not constant acceleration: one tick is ~5 Hz at 400 Hz but ~78 Hz at
+// 1.6 kHz, so a per-step ramp accelerates ever harder as it speeds up and the
+// motor falls out of step near the top.
+const HOMING_ACCEL_EVERY_N_STEPS: u32 = 4;
 const ACCEL_EVERY_N_STEPS: u32 = 4;
-const SG_SAMPLE_EVERY_STEPS: u32 = 40; // ~100 ms at homing speed
+// Nothing is read from the driver while the homing sweep runs. Each read is a
+// UART transaction that pauses the pulse train for a few ms; the rotor loses
+// the velocity StallGuard needs and DIAG latches, so homing "found" the stop
+// at (last sample + re-blank) every time — 48, 500, 900 and 4100 steps as
+// those constants moved, with SG_RESULT reading a healthy 274 right up to the
+// sample. Open load is still caught before the sweep and again at the stop,
+// which is the check that matters: an open coil reads SG_RESULT 0 and would
+// otherwise pass as a successful home.
 const STEP_PULSE_CYCLES: u32 = 40; // ~500 ns high at 80 MHz (datasheet min 100 ns)
 
 pub static SERVO_SETPOINT: Signal<CriticalSectionRawMutex, u16> = Signal::new();
@@ -291,7 +377,7 @@ impl Servo {
 
         let mut chopconf = reg::CHOPCONF::from(CHOPCONF_RESET);
         chopconf.set_vsense(true);
-        chopconf.set_mres(MRES_8_MICROSTEPS);
+        chopconf.set_mres(MRES_VALUE);
         self.tmc
             .write(chopconf)
             .await
@@ -321,6 +407,39 @@ impl Servo {
             return Err(FaultCause::DriverError);
         }
         Ok(())
+    }
+
+    /// pwm_scale_sum is the PWM duty StealthChop is actually applying. Pinned
+    /// near 255 means the driver is at full duty and still cannot reach the
+    /// commanded current — the supply, not the current setting, is the limit.
+    async fn log_drive_health(&mut self) {
+        let sg = self.tmc.read::<reg::SG_RESULT>().await.ok().map(|v| v.get());
+        match self.tmc.read::<reg::PWM_SCALE>().await {
+            Ok(p) => info!(
+                "drive: SG_RESULT={} pwm_scale_sum={} pwm_scale_auto={}",
+                sg,
+                p.pwm_scale_sum(),
+                p.pwm_scale_auto()
+            ),
+            Err(_) => warn!("PWM_SCALE read failed"),
+        }
+    }
+
+    /// GSTAT is the other half of the driver's health, and the only place
+    /// undervoltage and "I have reset and lost my configuration" show up.
+    /// Reading it clears the flags, so each report covers the window since the
+    /// last read.
+    async fn read_gstat(&mut self, context: &str) {
+        match self.tmc.read::<reg::GSTAT>().await {
+            Ok(g) => info!(
+                "GSTAT ({=str}): reset={} drv_err={} uv_cp={}",
+                context,
+                g.reset(),
+                g.drv_err(),
+                g.uv_cp()
+            ),
+            Err(_) => warn!("GSTAT ({=str}): read failed", context),
+        }
     }
 
     /// Coil and StallGuard health straight from the driver. Open-load
@@ -372,14 +491,22 @@ impl Servo {
         info!("DIAG before homing: {}", self.diag.is_high());
         // Log-only: open-load flags are unreliable at standstill.
         self.read_driver_status("pre-homing").await;
+        self.read_gstat("pre-homing").await;
 
         self.dir.set_level(HOME_DIR_LEVEL);
         Timer::after_ticks(1).await;
 
         let budget = TRAVEL_STEPS as u32 * HOMING_BUDGET_PERCENT / 100;
         let mut stepped: u32 = 0;
-        let mut blank = STALL_BLANK_STEPS;
-        let mut open_load_samples: u32 = 0;
+        let mut blank = HOMING_SPINUP_BLANK_STEPS;
+        let mut delay_ticks = HOMING_START_DELAY_TICKS;
+        let mut diag_high: u32 = 0;
+        let mut accel_counter: u32 = 0;
+        let mut last_step = Instant::now();
+        let mut worst_ticks: u64 = 0;
+        let mut best_ticks: u64 = u64::MAX;
+        let mut late_steps: u32 = 0;
+        let mut measured: u32 = 0;
         let mut next = Instant::now();
         loop {
             if stepped >= budget {
@@ -388,45 +515,71 @@ impl Servo {
             }
             if blank > 0 {
                 blank -= 1;
+                diag_high = 0;
             } else if self.diag.is_high() {
-                break;
+                diag_high += 1;
+                if diag_high >= STALL_CONFIRM_STEPS {
+                    break;
+                }
+            } else {
+                diag_high = 0;
             }
 
+            let at_speed = delay_ticks == HOMING_DELAY_TICKS;
             self.step.set_high();
             cortex_m::asm::delay(STEP_PULSE_CYCLES);
             self.step.set_low();
             stepped += 1;
 
-            if stepped.is_multiple_of(SG_SAMPLE_EVERY_STEPS) {
-                match self.tmc.read::<reg::SG_RESULT>().await {
-                    Ok(sg) => info!("Homing SG_RESULT: {}", sg.get()),
-                    Err(_) => warn!("SG_RESULT read failed during homing"),
+            // Measure the pulse train directly rather than inferring motion
+            // quality from driver status. Steps are software-timed on the
+            // 32.768 kHz tick and share a cooperative executor with the CAN,
+            // I2C temperature, steering and flow-sensor tasks, so a step can
+            // be served late; CHOPCONF has intpol=1, and the driver's
+            // interpolation extrapolates from the previous step interval, so
+            // uneven input timing turns into uneven shaft motion.
+            let now = Instant::now();
+            if at_speed {
+                let delta = (now - last_step).as_ticks();
+                if delta > worst_ticks {
+                    worst_ticks = delta;
                 }
-                // Open-load flags can flicker; require two consecutive
-                // samples before faulting.
-                if let Ok(s) = self.tmc.read::<reg::DRV_STATUS>().await {
-                    if s.ola() || s.olb() {
-                        open_load_samples += 1;
-                        warn!(
-                            "Open load during homing (ola={} olb={}, sample {})",
-                            s.ola(),
-                            s.olb(),
-                            open_load_samples
-                        );
-                        if open_load_samples >= 2 {
-                            return Err(FaultCause::DriverOpenLoad);
-                        }
-                    } else {
-                        open_load_samples = 0;
-                    }
+                if delta < best_ticks {
+                    best_ticks = delta;
                 }
-                // The reads pause stepping; re-blank so the restart does not
-                // false-trigger DIAG.
-                blank = STALL_BLANK_STEPS;
+                if delta > HOMING_DELAY_TICKS + 1 {
+                    late_steps += 1;
+                }
+                measured += 1;
+            }
+            last_step = now;
+
+            if stepped.is_multiple_of(TELEMETRY_EVERY_STEPS) {
+                if measured > 0 {
+                    info!(
+                        "step timing over {} steps at target {} ticks: best {} worst {}, {} late",
+                        measured, HOMING_DELAY_TICKS, best_ticks, worst_ticks, late_steps
+                    );
+                }
+                worst_ticks = 0;
+                best_ticks = u64::MAX;
+                late_steps = 0;
+                measured = 0;
+                self.log_drive_health().await;
+                // The reads paused stepping; do not carry a partial DIAG run.
+                diag_high = 0;
                 next = Instant::now();
+                last_step = next;
             }
 
-            next += Duration::from_ticks(HOMING_DELAY_TICKS);
+            accel_counter += 1;
+            if accel_counter >= HOMING_ACCEL_EVERY_N_STEPS {
+                accel_counter = 0;
+                if delay_ticks > HOMING_DELAY_TICKS {
+                    delay_ticks -= 1;
+                }
+            }
+            next += Duration::from_ticks(delay_ticks);
             let now = Instant::now();
             if next < now {
                 next = now;
@@ -434,6 +587,7 @@ impl Servo {
             Timer::at(next).await;
         }
         info!("Home stop found after {} steps", stepped);
+        self.read_gstat("at stop").await;
         match self.tmc.read::<reg::SG_RESULT>().await {
             Ok(sg) => info!("SG_RESULT at stop: {}", sg.get()),
             Err(_) => warn!("SG_RESULT read failed at stop"),
@@ -475,6 +629,7 @@ impl Servo {
         let mut delay_ticks = START_DELAY_TICKS;
         let mut accel_counter: u32 = 0;
         let mut blank = STALL_BLANK_STEPS;
+        let mut diag_high: u32 = 0;
         let mut current_dir: Option<Level> = None;
         let mut next = Instant::now();
 
@@ -497,9 +652,15 @@ impl Servo {
             }
             if blank > 0 {
                 blank -= 1;
+                diag_high = 0;
             } else if self.diag.is_high() {
-                warn!("Stall detected at position {}", self.position);
-                return MoveResult::Stalled;
+                diag_high += 1;
+                if diag_high >= STALL_CONFIRM_STEPS {
+                    warn!("Stall detected at position {}", self.position);
+                    return MoveResult::Stalled;
+                }
+            } else {
+                diag_high = 0;
             }
 
             let direction = if target > self.position { 1 } else { -1 };
