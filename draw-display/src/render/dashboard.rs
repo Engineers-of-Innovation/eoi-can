@@ -324,7 +324,30 @@ const _: () = assert!(HEADING_LEFT + HEADING_BLOCK_W < TIME_TO_EMPTY_LEFT);
 ///
 /// Rounds to tenths once so the two halves agree: 21.98 must read `22` and `0`,
 /// never `21` and `0`. Absent values give the dashes the old `"--.-"` showed.
-/// The 16-point compass name for a bearing in degrees, which must already be
+/// Below this the state of charge is drawn to a tenth.
+///
+/// The last tenth of the pack is where the reading has to work hardest: at 9 %
+/// the difference between 9.9 and 9.0 is most of a leg, and a whole number spends
+/// that whole leg saying "9". Above it the tenth is noise -- nobody trims a race
+/// on the difference between 62 and 62.4 %.
+///
+/// 9.95 rather than 10, because a value that rounds up to "10.0" would be four
+/// glyphs and the field has room for three -- the width "100" needs. So the cut
+/// sits exactly where a tenths reading would stop saying 9.9.
+const SOC_TENTHS_BELOW: f32 = 9.95;
+
+/// The state of charge, to a tenth once the pack is nearly out.
+///
+/// The separator is a point, not a comma: the font's subset carries no comma at
+/// this size, and a glyph a font lacks panics through `map_font_err` rather than
+/// dropping out. The speed above it reads `21.7` for the same reason, so the two
+/// agree.
+fn fmt_soc(buf: &mut String<16>, value: Option<f32>) -> &str {
+    let decimals = usize::from(value.is_some_and(|percent| percent < SOC_TENTHS_BELOW));
+    fmt_f32(buf, value, decimals, "--")
+}
+
+/// The 16-point compass name for a bearing in degrees/// The 16-point compass name for a bearing in degrees, which must already be
 /// normalised to 0..360.
 ///
 /// Sixteen points rather than eight: the extra names cost nothing to read and
@@ -522,12 +545,7 @@ where
         HorizontalAlignment::Right,
         SOC_VALUE_RIGHT,
         HEADLINE_VALUE_Y,
-        fmt_f32(
-            &mut buf,
-            data.battery_state_of_charge.get().copied(),
-            0,
-            "--",
-        ),
+        fmt_soc(&mut buf, data.battery_state_of_charge.get().copied()),
     )?;
     draw_text(
         display,
@@ -977,6 +995,38 @@ mod tests {
             assert_eq!(
                 widest, w,
                 "the widest line of {lines:?} is {widest}px, not the {w}px recorded"
+            );
+        }
+    }
+
+    #[test]
+    fn soc_gains_a_tenth_as_the_pack_empties() {
+        let mut buf: String<16> = String::new();
+        // Plenty left: whole numbers, as before.
+        assert_eq!(fmt_soc(&mut buf, Some(87.0)), "87");
+        assert_eq!(fmt_soc(&mut buf, Some(100.0)), "100");
+        assert_eq!(fmt_soc(&mut buf, Some(10.4)), "10");
+        // Nearly out: the tenth is worth its width.
+        assert_eq!(fmt_soc(&mut buf, Some(9.4)), "9.4");
+        assert_eq!(fmt_soc(&mut buf, Some(9.94)), "9.9");
+        assert_eq!(fmt_soc(&mut buf, Some(0.4)), "0.4");
+        assert_eq!(fmt_soc(&mut buf, Some(0.0)), "0.0");
+        // The boundary is where a tenths reading would stop saying 9.9: 9.95
+        // rounds to "10.0", which is a glyph wider than the field holds.
+        assert_eq!(fmt_soc(&mut buf, Some(9.95)), "10");
+        assert_eq!(fmt_soc(&mut buf, None), "--");
+    }
+
+    /// The tenths reading has to fit the field sized for "100" -- there is no
+    /// wider case to reserve for, so this is what stops it reaching the speed.
+    #[test]
+    fn the_tenths_reading_fits_the_field() {
+        let reserved = SOC_VALUE_RIGHT - SOC_VALUE_LEFT;
+        for text in ["100", "9.9", "0.0"] {
+            let w = width(&FONT_NET, text);
+            assert!(
+                w <= reserved,
+                "\"{text}\" is {w}px, past the {reserved}px the value field reserves"
             );
         }
     }
