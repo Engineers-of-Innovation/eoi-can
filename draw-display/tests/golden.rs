@@ -85,6 +85,8 @@ fn stale() -> draw_display::DisplayData {
 fn populated() -> draw_display::DisplayData {
     let mut data = draw_display::DisplayData::default();
     data.speed_kmh.update(21.65);
+    // Course over ground: 127 deg draws as "127°" under a "Heading / SE" label.
+    data.heading_deg.update(127.0);
     data.gnss_fix.update(draw_display::GnssFix::Fix3D);
     data.battery_state_of_charge.update(87.0);
     data.battery_voltage.update(58.4);
@@ -99,6 +101,19 @@ fn populated() -> draw_display::DisplayData {
     for (index, temperature) in data.mppt_temperatures.iter_mut().enumerate() {
         temperature.update(40 + index as i8);
     }
+    // UTC, as it arrives on `0x204`: an August date, so the clock draws 14:32:11
+    // and the summer-time offset is part of what this render pins.
+    data.time.update(draw_display::GnssDateTime {
+        year: 2026,
+        month: 8,
+        day: 28,
+        hours: 12,
+        minutes: 32,
+        seconds: 11,
+    });
+    // 39:45 of endurance, the estimate `update_endurance` produces from the
+    // currents above.
+    data.battery_time_to_empty.update(2385);
     data
 }
 
@@ -128,15 +143,15 @@ fn dashboard_renders_are_unchanged() {
         "dashboard/stale",
         draw_display::draw_display,
         &stale(),
-        0xb908_2cf0_677b_82f2,
-        11481,
+        0xb2d8_63c0_e751_5835,
+        11210,
     );
     assert_render(
         "dashboard/populated",
         draw_display::draw_display,
         &populated(),
-        0x0289_f438_6f18_aa2b,
-        26100,
+        0x9267_428d_4332_4c2f,
+        28936,
     );
 }
 
@@ -153,3 +168,4 @@ fn foiling_renders_are_unchanged() {
         15797,
     );
 }
+

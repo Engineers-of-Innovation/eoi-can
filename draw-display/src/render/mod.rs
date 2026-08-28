@@ -21,6 +21,7 @@ use embedded_graphics::{
     prelude::*,
     text::{Alignment, Text},
 };
+use eoi_can_decoder::GnssDateTime;
 use heapless::String;
 use u8g2_fonts::{
     types::{FontColor, HorizontalAlignment, VerticalPosition},
@@ -169,6 +170,9 @@ const STAMP_BAND_H: i32 = 8;
 const BIG_PCT_W: i32 = 63;
 /// Advance of "°C" in `FONT_SMALL`, pinned by `font_metrics_match_the_layout`.
 const SMALL_DEG_C_W: i32 = 21;
+/// Advance of "°" alone in `FONT_SMALL` -- the heading's unit, which has no letter
+/// after it. Pinned by `font_metrics_match_their_consts`.
+const SMALL_DEG_W: i32 = 9;
 /// Gap between a temperature and its degree sign.
 const VALUE_UNIT_GAP: i32 = 4;
 /// Gap between a temperature and its label. Independent of `STACK_LABEL_GAP` --
@@ -309,8 +313,69 @@ const FONT_HEADING: FontRenderer = FontRenderer::new::<PlexSemi12>();
 /// `font_metrics_match_their_consts`.
 const TINY_CAP_H: i32 = 12;
 
-/// Offset applied to the GNSS (UTC) time for display, in hours.
-const TIME_OFFSET_HOURS: u8 = 2;
+/// The offset from the GNSS clock's UTC to the time the helm reads, in hours.
+///
+/// `0x204` carries UTC (see `CAN_MESSAGES.md`), and the boat keeps Central
+/// European time, so the offset is 1 in winter and 2 in summer. It is derived
+/// from the date in the same frame rather than fixed: a constant is right for
+/// half the year and an hour wrong for the other half.
+///
+/// The rule is the EU one: summer time runs from 01:00 UTC on the last Sunday of
+/// March to 01:00 UTC on the last Sunday of October. Both instants are defined in
+/// UTC, which is what the frame gives us, so placing a UTC reading needs nothing
+/// that is not already in it.
+fn cet_offset_hours(date: &GnssDateTime) -> u8 {
+    const WINTER: u8 = 1;
+    const SUMMER: u8 = 2;
+
+    match date.month {
+        4..=9 => SUMMER,
+        // On the switchover day itself the hour decides, and `hours` is still the
+        // UTC one the switch is defined against.
+        3 => {
+            if (date.day, date.hours) > (last_sunday_of_31(date.year, 3), 0) {
+                SUMMER
+            } else {
+                WINTER
+            }
+        }
+        10 => {
+            if (date.day, date.hours) > (last_sunday_of_31(date.year, 10), 0) {
+                WINTER
+            } else {
+                SUMMER
+            }
+        }
+        // 1, 2, 11, 12 -- and anything out of range, which means a sender putting
+        // junk on the bus. CET is the zone's standard time and summer time the
+        // exception it names, so an undecidable date falls back to the standard.
+        _ => WINTER,
+    }
+}
+
+/// The day the last Sunday falls on in a 31-day month: the 31st, counted back by
+/// however far past Sunday it lands.
+fn last_sunday_of_31(year: u16, month: u8) -> u8 {
+    31 - day_of_week(year, month, 31)
+}
+
+/// Sakamoto's day-of-week, 0 = Sunday, for any Gregorian date -- which is every
+/// date a GNSS receiver can produce. A month outside 1-12 is clamped rather than
+/// indexed with: this runs on a panel that must keep drawing through a bad frame.
+fn day_of_week(year: u16, month: u8, day: u8) -> u8 {
+    /// Days each month starts past the one before it, modulo 7, with January and
+    /// February treated as the tail of the previous year so the leap day lands last.
+    const SHIFT: [u32; 12] = [0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4];
+
+    let month = month.clamp(1, 12);
+    let mut year = u32::from(year);
+    if month < 3 {
+        year = year.saturating_sub(1);
+    }
+    let leaps = year / 4 - year / 100 + year / 400;
+    ((year + leaps + SHIFT[usize::from(month) - 1] + u32::from(day)) % 7) as u8
+}
+
 /// Glyph coverage is fixed at compile time, so only actual display errors can
 /// occur here; anything else is a bug in this module.
 fn map_font_err<E>(e: u8g2_fonts::Error<E>) -> E {
@@ -527,6 +592,20 @@ fn fmt_f32<'a>(
         None => dashes,
     }
 }
+
+/// Split a span in seconds into the groups the clock draws.
+///
+/// Hours saturate at 99 rather than wrapping: the field is two digits wide, and a
+/// span that overflows it should read as "longer than this can say" instead of
+/// starting again from zero.
+fn hms_from_seconds(seconds: u32) -> (u8, u8, u8) {
+    (
+        (seconds / 3600).min(99) as u8,
+        ((seconds / 60) % 60) as u8,
+        (seconds % 60) as u8,
+    )
+}
+
 /// Format hours/minutes/seconds as three two-character groups, or dashes.
 ///
 /// The colons are not included: `draw_time` places them at fixed positions so the
@@ -598,6 +677,85 @@ mod tests {
         assert_eq!(fmt_f32(&mut buf, None, 0, "---"), "---");
     }
 
+    /// The EU switchover, checked against the dates it actually falls on: 2026
+    /// switches on 29 March and 25 October, 2027 on 28 March and 31 October --
+    /// the October one landing on the 31st is the case a naive "last week of the
+    /// month" rule gets wrong.
+    #[test]
+    fn cet_offset_follows_the_eu_switchover() {
+        let at = |year, month, day, hours| {
+            cet_offset_hours(&GnssDateTime {
+                year,
+                month,
+                day,
+                hours,
+                minutes: 0,
+                seconds: 0,
+            })
+        };
+
+        // Deep winter and deep summer, either side of both switches.
+        assert_eq!(at(2026, 1, 15, 12), 1);
+        assert_eq!(at(2026, 7, 4, 12), 2);
+        assert_eq!(at(2026, 12, 25, 12), 1);
+
+        // Spring forward: 01:00 UTC on the last Sunday of March.
+        assert_eq!(at(2026, 3, 29, 0), 1);
+        assert_eq!(at(2026, 3, 29, 1), 2);
+        assert_eq!(at(2026, 3, 28, 23), 1);
+        assert_eq!(at(2027, 3, 28, 1), 2);
+
+        // Fall back: 01:00 UTC on the last Sunday of October.
+        assert_eq!(at(2026, 10, 25, 0), 2);
+        assert_eq!(at(2026, 10, 25, 1), 1);
+        assert_eq!(at(2026, 10, 24, 23), 2);
+        assert_eq!(at(2027, 10, 31, 0), 2);
+        assert_eq!(at(2027, 10, 31, 1), 1);
+    }
+
+    /// A frame from a sender that has no date yet must not panic the render, and
+    /// falls back to the zone's standard time.
+    #[test]
+    fn cet_offset_survives_a_junk_date() {
+        for (month, day) in [(0, 0), (13, 31), (255, 255)] {
+            assert_eq!(
+                cet_offset_hours(&GnssDateTime {
+                    year: 0,
+                    month,
+                    day,
+                    hours: 0,
+                    minutes: 0,
+                    seconds: 0,
+                }),
+                1
+            );
+        }
+    }
+
+    /// The Sundays the switchover dates are read off, and the century rules that
+    /// pick them: 2000 was a leap year, 1900 was not.
+    #[test]
+    fn day_of_week_is_sakamoto() {
+        assert_eq!(day_of_week(2026, 8, 28), 5); // A Friday.
+        assert_eq!(day_of_week(2026, 3, 29), 0); // The spring Sunday.
+        assert_eq!(day_of_week(2026, 10, 25), 0); // The autumn Sunday.
+        assert_eq!(day_of_week(2000, 3, 1), 3); // Wednesday, leap year.
+        assert_eq!(day_of_week(1900, 3, 1), 4); // Thursday, not a leap year.
+        assert_eq!(last_sunday_of_31(2026, 3), 29);
+        assert_eq!(last_sunday_of_31(2027, 10), 31);
+    }
+
+    #[test]
+    fn hms_from_seconds_splits_and_saturates() {
+        assert_eq!(hms_from_seconds(0), (0, 0, 0));
+        assert_eq!(hms_from_seconds(59), (0, 0, 59));
+        assert_eq!(hms_from_seconds(3661), (1, 1, 1));
+        // 4 h 20 m, the sort of endurance the pack actually has.
+        assert_eq!(hms_from_seconds(15_600), (4, 20, 0));
+        // Past two digits of hours the reading saturates instead of wrapping to 04.
+        assert_eq!(hms_from_seconds(100 * 3600 + 4 * 60), (99, 4, 0));
+    }
+
     #[test]
     fn fmt_hms_groups_splits_and_dashes() {
         let mut buf: String<16> = String::new();
@@ -667,6 +825,11 @@ mod tests {
             width(&FONT_SMALL, "°C"),
             SMALL_DEG_C_W,
             "FONT_SMALL \"°C\" advance changed; update SMALL_DEG_C_W"
+        );
+        assert_eq!(
+            width(&FONT_SMALL, "°"),
+            SMALL_DEG_W,
+            "FONT_SMALL \"°\" advance changed; update SMALL_DEG_W"
         );
         assert_eq!(
             width(&FONT_NET, "-"),

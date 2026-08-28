@@ -206,6 +206,13 @@ the command ID against their own application type — rebooting one board leaves
 | | | | 5 | Minutes | u8 | | 0–59 |
 | | | | 6 | Seconds | u8 | | 0–59 |
 
+**GnssDateTime is UTC**, as the receiver reports it, and it stays that way on the
+bus so a log is not tied to the zone the boat happened to be sailing in. A
+consumer that shows the time to a person converts it: the display does this in
+`cet_offset_hours`, deriving the Central European offset from the date in the same
+frame, so it follows the EU summer-time switch instead of drifting an hour every
+autumn.
+
 ## Data Logger
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |

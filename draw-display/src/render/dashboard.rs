@@ -288,36 +288,79 @@ const _: () = assert!(SPEED_INFO_Y + SMALL_CAP_H / 2 <= BAND_TOP.bottom());
 /// two beside it.
 const CURRENT_TIME_LABEL: [&str; 2] = ["Current", "Time"];
 const CURRENT_TIME_LABEL_W: i32 = 66;
-const RACE_TIME_LABEL: [&str; 2] = ["Race", "Time"];
-const RACE_TIME_LABEL_W: i32 = 44;
+/// The heading's label. Only its first line is fixed -- the second is the compass
+/// point, which changes -- so the block is sized for the widest of either.
+const HEADING_LABEL: &str = "Heading";
+const HEADING_LABEL_W: i32 = 72;
 const TIME_TO_EMPTY_LABEL: [&str; 2] = ["Time to", "Empty"];
 const TIME_TO_EMPTY_LABEL_W: i32 = 66;
 
 /// Full width each time needs: the digits, plus its label.
 const TIME_BLOCK_W: i32 = TIME_METRICS.total_w();
 const CURRENT_TIME_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + CURRENT_TIME_LABEL_W;
-const RACE_TIME_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + RACE_TIME_LABEL_W;
+/// Three digits, zero-padded like a bearing is written, so the field never changes
+/// width -- and the degree sign after them, as the temperatures do it.
+const HEADING_DIGITS_W: i32 = 3 * MID_DIGIT_W;
+const HEADING_VALUE_W: i32 = HEADING_DIGITS_W + VALUE_UNIT_GAP + SMALL_DEG_W;
+const HEADING_BLOCK_W: i32 = HEADING_VALUE_W + TIME_LABEL_GAP + HEADING_LABEL_W;
 const TIME_TO_EMPTY_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + TIME_TO_EMPTY_LABEL_W;
 
 /// Margin from the screen edges for the outer two times.
 const TIME_EDGE_MARGIN: i32 = 12;
 /// Left edge of each time block. Placed by anchor rather than by dividing the row
-/// into cells: the clock sits at the left edge, the race time is centred on the
+/// into cells: the clock sits at the left edge, the heading is centred on the
 /// screen, and time to empty is pushed out to the right edge. Even cells left the
 /// outer two looking inset from the edges they should hang off.
 const CLOCK_LEFT: i32 = TIME_EDGE_MARGIN;
-const RACE_TIME_LEFT: i32 = SCREEN.center_x() - RACE_TIME_BLOCK_W / 2;
+const HEADING_LEFT: i32 = SCREEN.center_x() - HEADING_BLOCK_W / 2;
 const TIME_TO_EMPTY_LEFT: i32 = SCREEN.right() - TIME_EDGE_MARGIN - TIME_TO_EMPTY_BLOCK_W;
 
 // The three blocks must not run into each other.
-const _: () = assert!(CLOCK_LEFT + CURRENT_TIME_BLOCK_W < RACE_TIME_LEFT);
-const _: () = assert!(RACE_TIME_LEFT + RACE_TIME_BLOCK_W < TIME_TO_EMPTY_LEFT);
+const _: () = assert!(CLOCK_LEFT + CURRENT_TIME_BLOCK_W < HEADING_LEFT);
+const _: () = assert!(HEADING_LEFT + HEADING_BLOCK_W < TIME_TO_EMPTY_LEFT);
 
 /// Split a speed into its whole-number part and its tenth, for drawing either
 /// side of the fixed dot.
 ///
 /// Rounds to tenths once so the two halves agree: 21.98 must read `22` and `0`,
 /// never `21` and `0`. Absent values give the dashes the old `"--.-"` showed.
+/// The 16-point compass name for a bearing in degrees, which must already be
+/// normalised to 0..360.
+///
+/// Sixteen points rather than eight: the extra names cost nothing to read and
+/// eight would call everything from 023 to 067 "NE", which is most of a beat.
+fn compass_point(degrees: i32) -> &'static str {
+    const POINTS: [&str; 16] = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
+        "NW", "NNW",
+    ];
+    // Each point owns 22.5 deg centred on its bearing, so its boundary sits 11.25
+    // before it. Scaled by four to stay in integers: (deg + 11.25) / 22.5.
+    POINTS[(((4 * degrees + 45) / 90) % 16) as usize]
+}
+
+/// Split a heading into the digits to draw and the compass point to name them.
+///
+/// Zero-padded to three, the way a bearing is written and spoken, so the field is
+/// the same width at 007 as at 127.
+fn split_heading(buf: &mut String<16>, value: Option<f32>) -> (&str, &'static str) {
+    match value {
+        Some(v) => {
+            // Half-and-truncate as `split_speed` does it -- `f32::round` is
+            // std-only here. `as` saturates, so a NaN lands on 0 rather than
+            // wrapping to some plausible-looking bearing, and `rem_euclid` folds
+            // 360 back to 0 and tolerates a receiver that reports negatives.
+            let degrees = ((v + 0.5) as i32).rem_euclid(360);
+            buf.clear();
+            write!(buf, "{degrees:03}").ok();
+            (buf.as_str(), compass_point(degrees))
+        }
+        // No fix, or a receiver too slow to have a course yet: the point would be
+        // a guess, so it says nothing rather than pointing north.
+        None => ("---", ""),
+    }
+}
+
 fn split_speed(buf: &mut String<8>, value: Option<f32>) -> (&str, &'static str) {
     const TENTHS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -667,7 +710,7 @@ where
     Ok(())
 }
 
-/// Bottom row: time of day, race time, time to empty.
+/// Bottom row: time of day, heading, time to empty.
 fn draw_times<D, C>(
     display: &mut D,
     data: &DisplayData,
@@ -680,7 +723,7 @@ where
     let time = data
         .time
         .get()
-        .map(|t| ((t.hours + TIME_OFFSET_HOURS) % 24, t.minutes, t.seconds));
+        .map(|t| ((t.hours + cet_offset_hours(t)) % 24, t.minutes, t.seconds));
 
     draw_time(
         display,
@@ -691,24 +734,48 @@ where
         fmt_hms_groups(buf, time),
         Some((CURRENT_TIME_LABEL, CURRENT_TIME_LABEL_W)),
     )?;
-    // TODO: race time needs a data source (no race-start signal exists yet)
-    draw_time(
+    // Heading takes the centre slot, where the race time used to draw dashes it
+    // had no source for. Drawn as digits at the times' own size so the row still
+    // reads as one line, with the compass point under the label: the number is
+    // what you steer to, the point is what tells you at a glance which way that is.
+    let (degrees, point) = split_heading(buf, data.heading_deg.get().copied());
+    draw_text(
         display,
         &FONT_MID,
-        TIME_METRICS,
-        RACE_TIME_LEFT,
+        HorizontalAlignment::Right,
+        HEADING_LEFT + HEADING_DIGITS_W,
         TIME_CENTER_Y,
-        fmt_hms_groups(buf, None),
-        Some((RACE_TIME_LABEL, RACE_TIME_LABEL_W)),
+        degrees,
     )?;
-    // TODO: time to empty is not calculated or sent by anything yet
+    // The unit sits on the digits' baseline, as the temperatures' "°C" does.
+    draw_text(
+        display,
+        &FONT_SMALL,
+        HorizontalAlignment::Left,
+        HEADING_LEFT + HEADING_DIGITS_W + VALUE_UNIT_GAP,
+        TIME_CENTER_Y + MID_DIGIT_H / 2 - SMALL_CAP_H / 2,
+        "°",
+    )?;
+    draw_stacked_label(
+        display,
+        HEADING_LEFT + HEADING_VALUE_W + TIME_LABEL_GAP,
+        TIME_CENTER_Y,
+        HEADING_LABEL,
+        point,
+    )?;
+    // Derived on ingest from the smoothed draw and the state of charge, and
+    // dashes whenever that could not be worked out -- see `update_endurance`.
+    let time_to_empty = data
+        .battery_time_to_empty
+        .get()
+        .map(|&seconds| hms_from_seconds(seconds));
     draw_time(
         display,
         &FONT_MID,
         TIME_METRICS,
         TIME_TO_EMPTY_LEFT,
         TIME_CENTER_Y,
-        fmt_hms_groups(buf, None),
+        fmt_hms_groups(buf, time_to_empty),
         Some((TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W)),
     )
 }
@@ -867,10 +934,43 @@ mod tests {
             NET_LABEL_W,
             "FONT_SMALL \"Net Power\" advance changed; update NET_LABEL_W"
         );
+        // The heading's label block holds two lines that are not both fixed: the
+        // word, and whichever compass point is longest. Either one overflowing
+        // would run the label into the block beside it.
+        for line in [
+            "N",
+            "NNE",
+            "NE",
+            "ENE",
+            "E",
+            "ESE",
+            "SE",
+            "SSE",
+            "S",
+            "SSW",
+            "SW",
+            "WSW",
+            "W",
+            "WNW",
+            "NW",
+            "NNW",
+            HEADING_LABEL,
+        ] {
+            let w = width(&FONT_SMALL, line);
+            assert!(
+                w <= HEADING_LABEL_W,
+                "\"{line}\" is {w}px, past the {HEADING_LABEL_W}px the heading label reserves"
+            );
+        }
+        assert_eq!(
+            width(&FONT_SMALL, HEADING_LABEL),
+            HEADING_LABEL_W,
+            "\"{HEADING_LABEL}\" no longer sets the label width; update HEADING_LABEL_W"
+        );
+
         // The two-line time labels size their cells, so their widest line is layout.
         for (lines, w) in [
             (CURRENT_TIME_LABEL, CURRENT_TIME_LABEL_W),
-            (RACE_TIME_LABEL, RACE_TIME_LABEL_W),
             (TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W),
         ] {
             let widest = lines.iter().map(|l| width(&FONT_SMALL, l)).max().unwrap();
@@ -879,6 +979,63 @@ mod tests {
                 "the widest line of {lines:?} is {widest}px, not the {w}px recorded"
             );
         }
+    }
+
+    #[test]
+    fn split_heading_names_the_point_it_is_in() {
+        let mut buf: String<16> = String::new();
+        assert_eq!(split_heading(&mut buf, Some(0.0)), ("000", "N"));
+        assert_eq!(split_heading(&mut buf, Some(127.0)), ("127", "SE"));
+        // A point owns 11.25 deg either side of its bearing, so the name changes
+        // between 11 and 12, not at 22.
+        assert_eq!(split_heading(&mut buf, Some(11.0)), ("011", "N"));
+        assert_eq!(split_heading(&mut buf, Some(12.0)), ("012", "NNE"));
+        // And back onto north the long way round, which is the wrap the modulo
+        // exists for.
+        assert_eq!(split_heading(&mut buf, Some(348.0)), ("348", "NNW"));
+        assert_eq!(split_heading(&mut buf, Some(349.0)), ("349", "N"));
+        // Rounds to 360, which is 000 -- never a fourth digit.
+        assert_eq!(split_heading(&mut buf, Some(359.7)), ("000", "N"));
+        // No fix: dashes, and no point rather than a guessed one.
+        assert_eq!(split_heading(&mut buf, None), ("---", ""));
+    }
+
+    /// Values no receiver should send, which must still land on the dial rather
+    /// than off it -- or panic the render by indexing past the sixteen points.
+    #[test]
+    fn split_heading_survives_nonsense() {
+        let mut buf: String<16> = String::new();
+        // NaN casts to 0, which is a real bearing and the only sane one to pick.
+        assert_eq!(split_heading(&mut buf, Some(f32::NAN)), ("000", "N"));
+        // Truncation is towards zero, so a negative lands a degree off -- it is a
+        // glitch path, and being on the right point is what matters.
+        assert_eq!(split_heading(&mut buf, Some(-90.0)), ("271", "W"));
+        // The saturating casts put absurd values somewhere arbitrary on the dial.
+        // Which point is not worth pinning; staying on the dial is.
+        for absurd in [f32::INFINITY, f32::NEG_INFINITY, 1.0e9, -1.0e9] {
+            let (degrees, point) = split_heading(&mut buf, Some(absurd));
+            let value: i32 = degrees.parse().expect("three digits");
+            assert!(
+                (0..360).contains(&value),
+                "{absurd} drew {degrees}, which is off the dial"
+            );
+            assert_eq!(point, compass_point(value));
+        }
+    }
+
+    /// Every bearing has a name, and the index that finds it never leaves the
+    /// table -- this runs on a panel that must not die on a stray frame.
+    #[test]
+    fn every_degree_lands_on_a_point() {
+        let mut seen = heapless::Vec::<&str, 16>::new();
+        for degrees in 0..360 {
+            let point = compass_point(degrees);
+            if !seen.contains(&point) {
+                seen.push(point)
+                    .expect("no more than sixteen distinct points");
+            }
+        }
+        assert_eq!(seen.len(), 16, "not every compass point is reachable");
     }
 
     #[test]
@@ -1385,7 +1542,7 @@ mod tests {
         // anchors themselves.
         for (name, left, block_w) in [
             ("clock", CLOCK_LEFT, CURRENT_TIME_BLOCK_W),
-            ("race time", RACE_TIME_LEFT, RACE_TIME_BLOCK_W),
+            ("heading", HEADING_LEFT, HEADING_BLOCK_W),
             ("time to empty", TIME_TO_EMPTY_LEFT, TIME_TO_EMPTY_BLOCK_W),
         ] {
             assert!(
@@ -1400,11 +1557,11 @@ mod tests {
             );
         }
 
-        // The race time should read as centred on the screen.
-        let race_center = RACE_TIME_LEFT + RACE_TIME_BLOCK_W / 2;
+        // The heading should read as centred on the screen.
+        let heading_center = HEADING_LEFT + HEADING_BLOCK_W / 2;
         assert!(
-            (race_center - SCREEN.center_x()).abs() <= 1,
-            "the race time block centres on {race_center}, not the screen centre {}",
+            (heading_center - SCREEN.center_x()).abs() <= 1,
+            "the heading block centres on {heading_center}, not the screen centre {}",
             SCREEN.center_x()
         );
     }

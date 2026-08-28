@@ -6,7 +6,7 @@ mod time;
 /// Re-exported because [`FoilSlotEvent`] carries one: a consumer building or
 /// matching on a slot event needs to name the action without depending on the
 /// decoder directly.
-pub use eoi_can_decoder::FoilConfigAction;
+pub use eoi_can_decoder::{FoilConfigAction, GnssDateTime};
 pub use render::dashboard::draw_display;
 pub use render::foiling::draw_foiling;
 pub use render::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
@@ -15,9 +15,8 @@ use core::net::Ipv4Addr;
 
 use eoi_can_decoder::{
     BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData, FoilConfig,
-    FoilParamStatus, FoilSlot, FoilTuneValue, GanMpptPacket, GnssData, GnssDateTime,
-    HeightSensorData, MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors,
-    VescData,
+    FoilParamStatus, FoilSlot, FoilTuneValue, GanMpptPacket, GnssData, HeightSensorData,
+    MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors, VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
 use render::foiling::{cell_for_index, stacked_slot, PairHalf};
@@ -26,6 +25,76 @@ const MPPT_PANEL_COUNT: usize = LAYOUT.len();
 use time::{Duration, Instant};
 
 const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Usable energy in the pack, in watt-hours.
+///
+/// Nothing on the bus reports it -- the BMS sends a state of charge and currents,
+/// not a capacity -- so the display carries the boat's own number. It is the one
+/// figure in the endurance estimate that comes from outside the bus, which is why
+/// it is named here rather than folded into the arithmetic.
+const PACK_CAPACITY_WH: f32 = 1450.0;
+
+/// Time constant of the low-pass on the discharge figure.
+///
+/// The raw draw follows the throttle, and an endurance figure that swung with it
+/// would be unreadable: every puff of throttle would halve it. A minute is long
+/// enough that the number holds still through a gust and short enough that
+/// settling into a cruise is reflected within a leg.
+const DRAIN_FILTER_TAU_S: f32 = 60.0;
+
+/// Below this the boat is not drawing enough for the estimate to mean anything:
+/// the division blows up towards infinity and the answer stops being a time.
+/// Under it the display shows dashes rather than a number nobody should read.
+const MIN_DRAIN_W: f32 = 10.0;
+
+/// The longest endurance the clock can render: the field is three two-digit
+/// groups, so 99:59:59 is the ceiling. Anything longer is not a useful reading
+/// anyway -- it means the boat is barely drawing.
+const MAX_TIME_TO_EMPTY_S: u32 = 99 * 3600 + 59 * 60 + 59;
+
+/// A first-order low-pass over an irregularly sampled signal.
+///
+/// The CAN frames it is fed from arrive at a nominal rate, but a display that
+/// misses frames, boots late, or is fed from a replayed log sees gaps. So the
+/// smoothing is expressed as a time constant and the coefficient is computed per
+/// sample from the actual interval, rather than the usual fixed alpha that
+/// quietly changes meaning with the frame rate. A long gap gives an alpha near 1,
+/// which snaps to the new sample -- the right answer, because after a gap the
+/// filter's memory is of a different situation.
+#[derive(Debug)]
+struct LowPass {
+    value: Option<f32>,
+    last_sample: Instant,
+}
+
+impl Default for LowPass {
+    fn default() -> Self {
+        Self {
+            value: None,
+            last_sample: Instant::now(),
+        }
+    }
+}
+
+impl LowPass {
+    /// Fold `sample` in, and return the filtered value.
+    fn sample(&mut self, sample: f32, tau_s: f32) -> f32 {
+        let dt_s = self.last_sample.elapsed().as_micros() as f32 / 1_000_000.0;
+        self.last_sample = Instant::now();
+
+        let filtered = match self.value {
+            // `dt / (tau + dt)` rather than `1 - exp(-dt/tau)`: it needs no libm on
+            // the firmware target, and it is bounded in (0, 1) for every dt, so no
+            // interval -- however long or however short -- can make it overshoot.
+            Some(previous) => previous + (dt_s / (tau_s + dt_s)) * (sample - previous),
+            // Nothing to average with yet: start from the reading rather than from
+            // zero, so the first estimate is not an hour of nonsense settling.
+            None => sample,
+        };
+        self.value = Some(filtered);
+        filtered
+    }
+}
 
 /// How long a configuration-slot event keeps the status line to itself.
 ///
@@ -583,9 +652,15 @@ fn first_of(reading: Reading) -> f32 {
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
+    /// Course over ground in degrees, from the same frame as the speed. Not a
+    /// compass bearing: it is where the boat is *going*, which drifting sideways
+    /// or sitting still is not where it points.
+    pub heading_deg: DisplayValue<f32>,
     pub gnss_fix: DisplayValue<GnssFix>,
     pub battery_state_of_charge: DisplayValue<f32>,
-    pub battery_time_to_empty: DisplayValue<u16>,
+    /// How long the pack lasts at the present draw, in seconds -- derived here
+    /// rather than reported by anything. See [`DisplayData::update_endurance`].
+    pub battery_time_to_empty: DisplayValue<u32>,
     pub battery_cell_voltages: [DisplayValue<f32>; 14],
     pub battery_current_pack: DisplayValue<f32>,
     pub battery_current_in: DisplayValue<f32>,
@@ -636,6 +711,9 @@ pub struct DisplayData {
     pub temperature_rudder_controller: DisplayValue<f32>,
     /// Only the foiling layout draws these; the dashboard ignores them.
     pub foiling: FoilingData,
+    /// Smoothing state behind `battery_time_to_empty`. Private: it is the
+    /// estimate's working memory, not a reading, and nothing should draw it.
+    drain_filter: LowPass,
 }
 
 impl DisplayData {
@@ -663,6 +741,7 @@ impl DisplayData {
                     self.battery_current_in.update(data.charge_current);
                     self.battery_current_out_motor
                         .update(data.discharge_current);
+                    self.update_endurance();
                 }
                 EoiBattery::SocErrorFlagsAndBalancing(data) => {
                     self.battery_state_of_charge.update(data.state_of_charge);
@@ -757,8 +836,9 @@ impl DisplayData {
                 }
             }
             EoiCanData::Gnss(gnss) => match gnss {
-                GnssData::GnssSpeedAndHeading(speed_kmh, _) => {
+                GnssData::GnssSpeedAndHeading(speed_kmh, heading_deg) => {
                     self.speed_kmh.update(speed_kmh);
+                    self.heading_deg.update(heading_deg);
                 }
                 GnssData::GnssDateTime(data) => self.time.update(data),
                 GnssData::GnssStatus(data) => {
@@ -824,6 +904,50 @@ impl DisplayData {
         for (index, value) in values.iter().enumerate() {
             self.battery_cell_voltages[offset + index].update(*value);
         }
+    }
+
+    /// Re-estimate how long the pack lasts at the present draw.
+    ///
+    /// Driven from `0x101` rather than a timer: it is the frame carrying the motor
+    /// current, it arrives at a steady rate, and running here keeps the estimate in
+    /// the ingest path where every other derived value already lives -- the render
+    /// stays a pure function of what has been received.
+    ///
+    /// The draw is **power out**, not net power: the solar input is deliberately
+    /// left out, so the figure answers "how long if the sun stops" and errs short.
+    /// Counting the panels in would need only `battery_current_in` added to the sum
+    /// below, at the cost of an endurance that grows when a cloud passes.
+    ///
+    /// A sample is skipped rather than faked when a reading is missing or stale,
+    /// and no estimate is published when the draw is too small to divide by. Both
+    /// leave `battery_time_to_empty` to age out into dashes, which is the honest
+    /// reading: not "forever", but "not known".
+    fn update_endurance(&mut self) {
+        let (Some(&voltage), Some(&motor), Some(&peripherals)) = (
+            self.battery_voltage.get(),
+            self.battery_current_out_motor.get(),
+            self.battery_current_out_peripherals.get(),
+        ) else {
+            return;
+        };
+
+        // Currents leaving the battery are negative on the bus, so the draw is the
+        // negated sum. Clamped at zero because a regenerating motor is not a
+        // negative drain -- it is a charge, and this estimate does not count those.
+        let drain_w = (-(voltage * (motor + peripherals))).max(0.0);
+        let drain_w = self.drain_filter.sample(drain_w, DRAIN_FILTER_TAU_S);
+
+        let Some(&state_of_charge) = self.battery_state_of_charge.get() else {
+            return;
+        };
+        if drain_w < MIN_DRAIN_W {
+            return;
+        }
+
+        let remaining_wh = (state_of_charge / 100.0).clamp(0.0, 1.0) * PACK_CAPACITY_WH;
+        let seconds = remaining_wh / drain_w * 3600.0;
+        self.battery_time_to_empty
+            .update((seconds as u32).min(MAX_TIME_TO_EMPTY_S));
     }
 
     /// The hottest MPPT currently reporting, and how to name it. `None` while no
@@ -917,6 +1041,129 @@ mod foil_ingest_tests {
     fn feed_raw(data: &mut DisplayData, id: u16, bytes: &[u8]) {
         let frame = CanFrame::from_encoded(Id::Standard(StandardId::new(id).unwrap()), bytes);
         data.ingest_eoi_can_data(parse_eoi_can_data(&frame).expect("decodes"));
+    }
+
+    /// A whole battery snapshot, in the order the bus sends it and the estimate
+    /// needs it: `0x101` last, because arriving is what drives a re-estimate.
+    /// `peripherals_a` and `motor_a` are the currents as the *display* sees them,
+    /// so both are negative while the boat is drawing.
+    fn feed_battery(
+        data: &mut DisplayData,
+        volts: f32,
+        peripherals_a: f32,
+        motor_a: f32,
+        state_of_charge: f32,
+    ) {
+        let volts = ((volts * 1000.0) as u16).to_le_bytes();
+        feed_raw(data, 0x106, &[0, 0, 0, 0, volts[0], volts[1], 0, 0]);
+
+        // Bytes 0-3 are the pack current, which the estimate does not read.
+        let peripherals = peripherals_a.to_le_bytes();
+        feed_raw(
+            data,
+            0x100,
+            &[
+                0,
+                0,
+                0,
+                0,
+                peripherals[0],
+                peripherals[1],
+                peripherals[2],
+                peripherals[3],
+            ],
+        );
+
+        let soc = ((state_of_charge * 100.0) as u16).to_le_bytes();
+        feed_raw(data, 0x102, &[soc[0], soc[1], 0, 0, 0, 0, 0, 0]);
+
+        // Positive on the wire; the decoder negates it into the draw the display
+        // works in.
+        let motor = (-motor_a).to_le_bytes();
+        feed_raw(
+            data,
+            0x101,
+            &[0, 0, 0, 0, motor[0], motor[1], motor[2], motor[3]],
+        );
+    }
+
+    /// The whole estimate in one reading: 58.4 V across 32.6 A out is 1904 W, and
+    /// 87 % of a 1450 Wh pack is 1262 Wh, which is 39 minutes and change.
+    #[tokio::test(start_paused = true)]
+    async fn endurance_comes_from_the_draw_and_the_charge() {
+        let mut data = DisplayData::default();
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
+
+        let seconds = data
+            .battery_time_to_empty
+            .get()
+            .copied()
+            .expect("an estimate from a full snapshot");
+        assert!(
+            (2375..=2395).contains(&seconds),
+            "expected ~2385 s (39:45), got {seconds} s"
+        );
+    }
+
+    /// The point of the filter. A throttle burst multiplies the draw, and an
+    /// unfiltered estimate would follow it straight down -- the helm would watch
+    /// the endurance halve every time they opened the throttle and learn to ignore
+    /// the figure. Five seconds into a burst it should barely have moved.
+    #[tokio::test(start_paused = true)]
+    async fn a_throttle_burst_does_not_halve_the_estimate() {
+        let mut data = DisplayData::default();
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
+        let settled = data.battery_time_to_empty.get().copied().expect("settled");
+
+        for _ in 0..5 {
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+            feed_battery(&mut data, 58.4, -1.4, -80.0, 87.0);
+        }
+        let burst = data
+            .battery_time_to_empty
+            .get()
+            .copied()
+            .expect("in a burst");
+
+        assert!(
+            burst < settled,
+            "the estimate has to move towards the heavier draw eventually"
+        );
+        assert!(
+            burst > settled * 85 / 100,
+            "5 s into a burst the estimate dropped from {settled} s to {burst} s, \
+             which is the unfiltered reading, not a smoothed one"
+        );
+    }
+
+    /// Tied up with nothing but the hotel load, the division runs away towards
+    /// days. Dashes are the honest reading: not "forever", but "not a time".
+    #[tokio::test(start_paused = true)]
+    async fn a_boat_at_rest_gets_no_estimate() {
+        let mut data = DisplayData::default();
+        feed_battery(&mut data, 58.4, -0.05, 0.0, 87.0);
+        assert_eq!(data.battery_time_to_empty.get(), None);
+    }
+
+    /// A frame arriving before the readings it needs must not publish half an
+    /// estimate -- or panic on the missing ones.
+    #[tokio::test(start_paused = true)]
+    async fn a_draw_with_no_voltage_yet_estimates_nothing() {
+        let mut data = DisplayData::default();
+        feed_raw(&mut data, 0x101, &[0, 0, 0, 0, 0, 0, 0xFA, 0x41]); // 31.2 A out
+        assert_eq!(data.battery_time_to_empty.get(), None);
+    }
+
+    /// The estimate is telemetry, not configuration: a bus that goes quiet leaves
+    /// the helm with dashes rather than a figure from a situation that has passed.
+    #[tokio::test(start_paused = true)]
+    async fn the_estimate_ages_out_with_the_bus() {
+        let mut data = DisplayData::default();
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
+        assert!(data.battery_time_to_empty.get().is_some());
+
+        tokio::time::advance(core::time::Duration::from_secs(6)).await;
+        assert_eq!(data.battery_time_to_empty.get(), None);
     }
 
     /// Index 16 is `PTCH_RATE_P`, which the screen draws at Pitch row 1.
