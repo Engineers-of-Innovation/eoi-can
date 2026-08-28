@@ -168,4 +168,3 @@ fn foiling_renders_are_unchanged() {
         15797,
     );
 }
-

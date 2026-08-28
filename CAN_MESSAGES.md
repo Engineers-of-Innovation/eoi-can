@@ -206,6 +206,14 @@ the command ID against their own application type — rebooting one board leaves
 | | | | 5 | Minutes | u8 | | 0–59 |
 | | | | 6 | Seconds | u8 | | 0–59 |
 
+**GnssSpeedAndHeading's heading is unreliable as sent.** Captured 2026-08-28:
+the autopilot interleaves an exact `00 00 00 00` heading with a good course --
+two frames in ten, at 13 km/h, while the course walked smoothly through the
+320s. Speed in the same frames was correct. A course computed as a float is
+never exactly zero (due north arrives as 359.87 or 0.14), so a consumer should
+read an exact zero as "no course" rather than as due north; the display does.
+Worth fixing at the sender, which this repo does not own.
+
 **GnssDateTime is UTC**, as the receiver reports it, and it stays that way on the
 bus so a log is not tied to the zone the boat happened to be sailing in. A
 consumer that shows the time to a person converts it: the display does this in

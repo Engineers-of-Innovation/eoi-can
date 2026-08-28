@@ -52,6 +52,19 @@ const MIN_DRAIN_W: f32 = 10.0;
 /// anyway -- it means the boat is barely drawing.
 const MAX_TIME_TO_EMPTY_S: u32 = 99 * 3600 + 59 * 60 + 59;
 
+/// Time constant of the low-pass on the heading.
+///
+/// Far shorter than the endurance's: this is smoothing GNSS jitter, not a
+/// throttle, and it has to follow a real turn within a few seconds or the number
+/// is lying about where the boat is pointing.
+const HEADING_FILTER_TAU_S: f32 = 5.0;
+
+/// Below this the course over ground is noise. The receiver derives a direction
+/// from a position that is barely moving, so it swings tens of degrees between
+/// frames -- and some senders report a flat 0 rather than nothing at all. Dashes
+/// are the honest reading; a smoothed value would just be smoothed noise.
+const MIN_HEADING_SPEED_KMH: f32 = 1.0;
+
 /// A first-order low-pass over an irregularly sampled signal.
 ///
 /// The CAN frames it is fed from arrive at a nominal rate, but a display that
@@ -94,6 +107,57 @@ impl LowPass {
         self.value = Some(filtered);
         filtered
     }
+}
+
+/// A low-pass over a bearing, which does not average like an ordinary number: the
+/// mean of 359 and 1 is 180, pointing exactly backwards.
+///
+/// Vector averaging is the usual answer and wants `sin`/`cos`, which are std-only
+/// on the firmware. So this unwraps instead -- each sample is shifted by whole
+/// turns until it lands within half a turn of the running value, smoothed on that
+/// continuous line, and folded back onto the dial afterwards.
+#[derive(Debug, Default)]
+struct HeadingFilter(LowPass);
+
+impl HeadingFilter {
+    /// Fold in a bearing and return the smoothed one. `degrees` must be finite and
+    /// already on 0..=360 -- [`DisplayData::update_heading`] is what guarantees it,
+    /// and the folding below walks in whole turns, so a wild value would walk for a
+    /// very long time.
+    fn sample(&mut self, degrees: f32, tau_s: f32) -> f32 {
+        let continuous = match self.0.value {
+            Some(previous) => previous + shortest_turn(degrees - previous),
+            None => degrees,
+        };
+        let smoothed = normalise_degrees(self.0.sample(continuous, tau_s));
+        // Put the running value back on the dial, so however long the boat circles
+        // the unwrap above never has more than one turn to undo.
+        self.0.value = Some(smoothed);
+        smoothed
+    }
+}
+
+/// The difference between two bearings, taken the short way round: -180..180.
+fn shortest_turn(mut delta: f32) -> f32 {
+    while delta > 180.0 {
+        delta -= 360.0;
+    }
+    while delta < -180.0 {
+        delta += 360.0;
+    }
+    delta
+}
+
+/// Fold a bearing onto 0..360. At most one turn out, because everything reaching
+/// here is either a checked sample or a smoothed value half a turn from one.
+fn normalise_degrees(mut degrees: f32) -> f32 {
+    while degrees >= 360.0 {
+        degrees -= 360.0;
+    }
+    while degrees < 0.0 {
+        degrees += 360.0;
+    }
+    degrees
 }
 
 /// How long a configuration-slot event keeps the status line to itself.
@@ -714,6 +778,8 @@ pub struct DisplayData {
     /// Smoothing state behind `battery_time_to_empty`. Private: it is the
     /// estimate's working memory, not a reading, and nothing should draw it.
     drain_filter: LowPass,
+    /// Smoothing state behind `heading_deg`, private for the same reason.
+    heading_filter: HeadingFilter,
 }
 
 impl DisplayData {
@@ -838,7 +904,7 @@ impl DisplayData {
             EoiCanData::Gnss(gnss) => match gnss {
                 GnssData::GnssSpeedAndHeading(speed_kmh, heading_deg) => {
                     self.speed_kmh.update(speed_kmh);
-                    self.heading_deg.update(heading_deg);
+                    self.update_heading(speed_kmh, heading_deg);
                 }
                 GnssData::GnssDateTime(data) => self.time.update(data),
                 GnssData::GnssStatus(data) => {
@@ -904,6 +970,49 @@ impl DisplayData {
         for (index, value) in values.iter().enumerate() {
             self.battery_cell_voltages[offset + index].update(*value);
         }
+    }
+
+    /// Fold a course-over-ground reading into the smoothed heading.
+    ///
+    /// Three things have to hold before a bearing reaches the screen, and a sample
+    /// failing any of them is dropped rather than drawn: the reading has to be a
+    /// number, it has to be a bearing, and the boat has to be moving fast enough
+    /// for the receiver to have derived it from real movement.
+    ///
+    /// Dropping leaves `heading_deg` to age out into dashes, which is the whole
+    /// point -- a receiver with no course to report is not pointing north.
+    fn update_heading(&mut self, speed_kmh: f32, heading_deg: f32) {
+        // A sender with nothing to say may send NaN. Formatting that would draw a
+        // confident `000` -- the cast lands on zero -- and it would send the fold
+        // below round forever.
+        if !heading_deg.is_finite() || !speed_kmh.is_finite() {
+            return;
+        }
+        // A course over ground is 0..360 by definition, so anything else is a
+        // sender bug. Dropping it is safer than rescuing it: the fold walks in
+        // whole turns, and a wild value would walk a very long way.
+        if !(0.0..=360.0).contains(&heading_deg) {
+            return;
+        }
+        // An exact zero is not a bearing on this bus, it is the sender saying it
+        // has no course. Captured 2026-08-28: the autopilot interleaves
+        // `00 00 00 00` with a course walking smoothly through the 320s, two
+        // frames in ten, at 13 km/h -- so it is neither a slow-speed artefact nor
+        // a reading. A course computed as a float is never exactly zero anyway:
+        // due north arrives as 359.87 or 0.14, and dropping the one frame in
+        // billions that lands on the nose costs nothing next to drawing north
+        // while the boat sails south.
+        if heading_deg == 0.0 {
+            return;
+        }
+        if speed_kmh < MIN_HEADING_SPEED_KMH {
+            return;
+        }
+
+        let smoothed = self
+            .heading_filter
+            .sample(normalise_degrees(heading_deg), HEADING_FILTER_TAU_S);
+        self.heading_deg.update(smoothed);
     }
 
     /// Re-estimate how long the pack lasts at the present draw.
@@ -1041,6 +1150,171 @@ mod foil_ingest_tests {
     fn feed_raw(data: &mut DisplayData, id: u16, bytes: &[u8]) {
         let frame = CanFrame::from_encoded(Id::Standard(StandardId::new(id).unwrap()), bytes);
         data.ingest_eoi_can_data(parse_eoi_can_data(&frame).expect("decodes"));
+    }
+
+    /// One `0x201`, as the autopilot sends it: speed then course, both LE f32.
+    fn feed_heading(data: &mut DisplayData, speed_kmh: f32, heading_deg: f32) {
+        let speed = speed_kmh.to_le_bytes();
+        let heading = heading_deg.to_le_bytes();
+        feed_raw(
+            data,
+            0x201,
+            &[
+                speed[0], speed[1], speed[2], speed[3], heading[0], heading[1], heading[2],
+                heading[3],
+            ],
+        );
+    }
+
+    /// The wrap the filter exists for. A boat holding north sends bearings either
+    /// side of 360, and an ordinary average of 359 and 1 is 180 -- the reading
+    /// would swing to due south while the boat sailed straight.
+    #[tokio::test(start_paused = true)]
+    async fn a_course_either_side_of_north_never_swings_south() {
+        let mut data = DisplayData::default();
+        for degrees in [359.0, 1.0, 358.0, 2.0, 0.0, 359.5] {
+            feed_heading(&mut data, 12.0, degrees);
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+            let smoothed = data.heading_deg.get().copied().expect("a heading");
+            assert!(
+                !(10.0..350.0).contains(&smoothed),
+                "{degrees} deg smoothed to {smoothed}, which is the long way round"
+            );
+        }
+    }
+
+    /// Smoothing must not become lag: a real turn has to arrive within a few
+    /// seconds, or the number is lying about where the boat points.
+    #[tokio::test(start_paused = true)]
+    async fn a_turn_arrives_within_a_few_seconds() {
+        let mut data = DisplayData::default();
+        feed_heading(&mut data, 12.0, 90.0);
+        assert_eq!(data.heading_deg.get().copied(), Some(90.0), "first sample");
+
+        // Hard turn to 180, held. One time constant should carry most of it.
+        for _ in 0..5 {
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+            feed_heading(&mut data, 12.0, 180.0);
+        }
+        let after_tau = data.heading_deg.get().copied().expect("a heading");
+        assert!(
+            after_tau > 135.0,
+            "five seconds -- one time constant -- into a 90 deg turn the reading \
+             has only reached {after_tau}"
+        );
+
+        // Three time constants and it is there for reading purposes: the panel
+        // draws whole degrees, and this is inside seven of them.
+        for _ in 0..10 {
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+            feed_heading(&mut data, 12.0, 180.0);
+        }
+        let settled = data.heading_deg.get().copied().expect("a heading");
+        assert!(
+            settled > 173.0,
+            "fifteen seconds after the turn the reading is still {settled}"
+        );
+
+        // And it never overshoots past the course being steered.
+        assert!(settled <= 180.0, "overshot to {settled}");
+    }
+
+    /// Jitter is what gets filtered: a course wobbling either side of east must
+    /// read as east, not follow every frame.
+    #[tokio::test(start_paused = true)]
+    async fn jitter_is_smoothed_away() {
+        let mut data = DisplayData::default();
+        for degrees in [90.0, 82.0, 98.0, 84.0, 96.0, 88.0] {
+            feed_heading(&mut data, 12.0, degrees);
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+        }
+        let smoothed = data.heading_deg.get().copied().expect("a heading");
+        assert!(
+            (86.0..94.0).contains(&smoothed),
+            "a wobble around 90 smoothed to {smoothed}"
+        );
+    }
+
+    /// Tied up or drifting, the course is derived from a position that is barely
+    /// moving. Some senders report a flat 0 for it, which is what put a confident
+    /// `000` on the panel -- so below the gate nothing is published at all.
+    #[tokio::test(start_paused = true)]
+    async fn a_course_below_walking_pace_is_not_published() {
+        let mut data = DisplayData::default();
+        feed_heading(&mut data, 0.2, 0.0);
+        assert_eq!(data.heading_deg.get(), None, "0.2 km/h has no course");
+
+        // Under way: published.
+        feed_heading(&mut data, 12.0, 137.0);
+        assert_eq!(data.heading_deg.get().copied(), Some(137.0));
+
+        // Back alongside: the last good bearing ages out rather than being held or
+        // replaced by the sender's zero.
+        for _ in 0..6 {
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+            feed_heading(&mut data, 0.1, 0.0);
+        }
+        assert_eq!(
+            data.heading_deg.get(),
+            None,
+            "a stale course must not stand"
+        );
+    }
+
+    /// The capture from the boat, replayed frame for frame: a steady course
+    /// through the 320s at 13 km/h with two exact zeros interleaved. Those are the
+    /// sender saying it has no course, and taking them for bearings drags the
+    /// reading round towards north while the boat holds its course.
+    #[tokio::test(start_paused = true)]
+    async fn the_autopilots_zero_frames_do_not_drag_the_course_north() {
+        let mut data = DisplayData::default();
+        for (speed_kmh, heading_deg) in [
+            (13.30, 326.61),
+            (13.20, 0.0),
+            (13.40, 325.39),
+            (13.40, 324.09),
+            (13.60, 322.89),
+            (13.70, 322.49),
+            (13.70, 0.0),
+            (13.30, 320.60),
+            (13.00, 320.66),
+            (12.60, 320.77),
+        ] {
+            feed_heading(&mut data, speed_kmh, heading_deg);
+            tokio::time::advance(core::time::Duration::from_secs(1)).await;
+        }
+
+        let smoothed = data.heading_deg.get().copied().expect("a heading");
+        assert!(
+            (318.0..330.0).contains(&smoothed),
+            "the zero frames pulled the course to {smoothed}, off the 320s the \
+             boat was actually steering"
+        );
+    }
+
+    /// A sender with no course may say so with NaN. Formatted, that draws a
+    /// confident `000` -- the cast lands on zero -- so it must never reach the
+    /// screen. The infinities would also send the unwrap round forever.
+    #[tokio::test(start_paused = true)]
+    async fn a_course_that_is_not_a_bearing_is_dropped() {
+        let mut data = DisplayData::default();
+        feed_heading(&mut data, 12.0, 137.0);
+
+        for nonsense in [
+            f32::NAN,
+            f32::INFINITY,
+            f32::NEG_INFINITY,
+            -1.0,
+            400.0,
+            1.0e9,
+        ] {
+            feed_heading(&mut data, 12.0, nonsense);
+            assert_eq!(
+                data.heading_deg.get().copied(),
+                Some(137.0),
+                "{nonsense} reached the heading instead of being dropped"
+            );
+        }
     }
 
     /// A whole battery snapshot, in the order the bus sends it and the estimate
