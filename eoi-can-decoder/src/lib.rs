@@ -760,8 +760,51 @@ pub enum RudderControllerData {
 #[derive(Debug, Serialize, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct SteeringAngle {
+    /// Rudder position, **not** an angle in degrees despite the name: the rudder
+    /// controller normalises against its own calibrated travel and reports 0.1 %
+    /// steps, so full left is -1000, centre 0 and full right +1000. See
+    /// `POSITION_FULL_SCALE` in the controller's `steering_angle.rs`.
+    ///
+    /// The name is kept because it is the MQTT topic and the CSV column heading,
+    /// and renaming it would silently break every dashboard and archived log that
+    /// reads them. [`SteeringAngle::position_percent`] is what callers should use.
     pub angle: i16,
     pub raw_adc: u16,
+    /// Byte 4, absent on a controller build that predates it. Says whether the
+    /// calibration behind `angle` is present and plausible, and whether a sensor
+    /// is plugged in at all.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<u8>,
+}
+
+impl SteeringAngle {
+    /// Calibration is present and plausible, so the position means something.
+    pub const STATUS_CAL_VALID: u8 = 1 << 0;
+    /// The presence pin reads high: no sensor on the connector.
+    pub const STATUS_NOT_CONNECTED: u8 = 1 << 5;
+
+    /// Rudder position as a signed percentage of calibrated travel, negative to
+    /// port, or `None` where the controller says the number is not worth reading.
+    ///
+    /// An uncalibrated or unplugged sensor still transmits, and its position is
+    /// clamped rather than suppressed -- so without this a display would draw a
+    /// confident 0.0 % for a rudder nobody is measuring.
+    ///
+    /// A frame with no status byte is taken at face value: the only thing that
+    /// sends one is this fleet's rudder controller, and an archived log is better
+    /// read than hidden.
+    pub fn position_percent(&self) -> Option<f32> {
+        match self.status {
+            None => Some(f32::from(self.angle) / 10.0),
+            Some(status)
+                if status & Self::STATUS_CAL_VALID != 0
+                    && status & Self::STATUS_NOT_CONNECTED == 0 =>
+            {
+                Some(f32::from(self.angle) / 10.0)
+            }
+            Some(_) => None,
+        }
+    }
 }
 
 #[derive(Debug, Serialize, PartialEq)]
@@ -1082,6 +1125,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             RudderControllerData::SteeringAngle(SteeringAngle {
                 angle: bytes_le_to_i16(data.get(0..2)?)?,
                 raw_adc: bytes_le_to_u16(data.get(2..4)?)?,
+                status: data.get(4).copied(),
             }),
         )),
         0x215 => Some(EoiCanData::RudderController(

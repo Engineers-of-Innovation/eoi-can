@@ -171,6 +171,10 @@ fn populated() -> draw_display::DisplayData {
     data.motor_rpm.update(21_400); // electrical; 2140 rpm at the shaft
     data.motor_duty_cycle.update(62.4);
     data.motor_current.update(74.8);
+    data.motor_battery_voltage.update(57.9);
+    data.motor_battery_current.update(46.3);
+    // 24.8 % to starboard, from a controller whose calibration is valid.
+    data.steering_position.update(Some(24.8));
     data.throttle_value.update(58.2);
     data.height_sensor_front_left.update(412);
     data.height_sensor_front_right.update(438);
@@ -244,8 +248,8 @@ fn information_renders_are_unchanged_populated() {
         "information/populated",
         draw_display::draw_information,
         &populated(),
-        0xe93d_ae1f_5c11_dbee,
-        21853,
+        0x28f4_d8d6_9491_1d45,
+        22008,
     );
 }
 
@@ -257,7 +261,7 @@ fn information_renders_are_unchanged() {
         "information/stale",
         draw_display::draw_information,
         &stale(),
-        0xe430_534b_42b4_823c,
-        7751,
+        0x9bd0_412b_6f69_c9b0,
+        7873,
     );
 }

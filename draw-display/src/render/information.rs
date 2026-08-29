@@ -85,7 +85,10 @@ const MPPT_WIDTHS: [i32; 9] = [
 ];
 
 /// Fields of the side columns: label, value, unit.
-const SIDE_VALUE_W: i32 = 46;
+const MID_VALUE_W: i32 = 46;
+/// Wider than the middle column's, and set by the rudder alone: "R +100" is the
+/// only reading on the screen that carries a letter as well as its digits.
+const RIGHT_VALUE_W: i32 = 55;
 const MID_LABEL_W: i32 = 60;
 /// "rpm", the widest unit the middle column carries, plus the odd pixel that
 /// makes the three blocks tile the width exactly.
@@ -93,8 +96,9 @@ const MID_UNIT_W: i32 = 32;
 /// Set by the "Cooling" heading rather than by "Current" under it -- a semibold
 /// title runs a little wider than the same length of regular text.
 const RIGHT_LABEL_W: i32 = 56;
-/// "L/min", the widest unit on the screen.
-const RIGHT_UNIT_W: i32 = 45;
+/// "L/min", the widest unit on the screen, plus the odd pixel that makes the
+/// three blocks and two gutters tile the width exactly.
+const RIGHT_UNIT_W: i32 = 46;
 
 const fn total_w<const N: usize>(widths: [i32; N]) -> i32 {
     let mut sum = FIELD_GAP * (N as i32 - 1);
@@ -106,8 +110,8 @@ const fn total_w<const N: usize>(widths: [i32; N]) -> i32 {
     sum
 }
 
-const MID_WIDTHS: [i32; 3] = [MID_LABEL_W, SIDE_VALUE_W, MID_UNIT_W];
-const RIGHT_WIDTHS: [i32; 3] = [RIGHT_LABEL_W, SIDE_VALUE_W, RIGHT_UNIT_W];
+const MID_WIDTHS: [i32; 3] = [MID_LABEL_W, MID_VALUE_W, MID_UNIT_W];
+const RIGHT_WIDTHS: [i32; 3] = [RIGHT_LABEL_W, RIGHT_VALUE_W, RIGHT_UNIT_W];
 
 const W_MPPT: i32 = total_w(MPPT_WIDTHS);
 const W_MID: i32 = total_w(MID_WIDTHS);
@@ -160,11 +164,15 @@ const fn left_of(right: i32, width: i32) -> i32 {
 /// how precisely it is worth reading.
 struct Line {
     label: &'static str,
-    /// Empty where the quantity genuinely has no unit -- the height sensors send
-    /// a raw count whose scaling is still undecided, and inventing "mm" for it
-    /// would be a claim the bus does not make.
+    /// Empty where the quantity genuinely has no unit.
     unit: &'static str,
     decimals: usize,
+    /// Draw the sign as a side -- "R +42", "L -17" -- instead of a bare number.
+    ///
+    /// Only the rudder reads this way. A helm glancing at "-17" has to remember
+    /// which way negative points; the letter says it outright. Dead centre has no
+    /// side, so it draws as a plain "0".
+    sided: bool,
 }
 
 const fn line(label: &'static str, unit: &'static str, decimals: usize) -> Line {
@@ -172,6 +180,16 @@ const fn line(label: &'static str, unit: &'static str, decimals: usize) -> Line 
         label,
         unit,
         decimals,
+        sided: false,
+    }
+}
+
+const fn sided_line(label: &'static str, unit: &'static str) -> Line {
+    Line {
+        label,
+        unit,
+        decimals: 0,
+        sided: true,
     }
 }
 
@@ -199,22 +217,25 @@ const fn section(title: &'static str, first_row: i32, lines: &'static [Line]) ->
 /// one the shaft is actually turning at, which is not what anybody wants to read.
 const MOTOR_POLE_PAIRS: f32 = 10.0;
 
+/// The FET and motor temperatures are deliberately absent: the dashboard already
+/// carries both, and a second screen repeating them buys nothing. Their rows go to
+/// the VESC's input side instead, which nothing else on the boat shows.
 const MOTOR: [Line; 5] = [
     line("RPM", "rpm", 0),
     line("Duty", "%", 1),
     line("Current", "A", 1),
-    line("FET", "\u{b0}C", 1),
-    line("Motor", "\u{b0}C", 1),
+    line("Vin", "V", 1),
+    line("Iin", "A", 1),
 ];
 
 const HEIGHT: [Line; 3] = [
-    line("Left", "", 0),
-    line("Right", "", 0),
+    line("Left", "mm", 0),
+    line("Right", "mm", 0),
     // Nothing on the bus carries the estimator's height: the flight controller
     // publishes its tuning parameters on 0x260-0x264 and its speed and course on
     // 0x201, and no frame reports the fused ride height. The row is here because
     // it belongs here, and it reads as dashes until something sends one.
-    line("EKF", "", 0),
+    line("EKF", "mm", 0),
 ];
 
 const THROTTLE: [Line; 1] = [line("Position", "%", 1)];
@@ -235,7 +256,10 @@ const BATTERY: [Line; 5] = [
     line("Spread", "mV", 0),
 ];
 
-const BOAT: [Line; 1] = [line("Speed", "km/h", 1)];
+/// The rudder position, which the controller already normalises against its own
+/// calibrated travel -- so this is a percentage on the bus, not an angle, whatever
+/// the frame is called.
+const RUDDER: [Line; 1] = [sided_line("Angle", "%")];
 
 const MID_SECTIONS: [Section; 3] = [
     section("Motor", 0, &MOTOR),
@@ -246,7 +270,7 @@ const MID_SECTIONS: [Section; 3] = [
 const RIGHT_SECTIONS: [Section; 3] = [
     section("Cooling", 0, &COOLING),
     section("Battery", 5, &BATTERY),
-    section("Boat", 12, &BOAT),
+    section("Rudder", 12, &RUDDER),
 ];
 
 /// Last row a column of sections writes on.
@@ -299,7 +323,26 @@ const fn dashes(decimals: usize) -> &'static str {
     }
 }
 
-/// One right-aligned number, or dashes.
+/// A signed reading written as a side and a magnitude: "R +42", "L -17".
+///
+/// Dead centre gets neither letter nor sign -- there is no side to name, and "R +0"
+/// would claim one. The threshold is half a step of what is drawn, so the reading
+/// says "0" exactly when it would otherwise round to zero.
+fn fmt_sided<'a>(buf: &'a mut String<16>, value: Option<f32>) -> &'a str {
+    let Some(v) = value else {
+        return "--";
+    };
+    buf.clear();
+    if (-0.5..0.5).contains(&v) {
+        buf.push_str("0").unwrap();
+    } else {
+        let side = if v > 0.0 { 'R' } else { 'L' };
+        write!(buf, "{side} {v:+.0}").unwrap();
+    }
+    buf.as_str()
+}
+
+/// One right-aligned reading, or dashes.
 fn draw_value<D, C>(
     display: &mut D,
     buf: &mut String<16>,
@@ -359,14 +402,20 @@ where
             y,
             line.label,
         )?;
-        draw_value(
-            display,
-            buf,
-            rights[1],
-            y,
-            values.get(index).copied().flatten(),
-            line.decimals,
-        )?;
+        let value = values.get(index).copied().flatten();
+        if line.sided {
+            let text = fmt_sided(buf, value);
+            draw_text(
+                display,
+                &FONT_TINY,
+                HorizontalAlignment::Right,
+                rights[1],
+                y,
+                text,
+            )?;
+        } else {
+            draw_value(display, buf, rights[1], y, value, line.decimals)?;
+        }
         if !line.unit.is_empty() {
             draw_text(
                 display,
@@ -534,9 +583,9 @@ where
                 .map(|&erpm| erpm as f32 / MOTOR_POLE_PAIRS),
             data.motor_duty_cycle.get().copied(),
             data.motor_current.get().copied(),
-            data.motor_fet_temperature.get().copied(),
-            // The standalone NTC node, not the VESC's own broken reading.
-            data.motor_ntc_temperature.get().copied().flatten(),
+            // The VESC's own supply, which nothing else on the boat draws.
+            data.motor_battery_voltage.get().copied(),
+            data.motor_battery_current.get().copied(),
         ],
         &[
             data.height_sensor_front_left.get().map(|&v| f32::from(v)),
@@ -564,7 +613,7 @@ where
             lowest_cell,
             cell_spread,
         ],
-        &[data.speed_kmh.get().copied()],
+        &[data.steering_position.get().copied().flatten()],
     ];
     for (section, values) in RIGHT_SECTIONS.iter().zip(right_values) {
         draw_section(display, &mut buf, section, RIGHT_R, RIGHT_WIDTHS, values)?;
@@ -650,11 +699,16 @@ mod tests {
                 MPPT_WIDTHS[index]
             );
         }
-        // The side columns share one value field, so one worst case covers both:
-        // a four-digit RPM and a three-decimal cell voltage.
-        for text in ["-9999", "3.456", "100.0"] {
+        // A four-digit RPM is the middle column's worst case.
+        for text in ["-9999", "100.0"] {
             let w = width(&FONT_TINY, text);
-            assert!(w <= SIDE_VALUE_W, "{text:?} is {w}px in {SIDE_VALUE_W}px");
+            assert!(w <= MID_VALUE_W, "{text:?} is {w}px in {MID_VALUE_W}px");
+        }
+        // The right column holds a three-decimal cell voltage and, wider than any
+        // of it, the rudder hard over to starboard.
+        for text in ["3.456", "-999.9", "R +100"] {
+            let w = width(&FONT_TINY, text);
+            assert!(w <= RIGHT_VALUE_W, "{text:?} is {w}px in {RIGHT_VALUE_W}px");
         }
     }
 
@@ -681,6 +735,23 @@ mod tests {
             "row {} reaches y={bottom}",
             ROWS - 1
         );
+    }
+
+    /// The rudder reads as a side and a magnitude, and dead centre as neither.
+    #[test]
+    fn a_sided_reading_names_the_side_it_is_on() {
+        let mut buf: String<16> = String::new();
+        assert_eq!(fmt_sided(&mut buf, Some(42.0)), "R +42");
+        assert_eq!(fmt_sided(&mut buf, Some(-17.4)), "L -17");
+        assert_eq!(fmt_sided(&mut buf, Some(100.0)), "R +100");
+        // Centre, and either side of the rounding threshold that defines it.
+        assert_eq!(fmt_sided(&mut buf, Some(0.0)), "0");
+        assert_eq!(fmt_sided(&mut buf, Some(-0.4)), "0");
+        assert_eq!(fmt_sided(&mut buf, Some(0.6)), "R +1");
+        assert_eq!(fmt_sided(&mut buf, Some(-0.6)), "L -1");
+        // An uncalibrated or unplugged sensor, which the decoder reports as absent
+        // rather than as a confident zero.
+        assert_eq!(fmt_sided(&mut buf, None), "--");
     }
 
     /// The spread is the pack's own range, and a silent pack has no spread rather

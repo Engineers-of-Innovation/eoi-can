@@ -1049,6 +1049,11 @@ pub struct DisplayData {
     /// outlet sensor reports its own rate; in a sealed loop the two agree, so the
     /// inlet is the one drawn and a disagreement is a leak rather than a reading.
     pub water_flow_in: DisplayValue<u16>,
+    /// Rudder position as a signed percentage of calibrated travel, negative to
+    /// port. `None` inside the `DisplayValue` is the controller reporting that its
+    /// calibration is missing or that no sensor is plugged in -- see
+    /// [`eoi_can_decoder::SteeringAngle::position_percent`].
+    pub steering_position: DisplayValue<Option<f32>>,
     /// Only the foiling layout draws these; the dashboard ignores them.
     pub foiling: FoilingData,
     /// Smoothing state behind `battery_endurance`, one per direction. Private:
@@ -1199,6 +1204,9 @@ impl DisplayData {
                 }
                 RudderControllerData::FlowSensorOut(flow) => {
                     self.water_temperature_out.update(flow.temperature);
+                }
+                RudderControllerData::SteeringAngle(steering) => {
+                    self.steering_position.update(steering.position_percent());
                 }
                 _ => {}
             },

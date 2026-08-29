@@ -1086,15 +1086,29 @@ fn add_rudder(v: &mut Vec<HaEntity>) {
         .diagnostic()
         .icon("mdi:pump"),
     );
+    // The frame carries a position normalised against the calibrated travel in
+    // 0.1 % steps, not degrees -- see `SteeringAngle::angle`, which keeps its name
+    // because this topic and the CSV column are built from it. Published raw, so
+    // the unit is the tenth of a percent it actually is; a "°" here was wrong
+    // about the quantity, and a "%" would be wrong by a factor of ten.
     v.push(
         sensor(
             "rudder_steering_angle",
-            "Rudder Steering Angle",
+            "Rudder Steering Position",
             "RudderController.SteeringAngle.angle",
         )
-        .unit("°")
+        .unit("0.1%")
         .measurement()
         .icon("mdi:ship-wheel"),
+    );
+    v.push(
+        sensor(
+            "rudder_steering_status",
+            "Rudder Steering Status",
+            "RudderController.SteeringAngle.status",
+        )
+        .icon("mdi:ship-wheel")
+        .diagnostic(),
     );
     v.push(
         sensor(
@@ -1750,6 +1764,7 @@ mod tests {
             EoiCanData::RudderController(RudderControllerData::SteeringAngle(SteeringAngle {
                 angle: 0,
                 raw_adc: 0,
+                status: Some(SteeringAngle::STATUS_CAL_VALID),
             })),
             EoiCanData::RudderController(RudderControllerData::FlowSensorIn(FlowSensor {
                 flow_rate: 0,
