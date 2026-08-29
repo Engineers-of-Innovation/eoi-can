@@ -223,48 +223,18 @@ const SLOT_ACTIONS: [(&str, &str); 3] = [("~", "undo"), ("0", "factory"), ("]", 
 // Geometry
 // ---------------------------------------------------------------------------
 
-/// 14 rows: a heading row, twelve of parameters, and the status line sharing the
-/// last one with the axis table's final entry.
-const ROWS: i32 = 14;
-/// Ink is 18px tall once descenders are counted -- `p`, `g`, `q` and `y` all
-/// appear in hotkeys -- so 19px is the floor, not the 14px cap height.
-const ROW_H: i32 = 19;
-/// Puts the heading row's ink on y=0, so the top line touches the panel edge.
-///
-/// Negative on purpose: `row_y` returns a *centre*, and the ink of a line reaches
-/// `INK_TOP` above it. The panel is white past the active area, so text parked
-/// against the edge reads as a margin rather than as clipping, and the pixels this
-/// frees go to [`SECTION_GAP`] and the status line.
-const BLOCK_TOP: i32 = -(ROW_H / 2) - INK_TOP;
-/// Measured ink height of a `FONT_TINY` string with descenders.
-const INK_H: i32 = 15;
-/// Measured top of that ink box relative to a `VerticalPosition::Center` anchor.
-/// Values are all digits, so their ink is only the cap band inside it -- which is
-/// why a row-height box centred on the row misses their tops.
-const INK_TOP: i32 = -7;
 /// Padding around a value's cap band when its cell is inverted.
 const CURSOR_PAD: i32 = 2;
 const CURSOR_H: i32 = TINY_CAP_H + 2 * CURSOR_PAD;
 
-const _: () = assert!(ROW_H > INK_H, "rows would touch");
 // The inverted cell must cover a value's ink without reaching the rows either
 // side. Digits leave the descender space empty, which is where the slack is.
 const _: () = assert!(CURSOR_H <= ROW_H);
 const _: () = assert!(CURSOR_PAD + CURSOR_PAD + TINY_CAP_H <= ROW_H);
-// The heading row's ink starts exactly at the top edge, and nothing is clipped.
-const _: () = assert!(BLOCK_TOP + ROW_H / 2 + INK_TOP == 0);
-
-/// Centre y of a screen row, the heading being row 0.
-const fn row_y(index: i32) -> i32 {
-    BLOCK_TOP + index * ROW_H + ROW_H / 2
-}
 
 /// Column widths, each the sum of its fields, and the gutters chosen so the four
 /// tile the full width exactly.
 const HOTKEY_W: i32 = 17;
-/// Space between a table's fields.
-const FIELD_GAP: i32 = 7;
-
 const AXIS_LABEL_W: i32 = 94;
 /// Sized for an ordinary value, **not** for a diverged pair.
 ///

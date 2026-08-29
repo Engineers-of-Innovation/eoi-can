@@ -9,6 +9,7 @@
 //!
 //! - [`dashboard`] -- the helm screen: speed, power, temperatures, times.
 //! - [`foiling`] -- the foiling trim and tuning parameters.
+//! - [`information`] -- what the foiling board shows while nobody is tuning.
 //!
 //! Font metrics are hardcoded here so layout arithmetic can be `const`, and
 //! `font_metrics_match_their_consts` fails if a rebuilt font drifts from them.
@@ -30,6 +31,7 @@ use u8g2_fonts::{
 
 pub mod dashboard;
 pub mod foiling;
+pub mod information;
 
 pub const DISPLAY_WIDTH: u32 = 792;
 pub const DISPLAY_HEIGHT: u32 = 272;
@@ -312,6 +314,48 @@ const FONT_HEADING: FontRenderer = FontRenderer::new::<PlexSemi12>();
 /// Cap height of [`FONT_TINY`] and [`FONT_HEADING`], pinned by
 /// `font_metrics_match_their_consts`.
 const TINY_CAP_H: i32 = 12;
+
+/// The row grid the two `FONT_TINY` table screens share.
+///
+/// Both the foiling table and the information screen are dense lists read leaning
+/// in, and they agree on the pitch so a helm moving between them is reading the
+/// same lines in the same places. It lives here rather than in either of them
+/// because the moment two screens share a grid, one of them owning it means the
+/// other has a copy that can drift.
+///
+/// 14 rows is what 272px of panel holds at this pitch.
+const ROWS: i32 = 14;
+/// Ink is 18px tall once descenders are counted -- `p`, `g`, `q` and `y` all
+/// appear in labels and hotkeys -- so 19px is the floor, not the 14px cap height.
+const ROW_H: i32 = 19;
+/// Measured ink height of a `FONT_TINY` string with descenders.
+const INK_H: i32 = 15;
+/// Measured top of that ink box relative to a `VerticalPosition::Center` anchor.
+/// Values are all digits, so their ink is only the cap band inside it -- which is
+/// why a row-height box centred on the row misses their tops.
+const INK_TOP: i32 = -7;
+/// Puts the heading row's ink on y=0, so the top line touches the panel edge.
+///
+/// Negative on purpose: [`row_y`] returns a *centre*, and the ink of a line reaches
+/// `INK_TOP` above it. The panel is white past the active area, so text parked
+/// against the edge reads as a margin rather than as clipping, and the pixels this
+/// frees pay for the gaps between sections.
+const BLOCK_TOP: i32 = -(ROW_H / 2) - INK_TOP;
+
+const _: () = assert!(ROW_H > INK_H, "rows would touch");
+// The heading row's ink starts exactly at the top edge, and nothing is clipped.
+const _: () = assert!(BLOCK_TOP + ROW_H / 2 + INK_TOP == 0);
+// The grid must not run off the bottom of the panel.
+const _: () = assert!(BLOCK_TOP + ROWS * ROW_H <= DISPLAY_HEIGHT as i32);
+
+/// Centre y of a screen row, the top row being row 0.
+const fn row_y(index: i32) -> i32 {
+    BLOCK_TOP + index * ROW_H + ROW_H / 2
+}
+
+/// Space between a table's fields, and the unit both screens measure gutters
+/// against.
+const FIELD_GAP: i32 = 7;
 
 /// The offset from the GNSS clock's UTC to the time the helm reads, in hours.
 ///

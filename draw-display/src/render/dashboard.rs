@@ -1285,7 +1285,10 @@ mod tests {
             d.battery_state_of_charge.update(LOW_SOC_PERCENT + 1.0);
             d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT - 1.0));
             d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT - 1.0);
-            d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT - 1);
+            d.mppt_heat[0].update(crate::MpptHeat {
+                board: MPPT_TEMP_LIMIT - 1,
+                heat_sink: MPPT_TEMP_LIMIT - 1,
+            });
             d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT - 1);
             d
         };
@@ -1310,7 +1313,10 @@ mod tests {
             match name {
                 "motor" => d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT + 0.1)),
                 "driver" => d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT + 0.1),
-                "mppt" => d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT + 1),
+                "mppt" => d.mppt_heat[0].update(crate::MpptHeat {
+                    board: MPPT_TEMP_LIMIT + 1,
+                    heat_sink: MPPT_TEMP_LIMIT + 1,
+                }),
                 _ => d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT + 1),
             }
             assert!(icon_conditions(&d)[slot], "{name} over-temperature missed");

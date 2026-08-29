@@ -9,6 +9,7 @@ mod time;
 pub use eoi_can_decoder::{FoilConfigAction, GnssDateTime};
 pub use render::dashboard::draw_display;
 pub use render::foiling::draw_foiling;
+pub use render::information::draw_information;
 pub use render::{DISPLAY_HEIGHT, DISPLAY_WIDTH};
 
 use core::net::Ipv4Addr;
@@ -16,7 +17,8 @@ use core::net::Ipv4Addr;
 use eoi_can_decoder::{
     BatteryState, ChargeState, DataLoggerData, DischargeState, EoiBattery, EoiCanData, FoilConfig,
     FoilParamStatus, FoilSlot, FoilTuneValue, GanMpptPacket, GnssData, HeightSensorData,
-    MpptChannel, MpptInfo, TemperatureData, ThrottleData, ThrottleErrors, VescData,
+    MpptChannel, MpptInfo, RudderControllerData, TemperatureData, ThrottleData, ThrottleErrors,
+    VescData,
 };
 use mppt_layout::{gan_side_and_position, position_of, MpptKind, Side, GAN_STRAP_COUNT, LAYOUT};
 use render::foiling::{cell_for_index, stacked_slot, PairHalf};
@@ -189,16 +191,20 @@ pub enum Layout {
     Dashboard,
     /// Foiling trim and tuning parameters.
     Foiling,
+    /// What the foiling board shows while nobody is tuning. See
+    /// [`ScreenSelector`].
+    Information,
 }
 
 impl Layout {
     /// Every layout, for a front-end to list in its `--help`.
-    pub const ALL: [Self; 2] = [Self::Dashboard, Self::Foiling];
+    pub const ALL: [Self; 3] = [Self::Dashboard, Self::Foiling, Self::Information];
 
     pub const fn name(self) -> &'static str {
         match self {
             Self::Dashboard => "dashboard",
             Self::Foiling => "foiling",
+            Self::Information => "information",
         }
     }
 
@@ -211,6 +217,7 @@ impl Layout {
         match self {
             Self::Dashboard => draw_display(display, data),
             Self::Foiling => draw_foiling(display, data),
+            Self::Information => draw_information(display, data),
         }
     }
 }
@@ -248,6 +255,132 @@ impl core::str::FromStr for Layout {
             .into_iter()
             .find(|layout| layout.name() == s)
             .ok_or(UnknownLayout)
+    }
+}
+
+/// Which of a board's screens is up, and what raises the other one.
+///
+/// The foiling table is fifty numbers in a 12px face. It is worth the whole
+/// panel while the helm is at the keyboard and worth nothing at all when they
+/// are not, so that board carries two layouts and this decides between them.
+/// A board with only one screen says so with [`Self::fixed`] and this never
+/// chooses anything.
+///
+/// The keyboard, and only the keyboard, raises the tuning screen. Nothing on the
+/// bus says a key was pressed -- the datalogger sends no cursor frame -- so it is
+/// read off the parameter read-backs a press causes, which [`FoilActivity`]
+/// counts. The flight controller's dump at connect causes those same read-backs,
+/// and [`Self::DUMP_BURST`] is what tells the two apart: without it the board
+/// would come up on the tuning screen at every boot, which is the one moment
+/// nobody is looking at it.
+#[derive(Debug)]
+pub struct ScreenSelector {
+    /// Drawn while the helm is at the keyboard.
+    tuning: Layout,
+    /// Drawn once they stop. `None` on a board with a single screen.
+    idle: Option<Layout>,
+    /// The counters as of the last redraw; the difference against the current
+    /// ones is what happened during this frame.
+    seen: FoilActivity,
+    /// When the helm last touched the keyboard, as far as the bus shows. `None`
+    /// until they first do, which is what puts the idle screen up at boot.
+    touched_at: Option<Instant>,
+}
+
+impl ScreenSelector {
+    /// How long the tuning screen stays up after the last keypress.
+    ///
+    /// Long enough to think with: the helm changes a gain, sails a leg watching
+    /// what it did, and comes back to the same screen. The panel takes a second
+    /// to redraw, so a timeout short enough to trip mid-thought would cost more
+    /// than it saves.
+    pub const TUNING_TIMEOUT: Duration = Duration::from_secs(120);
+
+    /// More cursor moves than this in one frame is the flight controller walking
+    /// its table, not a helm walking the arrow keys.
+    ///
+    /// The dump puts all ~50 parameters on a 1 Mbit bus in a few milliseconds,
+    /// and they are all ingested in the frame that follows. A redraw takes about
+    /// a second, and a helm cannot usefully navigate faster than the screen they
+    /// are reading, so a real frame's worth of keying is a row or two. The case
+    /// this misreads is a dump that straddles a redraw and leaves a short tail in
+    /// the next frame -- a few milliseconds' worth of a second-long window -- and
+    /// the cost of that is one timeout of the tuning screen at boot.
+    pub const DUMP_BURST: u32 = 8;
+
+    /// A board with one screen, which it draws whatever happens.
+    pub const fn fixed(layout: Layout) -> Self {
+        Self::new(layout, None)
+    }
+
+    /// A board that draws `idle` until the helm touches the keyboard, and
+    /// `tuning` until [`Self::TUNING_TIMEOUT`] after they last did.
+    pub const fn switching(tuning: Layout, idle: Layout) -> Self {
+        Self::new(tuning, Some(idle))
+    }
+
+    const fn new(tuning: Layout, idle: Option<Layout>) -> Self {
+        Self {
+            tuning,
+            idle,
+            // Matches a fresh `FoilingData`, so anything ingested before the
+            // first redraw counts as that frame's activity -- which is how the
+            // boot dump gets seen as one burst and dismissed as one.
+            seen: FoilActivity {
+                cursor_moves: 0,
+                events: 0,
+            },
+            touched_at: None,
+        }
+    }
+
+    /// What to call this board in a log line: the screen it is there for.
+    pub const fn name(&self) -> &'static str {
+        self.tuning.name()
+    }
+
+    /// Fold in everything that has arrived since the last call and return the
+    /// layout to draw now.
+    ///
+    /// Call it once per redraw. The dump filter reads a count *per frame*, so
+    /// calling twice for one frame splits a burst into two smaller ones and can
+    /// let a dump through as keypresses.
+    pub fn layout(&mut self, data: &DisplayData) -> Layout {
+        let activity = data.foiling.activity();
+        let moves = activity.cursor_moves.wrapping_sub(self.seen.cursor_moves);
+        let events = activity.events.wrapping_sub(self.seen.events);
+        self.seen = activity;
+
+        // An edit needs no rate test. It is the helm working a cell without
+        // moving off it, and it is never something the flight controller does by
+        // itself: a read-back that changes nothing is explicitly not an edit, so
+        // the dump produces none.
+        if events > 0 || (1..=Self::DUMP_BURST).contains(&moves) {
+            self.touched_at = Some(Instant::now());
+        }
+
+        match self.idle {
+            Some(idle) if !self.is_tuning() => idle,
+            _ => self.tuning,
+        }
+    }
+
+    /// Whether the keyboard was touched recently enough to hold the tuning
+    /// screen up.
+    fn is_tuning(&self) -> bool {
+        self.touched_at
+            .as_ref()
+            .is_some_and(|at| at.elapsed() < Self::TUNING_TIMEOUT)
+    }
+
+    /// Choose and draw, which is the whole of what a render loop wants.
+    pub fn draw<D, C>(&mut self, display: &mut D, data: &DisplayData) -> Result<(), D::Error>
+    where
+        D: embedded_graphics::prelude::DrawTarget<Color = C>,
+        C: embedded_graphics::prelude::PixelColor
+            + From<embedded_graphics::pixelcolor::BinaryColor>,
+    {
+        self.layout(data).draw(display, data)
     }
 }
 
@@ -451,6 +584,29 @@ pub struct FoilSlotEvent {
     pub time: Option<(u8, u8)>,
 }
 
+/// How much the helm has done, counted rather than timed.
+///
+/// [`ScreenSelector`] samples this once per redraw and works on the difference,
+/// which is the only honest way to read the rate: frames sit in the collector
+/// between renders, so everything in one batch is ingested within microseconds
+/// of everything else and an [`Instant`] taken here cannot tell a keypress from
+/// a bus dump. A count per frame can -- see [`ScreenSelector::DUMP_BURST`].
+///
+/// Both counters wrap rather than saturate; only the difference is ever read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct FoilActivity {
+    /// Read-backs that landed on a cell other than the one before them, which is
+    /// as close as the protocol gets to "the helm pressed an arrow key".
+    pub cursor_moves: u32,
+    /// Parameter edits and configuration-slot actions -- the helm working a cell
+    /// without moving off it.
+    pub events: u32,
+}
+
 /// Whatever the status line is currently reporting.
 ///
 /// One field rather than one per kind: the line has room for a single sentence, so
@@ -501,6 +657,16 @@ pub struct FoilingData {
     /// When the last slot event arrived, which is how long its line is protected
     /// from the read-backs it caused. See [`SLOT_EVENT_HOLD`].
     slot_event_at: Option<Instant>,
+    /// What [`ScreenSelector`] reads. Public through [`FoilingData::activity`]
+    /// rather than as a field: it is a running total, meaningless except as a
+    /// difference against an earlier one.
+    activity: FoilActivity,
+    /// The cell the last read-back was for, kept raw so a move is a move.
+    ///
+    /// Not [`FoilingData::cursor`], which times out after five seconds: the same
+    /// cell read back after a quiet minute would then look like the helm had
+    /// gone somewhere, and wake the panel with nobody at the keyboard.
+    last_cell: Option<FoilCursor>,
     /// Both halves of each collapsed up/down pair, kept raw.
     ///
     /// A pair arrives as two separate `0x261` frames, so writing straight into
@@ -516,6 +682,22 @@ impl FoilingData {
         (FoilColumn::Pitch, 8),
         (FoilColumn::Mid, 6),
     ];
+
+    /// Running totals of what the helm has done. See [`FoilActivity`].
+    pub fn activity(&self) -> FoilActivity {
+        self.activity
+    }
+
+    /// Count an event that was written into these fields directly instead of
+    /// arriving on the bus.
+    ///
+    /// Only the simulator's `--demo` needs it: that fabricates the state a frame
+    /// would have produced, cursor and status line included, and without this
+    /// [`ScreenSelector`] would watch a screen full of movement and conclude
+    /// nobody was at the keyboard. The ingest path counts itself.
+    pub fn note_event(&mut self) {
+        self.activity.events = self.activity.events.wrapping_add(1);
+    }
 
     fn values_mut(&mut self, column: FoilColumn, row: u8) -> Option<&mut Latched<Reading>> {
         let index = usize::from(row);
@@ -621,6 +803,7 @@ impl FoilingData {
                     to: is,
                     clamped: limit,
                 }));
+                self.activity.events = self.activity.events.wrapping_add(1);
             }
         }
 
@@ -637,7 +820,12 @@ impl FoilingData {
         // That re-request is also what keeps a latched cell honest: navigating to a
         // cell refreshes it from the flight controller, so a screen that missed the
         // boot dump heals cell by cell. See [`Latched`].
-        self.cursor.update(FoilCursor { column, row });
+        let cell = FoilCursor { column, row };
+        if self.last_cell != Some(cell) {
+            self.last_cell = Some(cell);
+            self.activity.cursor_moves = self.activity.cursor_moves.wrapping_add(1);
+        }
+        self.cursor.update(cell);
     }
 
     /// The last parameter edit, where that is what the line is showing. A slot
@@ -691,6 +879,7 @@ impl FoilingData {
                     },
                 }));
                 self.slot_event_at = Some(Instant::now());
+                self.activity.events = self.activity.events.wrapping_add(1);
             }
         }
     }
@@ -712,6 +901,57 @@ fn bound(to: f32, from: f32) -> Option<FoilLimit> {
 fn first_of(reading: Reading) -> f32 {
     match reading {
         Reading::One(v) | Reading::UpDown(v, _) => v,
+    }
+}
+
+/// The power crossing one GaN MPPT, both sides of the converter.
+///
+/// Input is the panel; output is the pack bus. Power is derived rather than
+/// stored -- the unit reports volts and amps, and a product held beside its own
+/// factors is a third thing that can disagree with them.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct MpptPowerFlow {
+    pub input_voltage: f32,
+    pub input_current: f32,
+    pub output_voltage: f32,
+    pub output_current: f32,
+}
+
+impl MpptPowerFlow {
+    pub fn input_power(&self) -> f32 {
+        self.input_voltage * self.input_current
+    }
+
+    pub fn output_power(&self) -> f32 {
+        self.output_voltage * self.output_current
+    }
+}
+
+/// Both temperatures a GaN MPPT reports.
+///
+/// Kept apart rather than reduced to the hotter of the two on the way in: the
+/// information screen draws them side by side, and the pair says more than the
+/// maximum does -- a heat sink well above its board is a unit working, a board
+/// above its heat sink is a unit whose cooling has stopped mattering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(
+    feature = "defmt",
+    cfg_attr(not(feature = "tokio"), derive(defmt::Format))
+)]
+pub struct MpptHeat {
+    pub board: i8,
+    pub heat_sink: i8,
+}
+
+impl MpptHeat {
+    /// What the dashboard's one temperature cell shows, and what its warning
+    /// threshold is tested against.
+    pub fn hottest(self) -> i8 {
+        self.board.max(self.heat_sink)
     }
 }
 
@@ -776,11 +1016,20 @@ pub struct DisplayData {
     pub throttle_value: DisplayValue<f32>,
     pub throttle_errors: DisplayValue<ThrottleErrors>,
     pub mppt_panel_info: [DisplayValue<(f32, f32, f32)>; MPPT_PANEL_COUNT], // (Power, Voltage, Current), indexed by boat-position - 1
-    /// Hottest temperature each MPPT reports, in °C, indexed by ID strap -- not by
-    /// boat position, so a unit reports regardless of whether `LAYOUT` places it.
-    /// GaN units report a board and a heat sink temperature; this keeps the higher
-    /// of the two. Legacy MPPTs have no strap and are not covered.
-    pub mppt_temperatures: [DisplayValue<i8>; GAN_STRAP_COUNT],
+    /// Both temperatures each MPPT reports, indexed by ID strap -- not by boat
+    /// position, so a unit reports regardless of whether `LAYOUT` places it.
+    /// Legacy MPPTs have no strap and are not covered.
+    pub mppt_heat: [DisplayValue<MpptHeat>; GAN_STRAP_COUNT],
+    /// Both sides of each MPPT, indexed by ID strap.
+    ///
+    /// By strap rather than by boat position, and so in CAN address order: a GaN
+    /// unit's ID is `(64 + strap) << 4 | packet`, so walking this array walks the
+    /// bus. That is what the information screen lists, and it means a unit plugged
+    /// in without a place in `LAYOUT` still appears.
+    ///
+    /// [`mppt_panel_info`](Self::mppt_panel_info) stays alongside it: that one is
+    /// by boat position and is what the dashboard's panel diagram draws.
+    pub mppt_power: [DisplayValue<MpptPowerFlow>; GAN_STRAP_COUNT],
     pub charging_disabled: DisplayValue<bool>,
     pub time: DisplayValue<GnssDateTime>,
     pub ip_address: DisplayValue<Ipv4Addr>,
@@ -790,6 +1039,16 @@ pub struct DisplayData {
     pub height_sensor_front_right: DisplayValue<u16>,
     pub temperature_height_sensors_controller: DisplayValue<f32>,
     pub temperature_rudder_controller: DisplayValue<f32>,
+    /// Coolant temperature entering and leaving the loop, from the flow sensors on
+    /// `0x215` and `0x216`. `None` inside the `DisplayValue` is the sensor
+    /// reporting itself open or shorted, which is not the same fact as the node
+    /// having gone quiet -- see [`DisplayData::motor_ntc_temperature`].
+    pub water_temperature_in: DisplayValue<Option<f32>>,
+    pub water_temperature_out: DisplayValue<Option<f32>>,
+    /// Coolant flow at the inlet sensor, in mL/min as the frame carries it. The
+    /// outlet sensor reports its own rate; in a sealed loop the two agree, so the
+    /// inlet is the one drawn and a disagreement is a leak rather than a reading.
+    pub water_flow_in: DisplayValue<u16>,
     /// Only the foiling layout draws these; the dashboard ignores them.
     pub foiling: FoilingData,
     /// Smoothing state behind `battery_endurance`, one per direction. Private:
@@ -933,7 +1192,16 @@ impl DisplayData {
                 GnssData::GnssLatitude(_) => {}
                 GnssData::GnssLongitude(_) => {}
             },
-            EoiCanData::RudderController(_) => {}
+            EoiCanData::RudderController(rudder) => match rudder {
+                RudderControllerData::FlowSensorIn(flow) => {
+                    self.water_temperature_in.update(flow.temperature);
+                    self.water_flow_in.update(flow.flow_rate);
+                }
+                RudderControllerData::FlowSensorOut(flow) => {
+                    self.water_temperature_out.update(flow.temperature);
+                }
+                _ => {}
+            },
             EoiCanData::HeightSensors(height) => match height {
                 HeightSensorData::FrontLeft(status) => {
                     self.height_sensor_front_left.update(status.value);
@@ -954,13 +1222,25 @@ impl DisplayData {
                                 power.input_current,
                             ));
                         }
+                        // And by strap, both sides of the converter, for the
+                        // information screen's list of what is on the bus.
+                        if let Some(slot) = self.mppt_power.get_mut(node as usize) {
+                            slot.update(MpptPowerFlow {
+                                input_voltage: power.input_voltage,
+                                input_current: power.input_current,
+                                output_voltage: power.output_voltage,
+                                output_current: power.output_current,
+                            });
+                        }
                     }
                     GanMpptPacket::Status(status) => {
                         // Indexed by strap: every MPPT on the bus reports, whether
-                        // or not LAYOUT gives it a boat position. The heat sink
-                        // usually leads the board, so take whichever is hotter.
-                        if let Some(slot) = self.mppt_temperatures.get_mut(node as usize) {
-                            slot.update(status.board_temp.max(status.heat_sink_temp));
+                        // or not LAYOUT gives it a boat position.
+                        if let Some(slot) = self.mppt_heat.get_mut(node as usize) {
+                            slot.update(MpptHeat {
+                                board: status.board_temp,
+                                heat_sink: status.heat_sink_temp,
+                            });
                         }
                     }
                     _ => {}
@@ -1129,10 +1409,14 @@ impl DisplayData {
     /// The hottest MPPT currently reporting, and how to name it. `None` while no
     /// MPPT has sent a temperature.
     pub fn hottest_mppt(&self) -> Option<(MpptId, i8)> {
-        self.mppt_temperatures
+        self.mppt_heat
             .iter()
             .enumerate()
-            .filter_map(|(strap, value)| value.get().map(|t| (MpptId::of_strap(strap as u8), *t)))
+            .filter_map(|(strap, value)| {
+                value
+                    .get()
+                    .map(|heat| (MpptId::of_strap(strap as u8), heat.hottest()))
+            })
             .max_by_key(|(_, t)| *t)
     }
 
@@ -1914,6 +2198,119 @@ mod foil_ingest_tests {
             }),
             "the re-request puts it where the operator actually is"
         );
+    }
+
+    /// A minute in the paused clock, which is how every screen-selector test
+    /// moves time.
+    async fn advance(seconds: u64) {
+        tokio::time::advance(core::time::Duration::from_secs(seconds)).await;
+    }
+
+    fn foiling_board() -> ScreenSelector {
+        ScreenSelector::switching(Layout::Foiling, Layout::Information)
+    }
+
+    /// Nothing has happened yet, so there is nothing to tune: the board comes up
+    /// on the screen the helm is actually going to be looking at.
+    #[tokio::test(start_paused = true)]
+    async fn a_board_comes_up_on_its_idle_screen() {
+        let mut screens = foiling_board();
+        let data = DisplayData::default();
+        assert_eq!(screens.layout(&data), Layout::Information);
+    }
+
+    /// The flight controller dumps its whole table at connect, and every one of
+    /// those read-backs moves the inferred cursor. That is the boot case, and it
+    /// must not be mistaken for a helm at the keyboard.
+    #[tokio::test(start_paused = true)]
+    async fn the_connect_dump_does_not_raise_the_tuning_screen() {
+        let mut screens = foiling_board();
+        let mut data = DisplayData::default();
+        for index in 1..=12 {
+            feed(&mut data, index, 0, 1.0);
+        }
+        assert_eq!(screens.layout(&data), Layout::Information);
+
+        // And the board is not left deaf afterwards: the first real keypress
+        // still lands.
+        feed(&mut data, 16, 0, 1.0);
+        assert_eq!(screens.layout(&data), Layout::Foiling);
+    }
+
+    /// One cursor move raises the table, and it comes back down on its own.
+    #[tokio::test(start_paused = true)]
+    async fn a_keypress_raises_the_tuning_screen_until_it_times_out() {
+        let mut screens = foiling_board();
+        let mut data = DisplayData::default();
+
+        feed(&mut data, 16, 0, 4.0);
+        assert_eq!(screens.layout(&data), Layout::Foiling);
+
+        // Still up a moment before the timeout, down a moment after it.
+        advance(119).await;
+        assert_eq!(screens.layout(&data), Layout::Foiling);
+        advance(2).await;
+        assert_eq!(screens.layout(&data), Layout::Information);
+    }
+
+    /// The helm sits on one cell and walks its value with +/-, which moves no
+    /// cursor at all. Timing out mid-edit is the failure this rules out.
+    #[tokio::test(start_paused = true)]
+    async fn an_edit_holds_the_screen_up_without_moving_the_cursor() {
+        let mut screens = foiling_board();
+        let mut data = DisplayData::default();
+
+        feed(&mut data, 16, 0, 4.0);
+        assert_eq!(screens.layout(&data), Layout::Foiling);
+
+        for step in 1..=4 {
+            advance(100).await;
+            feed(&mut data, 16, 0, 4.0 + step as f32 * 0.1);
+            assert_eq!(
+                screens.layout(&data),
+                Layout::Foiling,
+                "step {step} was more than 100 s after the last cursor move"
+            );
+        }
+
+        advance(121).await;
+        assert_eq!(screens.layout(&data), Layout::Information);
+    }
+
+    /// The helm board has one screen and no keyboard, and the same frames reach
+    /// it. It must draw the dashboard through all of them.
+    #[tokio::test(start_paused = true)]
+    async fn a_fixed_board_never_switches() {
+        let mut screens = ScreenSelector::fixed(Layout::Dashboard);
+        let mut data = DisplayData::default();
+        assert_eq!(screens.layout(&data), Layout::Dashboard);
+
+        feed(&mut data, 16, 0, 4.0);
+        assert_eq!(screens.layout(&data), Layout::Dashboard);
+        advance(600).await;
+        assert_eq!(screens.layout(&data), Layout::Dashboard);
+    }
+
+    /// Restoring a configuration slot is the helm pressing a key, and it arrives
+    /// as a slot event plus the burst of read-backs it caused -- the very shape
+    /// the dump filter throws away. The event is what saves it.
+    #[tokio::test(start_paused = true)]
+    async fn a_slot_restore_raises_the_tuning_screen() {
+        let mut screens = foiling_board();
+        let mut data = DisplayData::default();
+
+        // Prime the cells, as the connect dump would, and let that be dismissed.
+        for index in 1..=12 {
+            feed(&mut data, index, 0, 1.0);
+        }
+        assert_eq!(screens.layout(&data), Layout::Information);
+
+        // `0x264`: slot 3 restored, then the whole table reads back changed.
+        feed_raw(&mut data, 0x264, &[2, 3, 1, 9, 15]);
+        for index in 1..=12 {
+            feed(&mut data, index, 0, 2.0);
+        }
+        assert_eq!(screens.layout(&data), Layout::Foiling);
     }
 
     /// Every index in the tuner's table has to land somewhere drawable, or a
