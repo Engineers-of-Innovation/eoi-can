@@ -24,9 +24,15 @@ struct Args {
     #[arg(short, long, default_value_t = String::from("vcan0"))]
     can_interface: String,
 
-    /// Screen layout to draw: dashboard or foiling
+    /// Screen layout to draw: dashboard, foiling or information
     #[arg(short, long, default_value_t = draw_display::Layout::default())]
     layout: draw_display::Layout,
+
+    /// Fall back to this layout once the helm stops tuning, and start on it.
+    /// What the foiling board does, so the switching can be watched here rather
+    /// than on a panel that takes a second to redraw.
+    #[arg(long)]
+    idle_layout: Option<draw_display::Layout>,
 
     /// Fill the foiling screen with plausible values instead of waiting for CAN.
     /// Nothing broadcasts foiling parameters yet, so without this every cell of
@@ -109,13 +115,17 @@ async fn main() -> Result<(), core::convert::Infallible> {
         &output_settings,
     );
 
+    let mut screens = match args.idle_layout {
+        Some(idle) => draw_display::ScreenSelector::switching(args.layout, idle),
+        None => draw_display::ScreenSelector::fixed(args.layout),
+    };
     let mut display_data = draw_display::DisplayData::default();
     let mut tick = 0_u32;
 
     if args.demo {
         demo::populate(&mut display_data, tick);
     }
-    args.layout.draw(&mut display, &display_data).unwrap();
+    screens.draw(&mut display, &display_data).unwrap();
 
     tokio::time::sleep(Duration::from_millis(1000)).await; // load CAN data
     let mut last_time_updated_display = Instant::now() - Duration::from_secs(100);
@@ -149,7 +159,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 tick = tick.wrapping_add(1);
                 demo::populate(&mut display_data, tick);
             }
-            args.layout.draw(&mut display, &display_data).unwrap();
+            screens.draw(&mut display, &display_data).unwrap();
             window.update(&display);
         }
 

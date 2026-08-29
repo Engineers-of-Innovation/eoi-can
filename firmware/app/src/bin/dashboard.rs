@@ -35,7 +35,7 @@ async fn main(spawner: Spawner) {
         p,
         Irqs,
         MY_APP_TYPE,
-        draw_display::Layout::Dashboard,
+        draw_display::ScreenSelector::fixed(draw_display::Layout::Dashboard),
         PanelMounting::Upright,
     )
     .await

@@ -138,4 +138,9 @@ pub fn populate(data: &mut DisplayData, tick: u32) {
             }));
         }
     }
+
+    // Every branch above is the helm doing something, so the demo is a keyboard
+    // that never stops. Said out loud because these fields were written into
+    // rather than ingested -- see `FoilingData::note_event`.
+    foil.note_event();
 }

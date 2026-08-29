@@ -3,14 +3,14 @@
 //! workarounds.
 //!
 //! Both display boards run identical hardware and an identical decode pipeline;
-//! they differ only in which [`Layout`] they draw. So the pin choices and the
-//! loop live here and the layout is an argument — see [`run_display`]. The
+//! they differ only in which screens they draw. So the pin choices and the loop
+//! live here and the screens are an argument — see [`run_display`]. The
 //! per-board binaries are only a `bind_interrupts!`, an app type and that call.
 //!
 //! Ported from `eoi-can-display-firmware` in the eoi-can repo.
 
 use defmt::*;
-use draw_display::{DisplayData, Layout};
+use draw_display::{DisplayData, ScreenSelector};
 use embassy_executor::Spawner;
 use embassy_futures::yield_now;
 use embassy_stm32::can::{
@@ -277,21 +277,21 @@ async fn heartbeat_task(
     }
 }
 
-/// Bring up the panel and CAN, then render `layout` forever. Never returns.
+/// Bring up the panel and CAN, then render forever. Never returns.
 ///
 /// Owns the whole board: both display boards are the same hardware, so the pin
 /// choices belong here rather than being repeated per binary. The only things a
-/// binary decides are which layout to draw, which app type it reports, and how
+/// binary decides are which screens it draws, which app type it reports, and how
 /// its panel is mounted.
 pub async fn run_display<I: DisplayIrqs>(
     spawner: Spawner,
     p: Peripherals,
     irqs: I,
     app_type: AppType,
-    layout: Layout,
+    mut screens: ScreenSelector,
     mounting: PanelMounting,
 ) -> ! {
-    info!("Display board: {}", layout.name());
+    info!("Display board: {}", screens.name());
     crate::build_info::log();
 
     // LEDs are active low.
@@ -385,7 +385,9 @@ pub async fn run_display<I: DisplayIrqs>(
 
     let display = DISPLAY.init_with(|| EpdDisplay::new(mounting));
     let mut display_data = DisplayData::default();
-    layout.draw(display, &display_data).unwrap();
+    // Nothing has been ingested yet, so this is the idle screen on a board that
+    // has one: something readable up while the first frames arrive.
+    screens.draw(display, &display_data).unwrap();
 
     epd.update_and_display_frame_async(&mut epd_spi_device, display.buffer(), &mut Delay)
         .await
@@ -455,7 +457,8 @@ pub async fn run_display<I: DisplayIrqs>(
         });
         debug!("Parsed frames: {}", parsed_frames);
 
-        layout.draw(display, &display_data).unwrap();
+        // Once per redraw, which is what `ScreenSelector` counts activity in.
+        screens.draw(display, &display_data).unwrap();
         let buffer_hash = fnv1a_hash(display.buffer());
 
         if last_buffer_hash == Some(buffer_hash) {

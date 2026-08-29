@@ -35,7 +35,12 @@ async fn main(spawner: Spawner) {
         p,
         Irqs,
         MY_APP_TYPE,
-        draw_display::Layout::Foiling,
+        // The tuning table only while the helm is at the keyboard; see
+        // `ScreenSelector`.
+        draw_display::ScreenSelector::switching(
+            draw_display::Layout::Foiling,
+            draw_display::Layout::Information,
+        ),
         PanelMounting::Inverted,
     )
     .await

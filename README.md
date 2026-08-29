@@ -98,8 +98,8 @@ cd eoi-can-display-simulator
 cargo run -- -ccan0
 ```
 
-The simulator draws either screen with `--layout dashboard|foiling`. The foiling
-screen has two ways to show values without a boat:
+The simulator draws any screen with `--layout dashboard|foiling|information`. The
+foiling screen has two ways to show values without a boat:
 
 ```sh
 # Values invented locally -- no bus needed at all, so this works anywhere.
@@ -109,6 +109,15 @@ cargo run -p eoi-can-display-simulator -- --layout foiling --demo
 # the whole path: 0x261 frames -> decoder -> layout.
 cargo run -p eoi-can-display-simulator -- --layout foiling &
 support/send-foil-params.py vcan0
+```
+
+`--idle-layout` adds what the foiling board itself does: the tuning table only
+while the helm is at the keyboard, and the given screen the rest of the time.
+This is the switching the board ships with, watchable at 10 fps instead of on a
+panel that takes a second to redraw.
+
+```sh
+cargo run -p eoi-can-display-simulator -- --layout foiling --idle-layout information
 ```
 
 For firmware or embedded targets, see the specific subproject's README or source for details on flashing or running on hardware.
