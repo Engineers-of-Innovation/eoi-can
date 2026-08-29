@@ -18,7 +18,7 @@ use heapless::String;
 use u8g2_fonts::types::HorizontalAlignment;
 
 use super::*;
-use crate::{built_info, DisplayData, GnssFix, MpptId, Side};
+use crate::{built_info, DisplayData, Endurance, GnssFix, MpptId, Side};
 
 /// Height of the full-width bottom row holding the three times. Setting it also
 /// sets where the band above ends, and so how far down the icons, temperatures and
@@ -293,6 +293,10 @@ const CURRENT_TIME_LABEL_W: i32 = 66;
 const HEADING_LABEL: &str = "Heading";
 const HEADING_LABEL_W: i32 = 72;
 const TIME_TO_EMPTY_LABEL: [&str; 2] = ["Time to", "Empty"];
+/// The same block the other way round, while the BMS has discharge switched off.
+/// "Full" is the narrower word, so [`TIME_TO_EMPTY_LABEL_W`] sizes the cell for
+/// both and nothing moves when the boat goes on the charger.
+const TIME_TO_FULL_LABEL: [&str; 2] = ["Time to", "Full"];
 const TIME_TO_EMPTY_LABEL_W: i32 = 66;
 
 /// Full width each time needs: the digits, plus its label.
@@ -781,21 +785,35 @@ where
         HEADING_LABEL,
         point,
     )?;
-    // Derived on ingest from the smoothed draw and the state of charge, and
+    // Derived on ingest from the smoothed power and the state of charge, and
     // dashes whenever that could not be worked out -- see `update_endurance`.
-    let time_to_empty = data
-        .battery_time_to_empty
-        .get()
-        .map(|&seconds| hms_from_seconds(seconds));
+    let (endurance, endurance_label) = endurance_block(data);
     draw_time(
         display,
         &FONT_MID,
         TIME_METRICS,
         TIME_TO_EMPTY_LEFT,
         TIME_CENTER_Y,
-        fmt_hms_groups(buf, time_to_empty),
-        Some((TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W)),
+        fmt_hms_groups(buf, endurance),
+        Some((endurance_label, TIME_TO_EMPTY_LABEL_W)),
     )
+}
+
+/// The bottom-right block: how long the pack has, and which way it is going.
+///
+/// The label follows the figure whenever there is one, so the word and the number
+/// are always the pair `update_endurance` worked out together. With no figure it
+/// falls back to the discharge state, so a boat on the charger reads "Time to
+/// Full" over dashes rather than being told it is emptying.
+fn endurance_block(data: &DisplayData) -> (Option<(u8, u8, u8)>, [&'static str; 2]) {
+    match data.battery_endurance.get() {
+        Some(Endurance::ToEmpty(seconds)) => {
+            (Some(hms_from_seconds(*seconds)), TIME_TO_EMPTY_LABEL)
+        }
+        Some(Endurance::ToFull(seconds)) => (Some(hms_from_seconds(*seconds)), TIME_TO_FULL_LABEL),
+        None if data.discharge_is_off() => (None, TIME_TO_FULL_LABEL),
+        None => (None, TIME_TO_EMPTY_LABEL),
+    }
 }
 
 fn draw_version<D, C>(display: &mut D) -> Result<(), D::Error>
@@ -990,6 +1008,9 @@ mod tests {
         for (lines, w) in [
             (CURRENT_TIME_LABEL, CURRENT_TIME_LABEL_W),
             (TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W),
+            // Both words share the cell, so the narrower one must not need more
+            // than the wider one reserved.
+            (TIME_TO_FULL_LABEL, TIME_TO_EMPTY_LABEL_W),
         ] {
             let widest = lines.iter().map(|l| width(&FONT_SMALL, l)).max().unwrap();
             assert_eq!(
@@ -997,6 +1018,36 @@ mod tests {
                 "the widest line of {lines:?} is {widest}px, not the {w}px recorded"
             );
         }
+    }
+
+    #[test]
+    fn the_endurance_block_says_which_way_the_pack_is_going() {
+        let mut data = DisplayData::default();
+        // Nothing heard from the BMS: counting down, because that is what a boat
+        // somebody is looking at is doing.
+        assert_eq!(endurance_block(&data), (None, TIME_TO_EMPTY_LABEL));
+
+        data.battery_endurance.update(Endurance::ToEmpty(2385));
+        assert_eq!(
+            endurance_block(&data),
+            (Some((0, 39, 45)), TIME_TO_EMPTY_LABEL)
+        );
+
+        data.battery_endurance.update(Endurance::ToFull(2681));
+        assert_eq!(
+            endurance_block(&data),
+            (Some((0, 44, 41)), TIME_TO_FULL_LABEL)
+        );
+    }
+
+    /// On the charger with no figure worked out yet, the word still has to be
+    /// right: "Time to Empty" over dashes would be telling the helm the opposite
+    /// of what the pack is doing.
+    #[test]
+    fn a_charging_pack_with_no_estimate_still_reads_the_right_way() {
+        let mut data = DisplayData::default();
+        data.battery_discharge_state.update(DischargeState::Idle);
+        assert_eq!(endurance_block(&data), (None, TIME_TO_FULL_LABEL));
     }
 
     #[test]

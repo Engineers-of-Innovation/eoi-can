@@ -113,7 +113,8 @@ fn populated() -> draw_display::DisplayData {
     });
     // 39:45 of endurance, the estimate `update_endurance` produces from the
     // currents above.
-    data.battery_time_to_empty.update(2385);
+    data.battery_endurance
+        .update(draw_display::Endurance::ToEmpty(2385));
     data
 }
 

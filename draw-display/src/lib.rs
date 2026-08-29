@@ -34,23 +34,25 @@ const DISPLAY_VALUE_TIMEOUT: Duration = Duration::from_secs(5);
 /// it is named here rather than folded into the arithmetic.
 const PACK_CAPACITY_WH: f32 = 1450.0;
 
-/// Time constant of the low-pass on the discharge figure.
+/// Time constant of the low-pass on the power the estimate divides by.
 ///
 /// The raw draw follows the throttle, and an endurance figure that swung with it
 /// would be unreadable: every puff of throttle would halve it. A minute is long
 /// enough that the number holds still through a gust and short enough that
-/// settling into a cruise is reflected within a leg.
-const DRAIN_FILTER_TAU_S: f32 = 60.0;
+/// settling into a cruise is reflected within a leg. Charging is steadier and
+/// would tolerate less smoothing, but there is no reason for the two to disagree.
+const ENDURANCE_FILTER_TAU_S: f32 = 60.0;
 
-/// Below this the boat is not drawing enough for the estimate to mean anything:
-/// the division blows up towards infinity and the answer stops being a time.
-/// Under it the display shows dashes rather than a number nobody should read.
-const MIN_DRAIN_W: f32 = 10.0;
+/// Below this, in either direction, too little is moving for the estimate to mean
+/// anything: the division blows up towards infinity and the answer stops being a
+/// time. Under it the display shows dashes rather than a number nobody should
+/// read.
+const MIN_ENDURANCE_W: f32 = 10.0;
 
 /// The longest endurance the clock can render: the field is three two-digit
 /// groups, so 99:59:59 is the ceiling. Anything longer is not a useful reading
-/// anyway -- it means the boat is barely drawing.
-const MAX_TIME_TO_EMPTY_S: u32 = 99 * 3600 + 59 * 60 + 59;
+/// anyway -- it means barely anything is moving in or out.
+const MAX_ENDURANCE_S: u32 = 99 * 3600 + 59 * 60 + 59;
 
 /// Time constant of the low-pass on the heading.
 ///
@@ -713,6 +715,20 @@ fn first_of(reading: Reading) -> f32 {
     }
 }
 
+/// How long the pack has, and which way it is going.
+///
+/// One value rather than two fields, because the two are never both true and the
+/// screen has one place to draw them. Which arrives decides what the block is
+/// labelled, so the number and the word cannot contradict each other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Endurance {
+    /// Seconds until empty at the present draw.
+    ToEmpty(u32),
+    /// Seconds until full at the present charge -- what the figure means once the
+    /// BMS has switched discharge off, which is how the boat sits on the charger.
+    ToFull(u32),
+}
+
 #[derive(Debug, Default)]
 pub struct DisplayData {
     pub speed_kmh: DisplayValue<f32>,
@@ -722,9 +738,10 @@ pub struct DisplayData {
     pub heading_deg: DisplayValue<f32>,
     pub gnss_fix: DisplayValue<GnssFix>,
     pub battery_state_of_charge: DisplayValue<f32>,
-    /// How long the pack lasts at the present draw, in seconds -- derived here
-    /// rather than reported by anything. See [`DisplayData::update_endurance`].
-    pub battery_time_to_empty: DisplayValue<u32>,
+    /// How long the pack has left, in seconds, and in which direction -- derived
+    /// here rather than reported by anything. See
+    /// [`DisplayData::update_endurance`].
+    pub battery_endurance: DisplayValue<Endurance>,
     pub battery_cell_voltages: [DisplayValue<f32>; 14],
     pub battery_current_pack: DisplayValue<f32>,
     pub battery_current_in: DisplayValue<f32>,
@@ -775,9 +792,12 @@ pub struct DisplayData {
     pub temperature_rudder_controller: DisplayValue<f32>,
     /// Only the foiling layout draws these; the dashboard ignores them.
     pub foiling: FoilingData,
-    /// Smoothing state behind `battery_time_to_empty`. Private: it is the
-    /// estimate's working memory, not a reading, and nothing should draw it.
+    /// Smoothing state behind `battery_endurance`, one per direction. Private:
+    /// they are the estimate's working memory, not readings, and nothing should
+    /// draw them. Kept apart so switching to the charger does not hand the charge
+    /// figure a minute of remembered discharge.
     drain_filter: LowPass,
+    charge_filter: LowPass,
     /// Smoothing state behind `heading_deg`, private for the same reason.
     heading_filter: HeadingFilter,
 }
@@ -1015,48 +1035,95 @@ impl DisplayData {
         self.heading_deg.update(smoothed);
     }
 
-    /// Re-estimate how long the pack lasts at the present draw.
+    /// Whether the BMS has switched the discharge path off.
+    ///
+    /// That is the boat on the charger: the pack takes current and gives none, so
+    /// the endurance question turns round -- "how long until I can go out" rather
+    /// than "how long can I stay out". Anything the BMS reports other than a
+    /// conducting discharge path counts, including its fault states, because none
+    /// of them will be emptying the pack either.
+    ///
+    /// Silence does not count. A display that has not heard from the BMS assumes
+    /// the boat is sailing, which is what it is doing whenever anybody is reading
+    /// this screen.
+    pub fn discharge_is_off(&self) -> bool {
+        self.battery_discharge_state
+            .get()
+            .is_some_and(|state| !matches!(state, DischargeState::On | DischargeState::PreChargeOn))
+    }
+
+    /// Re-estimate how long the pack has, in whichever direction it is going.
     ///
     /// Driven from `0x101` rather than a timer: it is the frame carrying the motor
     /// current, it arrives at a steady rate, and running here keeps the estimate in
     /// the ingest path where every other derived value already lives -- the render
     /// stays a pure function of what has been received.
     ///
-    /// The draw is **power out**, not net power: the solar input is deliberately
-    /// left out, so the figure answers "how long if the sun stops" and errs short.
-    /// Counting the panels in would need only `battery_current_in` added to the sum
-    /// below, at the cost of an endurance that grows when a cloud passes.
+    /// The direction comes from the BMS's own discharge state rather than from
+    /// which way the current happens to be flowing. On a sunny reach the panels
+    /// can out-produce the motor for a few seconds at a time, and a figure that
+    /// flipped between "to empty" and "to full" with the clouds would be useless.
     ///
     /// A sample is skipped rather than faked when a reading is missing or stale,
-    /// and no estimate is published when the draw is too small to divide by. Both
-    /// leave `battery_time_to_empty` to age out into dashes, which is the honest
-    /// reading: not "forever", but "not known".
+    /// and nothing is published when too little is moving to divide by. Both leave
+    /// `battery_endurance` to age out into dashes, which is the honest reading:
+    /// not "forever", but "not known".
     fn update_endurance(&mut self) {
-        let (Some(&voltage), Some(&motor), Some(&peripherals)) = (
+        let (Some(&voltage), Some(&state_of_charge)) = (
             self.battery_voltage.get(),
-            self.battery_current_out_motor.get(),
-            self.battery_current_out_peripherals.get(),
+            self.battery_state_of_charge.get(),
         ) else {
             return;
         };
+        let charged = (state_of_charge / 100.0).clamp(0.0, 1.0);
 
-        // Currents leaving the battery are negative on the bus, so the draw is the
-        // negated sum. Clamped at zero because a regenerating motor is not a
-        // negative drain -- it is a charge, and this estimate does not count those.
-        let drain_w = (-(voltage * (motor + peripherals))).max(0.0);
-        let drain_w = self.drain_filter.sample(drain_w, DRAIN_FILTER_TAU_S);
+        // Emptying divides what is in the pack by what is leaving it; filling
+        // divides what is missing by what is arriving. A full pack on the charger
+        // reads 00:00:00, which is the right answer.
+        let (power_w, energy_wh, endurance): (f32, f32, fn(u32) -> Endurance) =
+            if self.discharge_is_off() {
+                let Some(&current_in) = self.battery_current_in.get() else {
+                    return;
+                };
+                // Charge current arrives positive, so this needs no negating --
+                // only the floor, for a charger briefly drawing rather than giving.
+                let charge_w = (voltage * current_in).max(0.0);
+                (
+                    self.charge_filter.sample(charge_w, ENDURANCE_FILTER_TAU_S),
+                    (1.0 - charged) * PACK_CAPACITY_WH,
+                    Endurance::ToFull,
+                )
+            } else {
+                let (Some(&motor), Some(&peripherals)) = (
+                    self.battery_current_out_motor.get(),
+                    self.battery_current_out_peripherals.get(),
+                ) else {
+                    return;
+                };
+                // Currents leaving the battery are negative on the bus, so the draw
+                // is the negated sum. Clamped at zero because a regenerating motor
+                // is not a negative drain -- it is a charge, and this direction does
+                // not count those.
+                //
+                // The draw is **power out**, not net power: the solar input is left
+                // out on purpose, so the figure answers "how long if the sun stops"
+                // and errs short. Counting the panels in would need only
+                // `battery_current_in` added to the sum, at the cost of an endurance
+                // that grows when a cloud passes.
+                let drain_w = (-(voltage * (motor + peripherals))).max(0.0);
+                (
+                    self.drain_filter.sample(drain_w, ENDURANCE_FILTER_TAU_S),
+                    charged * PACK_CAPACITY_WH,
+                    Endurance::ToEmpty,
+                )
+            };
 
-        let Some(&state_of_charge) = self.battery_state_of_charge.get() else {
-            return;
-        };
-        if drain_w < MIN_DRAIN_W {
+        if power_w < MIN_ENDURANCE_W {
             return;
         }
-
-        let remaining_wh = (state_of_charge / 100.0).clamp(0.0, 1.0) * PACK_CAPACITY_WH;
-        let seconds = remaining_wh / drain_w * 3600.0;
-        self.battery_time_to_empty
-            .update((seconds as u32).min(MAX_TIME_TO_EMPTY_S));
+        let seconds = energy_wh / power_w * 3600.0;
+        self.battery_endurance
+            .update(endurance((seconds as u32).min(MAX_ENDURANCE_S)));
     }
 
     /// The hottest MPPT currently reporting, and how to name it. `None` while no
@@ -1361,6 +1428,119 @@ mod foil_ingest_tests {
         );
     }
 
+    /// `0x107`, which is where the BMS says whether its discharge path is on.
+    /// Battery state 4 is OnlyCharge and charge state 3 is FetOn -- the boat
+    /// plugged in, taking current and giving none.
+    fn feed_discharge_state(data: &mut DisplayData, discharge: u8) {
+        feed_raw(data, 0x107, &[20, 20, 20, 20, 20, 4, 3, discharge]);
+    }
+
+    /// The boat on the charger: discharge off, a charge current arriving, and no
+    /// motor drawing.
+    fn feed_charging(data: &mut DisplayData, volts: f32, charge_a: f32, state_of_charge: f32) {
+        feed_discharge_state(data, 1); // Idle -- the discharge path is open.
+
+        let volts = ((volts * 1000.0) as u16).to_le_bytes();
+        feed_raw(data, 0x106, &[0, 0, 0, 0, volts[0], volts[1], 0, 0]);
+        feed_raw(data, 0x100, &[0, 0, 0, 0, 0, 0, 0, 0]);
+
+        let soc = ((state_of_charge * 100.0) as u16).to_le_bytes();
+        feed_raw(data, 0x102, &[soc[0], soc[1], 0, 0, 0, 0, 0, 0]);
+
+        let charge = charge_a.to_le_bytes();
+        feed_raw(
+            data,
+            0x101,
+            &[charge[0], charge[1], charge[2], charge[3], 0, 0, 0, 0],
+        );
+    }
+
+    /// On the charger the question turns round. 58.4 V at 20 A is 1168 W in, and
+    /// 60 % of a 1450 Wh pack is 870 Wh missing -- about three quarters of an hour.
+    #[tokio::test(start_paused = true)]
+    async fn a_pack_on_the_charger_counts_up_to_full() {
+        let mut data = DisplayData::default();
+        feed_charging(&mut data, 58.4, 20.0, 40.0);
+
+        let Some(Endurance::ToFull(seconds)) = data.battery_endurance.get().copied() else {
+            panic!("a to-full estimate while the BMS has discharge off");
+        };
+        assert!(
+            (2670..=2695).contains(&seconds),
+            "expected ~2681 s (44:41), got {seconds} s"
+        );
+    }
+
+    /// A full pack still on the charger has nothing left to wait for.
+    #[tokio::test(start_paused = true)]
+    async fn a_full_pack_on_the_charger_reads_zero() {
+        let mut data = DisplayData::default();
+        feed_charging(&mut data, 58.4, 20.0, 100.0);
+        assert_eq!(
+            data.battery_endurance.get().copied(),
+            Some(Endurance::ToFull(0))
+        );
+    }
+
+    /// The direction comes from the BMS, not from which way the current happens to
+    /// be flowing: on a sunny reach the panels can out-produce the motor for a few
+    /// seconds, and a figure that flipped with the clouds would be useless.
+    #[tokio::test(start_paused = true)]
+    async fn solar_out_producing_the_motor_still_counts_down() {
+        let mut data = DisplayData::default();
+        feed_discharge_state(&mut data, 3); // On -- under way.
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
+        // A charge current larger than the draw, as a cloud clearing gives.
+        feed_raw(
+            &mut data,
+            0x101,
+            &[0, 0, 0x80, 0x42, 0x9A, 0x99, 0xF9, 0x41],
+        );
+
+        assert!(
+            matches!(data.battery_endurance.get(), Some(Endurance::ToEmpty(_))),
+            "the pack is discharging, whatever the panels are doing"
+        );
+    }
+
+    /// Silence from the BMS means sailing. A display that has heard no discharge
+    /// state must not decide the boat is on the charger.
+    #[tokio::test(start_paused = true)]
+    async fn no_word_from_the_bms_counts_down() {
+        let mut data = DisplayData::default();
+        assert!(!data.discharge_is_off());
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
+        assert!(matches!(
+            data.battery_endurance.get(),
+            Some(Endurance::ToEmpty(_))
+        ));
+    }
+
+    /// Coming off the charger must not hand the discharge estimate a minute of
+    /// remembered charging, nor the other way about -- the two filters are
+    /// separate, and each one snaps to its first sample after a gap.
+    #[tokio::test(start_paused = true)]
+    async fn the_two_directions_do_not_borrow_each_others_memory() {
+        let mut data = DisplayData::default();
+        feed_charging(&mut data, 58.4, 20.0, 40.0);
+        tokio::time::advance(core::time::Duration::from_secs(1)).await;
+
+        // Cast off: discharge on, motor pulling.
+        feed_discharge_state(&mut data, 3);
+        feed_battery(&mut data, 58.4, -1.4, -31.2, 40.0);
+
+        // 58.4 V x 32.6 A = 1904 W against 40 % of 1450 Wh = 580 Wh: ~1097 s. If
+        // the drain filter had inherited the 1168 W charge figure it would read
+        // nearer 1800.
+        let Some(Endurance::ToEmpty(seconds)) = data.battery_endurance.get().copied() else {
+            panic!("a to-empty estimate under way");
+        };
+        assert!(
+            (1085..=1110).contains(&seconds),
+            "expected ~1097 s, got {seconds} s -- the filters share memory"
+        );
+    }
+
     /// The whole estimate in one reading: 58.4 V across 32.6 A out is 1904 W, and
     /// 87 % of a 1450 Wh pack is 1262 Wh, which is 39 minutes and change.
     #[tokio::test(start_paused = true)]
@@ -1368,11 +1548,9 @@ mod foil_ingest_tests {
         let mut data = DisplayData::default();
         feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
 
-        let seconds = data
-            .battery_time_to_empty
-            .get()
-            .copied()
-            .expect("an estimate from a full snapshot");
+        let Some(Endurance::ToEmpty(seconds)) = data.battery_endurance.get().copied() else {
+            panic!("a to-empty estimate from a full snapshot");
+        };
         assert!(
             (2375..=2395).contains(&seconds),
             "expected ~2385 s (39:45), got {seconds} s"
@@ -1387,17 +1565,17 @@ mod foil_ingest_tests {
     async fn a_throttle_burst_does_not_halve_the_estimate() {
         let mut data = DisplayData::default();
         feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
-        let settled = data.battery_time_to_empty.get().copied().expect("settled");
+        let Some(Endurance::ToEmpty(settled)) = data.battery_endurance.get().copied() else {
+            panic!("settled");
+        };
 
         for _ in 0..5 {
             tokio::time::advance(core::time::Duration::from_secs(1)).await;
             feed_battery(&mut data, 58.4, -1.4, -80.0, 87.0);
         }
-        let burst = data
-            .battery_time_to_empty
-            .get()
-            .copied()
-            .expect("in a burst");
+        let Some(Endurance::ToEmpty(burst)) = data.battery_endurance.get().copied() else {
+            panic!("in a burst");
+        };
 
         assert!(
             burst < settled,
@@ -1416,7 +1594,7 @@ mod foil_ingest_tests {
     async fn a_boat_at_rest_gets_no_estimate() {
         let mut data = DisplayData::default();
         feed_battery(&mut data, 58.4, -0.05, 0.0, 87.0);
-        assert_eq!(data.battery_time_to_empty.get(), None);
+        assert_eq!(data.battery_endurance.get(), None);
     }
 
     /// A frame arriving before the readings it needs must not publish half an
@@ -1425,7 +1603,7 @@ mod foil_ingest_tests {
     async fn a_draw_with_no_voltage_yet_estimates_nothing() {
         let mut data = DisplayData::default();
         feed_raw(&mut data, 0x101, &[0, 0, 0, 0, 0, 0, 0xFA, 0x41]); // 31.2 A out
-        assert_eq!(data.battery_time_to_empty.get(), None);
+        assert_eq!(data.battery_endurance.get(), None);
     }
 
     /// The estimate is telemetry, not configuration: a bus that goes quiet leaves
@@ -1434,10 +1612,10 @@ mod foil_ingest_tests {
     async fn the_estimate_ages_out_with_the_bus() {
         let mut data = DisplayData::default();
         feed_battery(&mut data, 58.4, -1.4, -31.2, 87.0);
-        assert!(data.battery_time_to_empty.get().is_some());
+        assert!(data.battery_endurance.get().is_some());
 
         tokio::time::advance(core::time::Duration::from_secs(6)).await;
-        assert_eq!(data.battery_time_to_empty.get(), None);
+        assert_eq!(data.battery_endurance.get(), None);
     }
 
     /// Index 16 is `PTCH_RATE_P`, which the screen draws at Pitch row 1.
