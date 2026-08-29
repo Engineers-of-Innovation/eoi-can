@@ -109,7 +109,7 @@ APP_IMAGE=""
 if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     BIN=$(basename "$ELF")
     case "$BIN" in
-    rudder-controller | height-sensor-controller) ;;
+    rudder-controller | height-sensor-controller | dashboard | foiling) ;;
     *)
         echo "flash-jlink.sh: '$BIN' is linked at $APP_BASE but has no matching" >&2
         echo "  bootloader variant; set FLASH_BOOTLOADER=0 to flash it alone" >&2
@@ -130,9 +130,19 @@ if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     FLASH_TOOL="$REPO_ROOT/flash-tool/target/x86_64-unknown-linux-gnu/release/eoi-flash-tool"
     if [ ! -x "$FLASH_TOOL" ]; then
         echo "flash-jlink.sh: building the flash tool (generates the app header)"
-        cargo build --release --manifest-path "$REPO_ROOT/flash-tool/Cargo.toml"
+        # From inside its own directory, not via --manifest-path: cargo reads
+        # .cargo/config.toml from the working directory, so a --manifest-path
+        # build from the firmware workspace inherits `target =
+        # thumbv7em-none-eabihf` and tries to compile a host binary — clap and
+        # all — for the MCU. flash-tool/.cargo/config.toml sets the host target,
+        # and only a build run from there picks it up.
+        (cd "$REPO_ROOT/flash-tool" && cargo build --release)
     fi
-    APP_IMAGE="${ELF}.img"
+    # `.bin`, not `.img`: J-Link Commander picks a file format from the extension
+    # even under `loadbin`, and answers an unrecognised one with "File is of
+    # unknown / unsupported format" — after having already flashed the
+    # bootloader, which leaves a board with no app on it.
+    APP_IMAGE="${ELF}.bin"
     "$FLASH_TOOL" image "$ELF" --output "$APP_IMAGE"
 fi
 

@@ -28,15 +28,21 @@ struct Cli {
 
 /// The boards on the bus. Names match the firmware binary names.
 ///
-/// Deliberately no `FoilTuning`: no bootloader is deployed on that board yet, so
-/// nothing answers on its address and offering it as a `--board` would only buy a
-/// timeout. Its [`AppType`] still exists, and `board_name` still renders it, so
-/// `scan` and `flash <elf>` report it correctly once one is.
+/// `Foiling` was left out while that board had no bootloader and was thought to be
+/// unreachable. It has one as of 2026-08-29, so every command works on it.
+///
+/// Worth knowing when diagnosing the next board: a `scan` row is not evidence of a
+/// bootloader. `AppRunning` can only come from an application, and every app binary
+/// answers `GetState` and `GetVersion` on its own command ID through
+/// `eoi_boot_api::protocol::handle_bootloader_command` whether or not one is
+/// underneath it. What distinguishes the two is a bootloader state (0..=2) after a
+/// `reboot`, or the header magic at 0x08014000 read over SWD.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 enum Board {
     RudderController,
     HeightSensorController,
     Dashboard,
+    Foiling,
 }
 
 impl From<Board> for AppType {
@@ -45,6 +51,7 @@ impl From<Board> for AppType {
             Board::RudderController => AppType::RudderController,
             Board::HeightSensorController => AppType::HeightSensorController,
             Board::Dashboard => AppType::Dashboard,
+            Board::Foiling => AppType::FoilTuning,
         }
     }
 }

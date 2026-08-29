@@ -21,9 +21,10 @@ pub enum AppType {
     /// two boards sharing one type could not be addressed independently — a
     /// `REBOOT` or a flash aimed at either would hit both.
     ///
-    /// No bootloader is deployed on this board yet, so it is flashed over SWD and
-    /// nothing answers on this address in the field. The type exists so that
-    /// stays a deployment decision rather than a firmware change.
+    /// A bootloader was deployed here on 2026-08-29 -- `firmware/boot`'s `foiling`
+    /// feature -- so this address answers in the field like any other board's. It
+    /// was SWD-only before that, which is what the type existing separately kept
+    /// as a deployment decision rather than a firmware change.
     FoilTuning = 0x04,
 }
 
