@@ -215,12 +215,18 @@ never exactly zero (due north arrives as 359.87 or 0.14), so a consumer should
 read an exact zero as "no course" rather than as due north; the display does.
 Worth fixing at the sender, which this repo does not own.
 
-**GnssDateTime is UTC**, as the receiver reports it, and it stays that way on the
-bus so a log is not tied to the zone the boat happened to be sailing in. A
-consumer that shows the time to a person converts it: the display does this in
-`cet_offset_hours`, deriving the Central European offset from the date in the same
-frame, so it follows the EU summer-time switch instead of drifting an hour every
-autumn.
+**GnssDateTime looks like local time, not UTC.** Observed 2026-08-30: the panel
+ran two hours fast with a CEST offset applied on top of the frame, so whatever
+sends `0x204` is applying the zone before it reaches the bus. The display
+therefore adds nothing -- `CLOCK_OFFSET_HOURS` in `draw-display` is zero, and is
+the single place to change if the boat sails in another zone or the sender
+switches to UTC.
+
+This is inferred from the panel rather than confirmed on the wire, and it is worth
+confirming, because the two readings are indistinguishable for half the year: a
+sender emitting UTC+2 the year round agrees with local time all summer and is an
+hour out all winter. `candump -n 1 can0,204:7FF` beside `date` on the datalogger
+settles it.
 
 ## Data Logger
 

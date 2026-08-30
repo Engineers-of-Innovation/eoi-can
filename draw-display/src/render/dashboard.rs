@@ -745,7 +745,12 @@ where
     let time = data
         .time
         .get()
-        .map(|t| ((t.hours + cet_offset_hours(t)) % 24, t.minutes, t.seconds));
+        // Widened before the shift so a negative offset cannot wrap the hour
+        // underneath itself, and `rem_euclid` so it lands back on 0..24 either way.
+        .map(|t| {
+            let hours = (i16::from(t.hours) + i16::from(CLOCK_OFFSET_HOURS)).rem_euclid(24);
+            (hours as u8, t.minutes, t.seconds)
+        });
 
     draw_time(
         display,
@@ -801,17 +806,16 @@ where
 
 /// The bottom-right block: how long the pack has, and which way it is going.
 ///
-/// The label follows the figure whenever there is one, so the word and the number
-/// are always the pair `update_endurance` worked out together. With no figure it
-/// falls back to the discharge state, so a boat on the charger reads "Time to
-/// Full" over dashes rather than being told it is emptying.
+/// The label rides with the figure rather than being worked out again here, so the
+/// word and the number are always the pair `update_endurance` decided together --
+/// they cannot end up contradicting each other. With no figure at all there is no
+/// direction to report either, and the block reads as it does under way.
 fn endurance_block(data: &DisplayData) -> (Option<(u8, u8, u8)>, [&'static str; 2]) {
     match data.battery_endurance.get() {
         Some(Endurance::ToEmpty(seconds)) => {
             (Some(hms_from_seconds(*seconds)), TIME_TO_EMPTY_LABEL)
         }
         Some(Endurance::ToFull(seconds)) => (Some(hms_from_seconds(*seconds)), TIME_TO_FULL_LABEL),
-        None if data.discharge_is_off() => (None, TIME_TO_FULL_LABEL),
         None => (None, TIME_TO_EMPTY_LABEL),
     }
 }
@@ -1038,16 +1042,6 @@ mod tests {
             endurance_block(&data),
             (Some((0, 44, 41)), TIME_TO_FULL_LABEL)
         );
-    }
-
-    /// On the charger with no figure worked out yet, the word still has to be
-    /// right: "Time to Empty" over dashes would be telling the helm the opposite
-    /// of what the pack is doing.
-    #[test]
-    fn a_charging_pack_with_no_estimate_still_reads_the_right_way() {
-        let mut data = DisplayData::default();
-        data.battery_discharge_state.update(DischargeState::Idle);
-        assert_eq!(endurance_block(&data), (None, TIME_TO_FULL_LABEL));
     }
 
     #[test]

@@ -110,8 +110,8 @@ fn populated() -> draw_display::DisplayData {
     for (index, temperature) in data.battery_temperatures.iter_mut().enumerate() {
         temperature.update(30 + index as i8);
     }
-    // UTC, as it arrives on `0x204`: an August date, so the clock draws 14:32:11
-    // and the summer-time offset is part of what this render pins.
+    // The time as it arrives on `0x204`, which is local already -- the clock draws
+    // it unshifted, and `CLOCK_OFFSET_HOURS` being zero is part of what this pins.
     data.time.update(draw_display::GnssDateTime {
         year: 2026,
         month: 8,
@@ -221,8 +221,8 @@ fn dashboard_renders_are_unchanged() {
         "dashboard/populated",
         draw_display::draw_display,
         &populated(),
-        0x1408_e4c7_76c0_0ca8,
-        28997,
+        0x0538_ecf6_88e4_a534,
+        28995,
     );
 }
 
