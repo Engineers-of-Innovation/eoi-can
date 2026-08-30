@@ -60,8 +60,10 @@ const MAX_ENDURANCE_S: u32 = 99 * 3600 + 59 * 60 + 59;
 ///
 /// Far shorter than the endurance's: this is smoothing GNSS jitter, not a
 /// throttle, and it has to follow a real turn within a few seconds or the number
-/// is lying about where the boat is pointing.
-const HEADING_FILTER_TAU_S: f32 = 5.0;
+/// is lying about where the boat is pointing. Two seconds takes the frame-to-frame
+/// twitch off the last digit while closing a 90 degree turn to within four degrees
+/// in eight seconds -- about as little smoothing as is worth having.
+const HEADING_FILTER_TAU_S: f32 = 2.0;
 
 /// Below this the course over ground is noise. The receiver derives a direction
 /// from a position that is barely moving, so it swings tens of degrees between
@@ -1516,28 +1518,32 @@ mod foil_ingest_tests {
         feed_heading(&mut data, 12.0, 90.0);
         assert_eq!(data.heading_deg.get().copied(), Some(90.0), "first sample");
 
-        // Hard turn to 180, held. One time constant should carry most of it.
-        for _ in 0..5 {
+        // Hard turn to 180, held. Two seconds -- one time constant -- carries most
+        // of it.
+        for _ in 0..2 {
             tokio::time::advance(core::time::Duration::from_secs(1)).await;
             feed_heading(&mut data, 12.0, 180.0);
         }
         let after_tau = data.heading_deg.get().copied().expect("a heading");
         assert!(
             after_tau > 135.0,
-            "five seconds -- one time constant -- into a 90 deg turn the reading \
+            "two seconds -- one time constant -- into a 90 deg turn the reading \
              has only reached {after_tau}"
         );
 
-        // Three time constants and it is there for reading purposes: the panel
-        // draws whole degrees, and this is inside seven of them.
-        for _ in 0..10 {
+        // Eight seconds and it is there for reading purposes, within four degrees
+        // of the course being steered. Frames arrive about once a second, so the
+        // filter takes its steps in whole seconds and closes a touch slower than
+        // the textbook exponential: a tenth of the turn is still outstanding at
+        // three time constants, not the twentieth the continuous form gives.
+        for _ in 0..6 {
             tokio::time::advance(core::time::Duration::from_secs(1)).await;
             feed_heading(&mut data, 12.0, 180.0);
         }
         let settled = data.heading_deg.get().copied().expect("a heading");
         assert!(
-            settled > 173.0,
-            "fifteen seconds after the turn the reading is still {settled}"
+            settled > 176.0,
+            "eight seconds after the turn the reading is still {settled}"
         );
 
         // And it never overshoots past the course being steered.
