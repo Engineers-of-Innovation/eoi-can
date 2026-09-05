@@ -46,7 +46,7 @@ You do **not** need to be a Rust expert to get started! This guide will help you
   - Just runs on your computer, you only need to connect a CAN bus
 - `eoi-can-to-mqtt/` — Bridge for sending CAN data to MQTT
   - Collects CAN messages and decodes and sends it over to our MQTT broker
-- `eoi-telemetry-bridge/` — gRPC bridge for the web telemetry dashboard
+- `eoi-can-to-grpc/` — gRPC bridge for the web telemetry dashboard
   - Decodes CAN via `eoi-can-decoder`, serves the current state over gRPC-Web locally, and optionally pushes it to a cloud relay; see the [eoi-grpc-telemetry](https://github.com/Engineers-of-Innovation/eoi-grpc-telemetry) repo for the relay and dashboard it feeds, and that repo's `telemetry-implementation-plan.md` for the full design
 - `eoi-candump-to-csv/` — Convert a candump `.log` capture into a CSV
   - Decodes frames through `eoi-can-decoder` and samples either per-frame

@@ -31,7 +31,7 @@ pub mod pb {
 }
 
 #[derive(Parser, Debug)]
-#[command(name = "eoi-telemetry-bridge")]
+#[command(name = "eoi-can-to-grpc")]
 struct Args {
     /// A candump log (standard `(t) iface ID#data` format); a SocketCAN interface
     /// name (e.g. `can0`, `vcan0`, Linux only) to read live frames; or `tcp:<host:port>`
@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "eoi_telemetry_bridge=info".into()),
+                .unwrap_or_else(|_| "eoi_can_to_grpc=info".into()),
         )
         .init();
 

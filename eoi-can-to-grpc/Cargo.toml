@@ -1,10 +1,10 @@
 [package]
-name = "eoi-telemetry-bridge"
+name = "eoi-can-to-grpc"
 version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "eoi-telemetry-bridge"
+name = "eoi-can-to-grpc"
 path = "src/main.rs"
 
 [dependencies]
