@@ -1,0 +1,190 @@
+// Duplicated from the eoi-grpc-telemetry repo (proto/eoi/telemetry/v1/telemetry.proto),
+// which still owns the relay and dashboard that also implement this contract. Keep the
+// two copies in sync by hand until they share one home.
+syntax = "proto3";
+
+package eoi.telemetry.v1;
+
+import "google/protobuf/timestamp.proto";
+
+// Implemented by both the local bridge and the cloud relay. ListSessions/Replay are
+// relay-only: the bridge has no archive, so it returns UNIMPLEMENTED for both.
+service Telemetry {
+  rpc StreamState(StreamStateRequest) returns (stream Snapshot);
+  rpc GetSnapshot(GetSnapshotRequest) returns (Snapshot);
+  rpc ListSessions(ListSessionsRequest) returns (ListSessionsResponse);
+  rpc Replay(ReplayRequest) returns (stream Snapshot);
+}
+
+// Implemented by the relay only. The bridge dials this outbound to push its state.
+service TelemetryIngest {
+  rpc Push(stream Snapshot) returns (PushAck);
+}
+
+message PushAck {}
+
+message StreamStateRequest {
+  uint32 hz = 1; // 1..25, clamped server-side
+  repeated string groups = 2; // empty = everything
+}
+
+message GetSnapshotRequest {}
+
+message ListSessionsRequest {}
+
+message ListSessionsResponse {
+  repeated SessionInfo sessions = 1;
+}
+
+message SessionInfo {
+  string id = 1;
+  uint64 started_at_ms = 2;
+  uint64 ended_at_ms = 3; // 0 = still in progress
+  uint64 frame_count = 4;
+}
+
+message ReplayRequest {
+  string session_id = 1;
+  float speed = 2; // playback speed multiplier, 0 or unset = 1x
+}
+
+message Snapshot {
+  uint64 seq = 1;
+  google.protobuf.Timestamp t = 2;
+  uint64 boat_uptime_ms = 3;
+  string session_id = 4;
+  Power power = 10;
+  Battery battery = 11;
+  Gnss gnss = 12;
+  Motor motor = 13;
+  Rudder rudder = 14;
+  Throttle throttle = 15;
+  repeated Mppt mppt = 16;
+  repeated HeightSensor height = 17;
+  Temperature hottest_mppt = 18;
+  Temperature hottest_battery = 19;
+  Warnings warnings = 20;
+  BusHealth bus = 21;
+}
+
+// Absent optional field == stale or never seen. Render as dashes.
+message Power {
+  optional float net_w = 1; // positive = charging
+  optional float in_w = 2;
+  optional float out_w = 3;
+  optional float pack_v = 4;
+}
+
+message Battery {
+  optional float soc_pct = 1;
+  optional float pack_v = 2;
+  optional float stack_v = 3;
+  optional float pack_a = 4;
+  optional float peri_a = 5;
+  optional float charge_a = 6;
+  optional float discharge_a = 7;
+  repeated float cell_v = 8; // 14 cells, empty if any group is stale
+  repeated Temperature temps = 9; // 4 thermistors + IC
+  optional uint32 state = 10;
+  optional uint32 charge_state = 11;
+  optional uint32 discharge_state = 12;
+  uint32 error_flags = 13;
+  uint32 balancing_flags = 14;
+}
+
+message Temperature {
+  string label = 1;
+  optional float celsius = 2;
+  Quality quality = 3;
+}
+
+enum Quality {
+  QUALITY_OK = 0;
+  QUALITY_CLAMPED = 1;
+  QUALITY_SETTLING = 2;
+  QUALITY_ABSENT = 3;
+}
+
+message Gnss {
+  optional double lat = 1;
+  optional double lon = 2;
+  optional float speed_kmh = 3;
+  optional float heading_deg = 4;
+  optional uint32 fix = 5;
+  optional uint32 sats = 6;
+  optional uint32 sats_used = 7;
+}
+
+message Motor {
+  optional float rpm = 1;
+  optional float current_a = 2;
+  optional float duty_pct = 3;
+  optional int32 tacho = 4;
+  optional float fet_celsius = 5;
+  optional float motor_celsius = 6; // MotorNtc 0x219 only
+  Quality motor_temp_quality = 7;
+  optional float ah_used = 8;
+  optional float ah_gen = 9;
+  optional float wh_used = 10;
+  optional float wh_gen = 11;
+  optional float input_v = 12;
+}
+
+message Rudder {
+  optional uint32 setpoint = 1;
+  optional uint32 actual = 2;
+  optional float steering_deg = 3;
+  optional uint32 state = 4;
+  optional uint32 fault = 5;
+  optional float controller_celsius = 6;
+  optional float height_controller_celsius = 7;
+  optional float flow_in_ml_min = 8;
+  optional float flow_out_ml_min = 9;
+}
+
+message Throttle {
+  optional float duty_pct = 1;
+  optional float current_a = 2;
+  optional float rpm = 3;
+  optional float current_rel_pct = 4;
+  optional float position_pct = 5;
+  uint32 error_flags = 6;
+}
+
+message Mppt {
+  string label = 1;
+  uint32 id = 2;
+  bool gan = 3;
+  optional float vin = 4;
+  optional float iin = 5;
+  optional float vout = 6;
+  optional float iout = 7;
+  optional float celsius = 8;
+  optional uint32 state = 9;
+  uint32 flags = 10;
+}
+
+message HeightSensor {
+  string label = 1;
+  optional uint32 state = 2;
+  optional float height = 3;
+}
+
+message Warnings {
+  bool battery_state = 1;
+  bool charge_fet = 2;
+  bool discharge_fet = 3;
+  bool soc_low = 4;
+  bool motor_hot = 5;
+  bool fet_hot = 6;
+  bool mppt_hot = 7;
+  bool battery_hot = 8;
+  bool throttle = 9;
+}
+
+message BusHealth {
+  float frames_per_sec = 1;
+  uint64 frames_total = 2;
+  uint64 frames_unknown = 3;
+  uint64 decode_errors = 4;
+}
