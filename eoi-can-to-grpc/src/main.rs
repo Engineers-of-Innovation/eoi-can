@@ -56,6 +56,12 @@ struct Args {
     /// `TelemetryIngest`. Omit to run local-only.
     #[arg(long)]
     relay: Option<String>,
+
+    /// Bearer token to present to the relay's ingest port (sent as
+    /// `authorization: Bearer <token>`). Must match the relay's `--ingest-token`;
+    /// omit if the relay isn't configured to require one.
+    #[arg(long, env = "RELAY_TOKEN", hide_env_values = true)]
+    relay_token: Option<String>,
 }
 
 #[tokio::main]
@@ -125,8 +131,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(relay_addr) = args.relay.clone() {
         let ingest_svc = svc.clone();
         let period = std::time::Duration::from_secs_f32(1.0 / args.hz.clamp(1, 25) as f32);
+        let relay_token = args.relay_token.clone();
         tokio::spawn(async move {
-            ingest_client::push_loop(relay_addr, ingest_svc, period).await;
+            ingest_client::push_loop(relay_addr, relay_token, ingest_svc, period).await;
         });
     }
 

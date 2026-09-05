@@ -6,6 +6,8 @@ use parking_lot::Mutex;
 use rand::Rng;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
+use tonic::metadata::MetadataValue;
+use tonic::Request;
 
 use crate::pb::eoi::telemetry::v1::telemetry_ingest_client::TelemetryIngestClient;
 use crate::pb::eoi::telemetry::v1::Snapshot;
@@ -25,7 +27,12 @@ const MAX_BACKOFF: Duration = Duration::from_secs(30);
 /// dropped first) so a brief reconnect doesn't leave a gap in the relay's feed.
 /// Reconnects with exponential backoff and jitter so a flapping link doesn't hammer
 /// the relay.
-pub async fn push_loop(addr: String, svc: TelemetrySvc, period: Duration) {
+///
+/// `token`, if set, is sent as `authorization: Bearer <token>` on the push stream —
+/// the same shape as `eoi-can-to-mqtt`'s username/password, minus the transport
+/// encryption that gives that scheme its teeth, so this alone doesn't stop
+/// eavesdropping, only unauthenticated pushes.
+pub async fn push_loop(addr: String, token: Option<String>, svc: TelemetrySvc, period: Duration) {
     let buffer: Arc<Mutex<VecDeque<Snapshot>>> = Arc::new(Mutex::new(VecDeque::new()));
 
     let sample_buffer = buffer.clone();
@@ -62,7 +69,16 @@ pub async fn push_loop(addr: String, svc: TelemetrySvc, period: Duration) {
                         }
                     }
                 });
-                if let Err(e) = client.push(ReceiverStream::new(rx)).await {
+                let mut request = Request::new(ReceiverStream::new(rx));
+                if let Some(token) = &token {
+                    match MetadataValue::try_from(format!("Bearer {token}")) {
+                        Ok(value) => {
+                            request.metadata_mut().insert("authorization", value);
+                        }
+                        Err(e) => tracing::warn!(error = %e, "relay token is not a valid header value; sending unauthenticated"),
+                    }
+                }
+                if let Err(e) = client.push(request).await {
                     tracing::warn!(addr, error = %e, "ingest stream ended");
                 }
                 sender.abort();
