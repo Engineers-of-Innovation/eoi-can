@@ -75,7 +75,9 @@ pub async fn push_loop(addr: String, token: Option<String>, svc: TelemetrySvc, p
                         Ok(value) => {
                             request.metadata_mut().insert("authorization", value);
                         }
-                        Err(e) => tracing::warn!(error = %e, "relay token is not a valid header value; sending unauthenticated"),
+                        Err(e) => {
+                            tracing::warn!(error = %e, "relay token is not a valid header value; sending unauthenticated")
+                        }
                     }
                 }
                 if let Err(e) = client.push(request).await {

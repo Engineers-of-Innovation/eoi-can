@@ -38,6 +38,7 @@
 use std::collections::BTreeMap;
 use std::time::{Duration, Instant};
 
+use embedded_can::{ExtendedId, Id, StandardId};
 use eoi_can_decoder::can_frame::CanFrame;
 use eoi_can_decoder::{
     parse_eoi_can_data, BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData,
@@ -45,7 +46,6 @@ use eoi_can_decoder::{
     MpptChannel, MpptInfo, RudderControllerData, ServoData, ServoFaultCause, ServoState,
     TemperatureData, ThrottleData, ThrottleErrors, ThrottleTwiErrors, VescData,
 };
-use embedded_can::{ExtendedId, Id, StandardId};
 
 pub const STALE_AFTER: Duration = Duration::from_secs(5);
 
@@ -199,15 +199,30 @@ impl LiveState {
     fn apply_battery(&mut self, b: EoiBattery, now: Instant) {
         match b {
             EoiBattery::PackAndPerriCurrent(p) => {
-                self.pack_a = Some(Timed { value: p.pack_current, at: now });
-                self.peri_a = Some(Timed { value: p.perri_current, at: now });
+                self.pack_a = Some(Timed {
+                    value: p.pack_current,
+                    at: now,
+                });
+                self.peri_a = Some(Timed {
+                    value: p.perri_current,
+                    at: now,
+                });
             }
             EoiBattery::ChargeAndDischargeCurrent(c) => {
-                self.charge_a = Some(Timed { value: c.charge_current, at: now });
-                self.discharge_a = Some(Timed { value: c.discharge_current, at: now });
+                self.charge_a = Some(Timed {
+                    value: c.charge_current,
+                    at: now,
+                });
+                self.discharge_a = Some(Timed {
+                    value: c.discharge_current,
+                    at: now,
+                });
             }
             EoiBattery::SocErrorFlagsAndBalancing(s) => {
-                self.soc_pct = Some(Timed { value: s.state_of_charge, at: now });
+                self.soc_pct = Some(Timed {
+                    value: s.state_of_charge,
+                    at: now,
+                });
                 self.error_flags = s.error_flags;
                 self.balancing_flags = s.balancing_status as u32;
             }
@@ -215,24 +230,53 @@ impl LiveState {
             EoiBattery::CellVoltages5_8(c) => self.apply_cell_group(1, &c.cell_voltage, now),
             EoiBattery::CellVoltages9_12(c) => self.apply_cell_group(2, &c.cell_voltage, now),
             EoiBattery::CellVoltages13_14PackAndStack(c) => {
-                self.cells[12] = Some(Timed { value: c.cell_voltage[0], at: now });
-                self.cells[13] = Some(Timed { value: c.cell_voltage[1], at: now });
+                self.cells[12] = Some(Timed {
+                    value: c.cell_voltage[0],
+                    at: now,
+                });
+                self.cells[13] = Some(Timed {
+                    value: c.cell_voltage[1],
+                    at: now,
+                });
                 self.cell_group_at[3] = Some(now);
-                self.pack_v = Some(Timed { value: c.pack_voltage, at: now });
-                self.stack_v = Some(Timed { value: c.stack_voltage, at: now });
+                self.pack_v = Some(Timed {
+                    value: c.pack_voltage,
+                    at: now,
+                });
+                self.stack_v = Some(Timed {
+                    value: c.stack_voltage,
+                    at: now,
+                });
             }
             EoiBattery::TemperaturesAndStates(t) => {
                 for (i, temp) in t.temperatures.iter().enumerate() {
-                    self.thermistors[i] = Some(Timed { value: *temp, at: now });
+                    self.thermistors[i] = Some(Timed {
+                        value: *temp,
+                        at: now,
+                    });
                 }
-                self.ic_temp = Some(Timed { value: t.ic_temperature, at: now });
-                self.batt_state = Some(Timed { value: battery_state_num(&t.battery_state), at: now });
-                self.charge_state = Some(Timed { value: charge_state_num(&t.charge_state), at: now });
-                self.discharge_state =
-                    Some(Timed { value: discharge_state_num(&t.discharge_state), at: now });
+                self.ic_temp = Some(Timed {
+                    value: t.ic_temperature,
+                    at: now,
+                });
+                self.batt_state = Some(Timed {
+                    value: battery_state_num(&t.battery_state),
+                    at: now,
+                });
+                self.charge_state = Some(Timed {
+                    value: charge_state_num(&t.charge_state),
+                    at: now,
+                });
+                self.discharge_state = Some(Timed {
+                    value: discharge_state_num(&t.discharge_state),
+                    at: now,
+                });
             }
             EoiBattery::BatteryUptime(u) => {
-                self.uptime_ms = Some(Timed { value: u.uptime_ms, at: now });
+                self.uptime_ms = Some(Timed {
+                    value: u.uptime_ms,
+                    at: now,
+                });
             }
         }
     }
@@ -247,27 +291,75 @@ impl LiveState {
 
     fn apply_vesc(&mut self, v: VescData, now: Instant) {
         match v {
-            VescData::StatusMessage1 { rpm, total_current, duty_cycle } => {
-                self.rpm = Some(Timed { value: rpm as f32, at: now });
-                self.motor_current_a = Some(Timed { value: total_current, at: now });
-                self.motor_duty = Some(Timed { value: duty_cycle, at: now });
+            VescData::StatusMessage1 {
+                rpm,
+                total_current,
+                duty_cycle,
+            } => {
+                self.rpm = Some(Timed {
+                    value: rpm as f32,
+                    at: now,
+                });
+                self.motor_current_a = Some(Timed {
+                    value: total_current,
+                    at: now,
+                });
+                self.motor_duty = Some(Timed {
+                    value: duty_cycle,
+                    at: now,
+                });
             }
-            VescData::StatusMessage2 { amp_hours_used, amp_hours_generated } => {
-                self.ah_used = Some(Timed { value: amp_hours_used, at: now });
-                self.ah_gen = Some(Timed { value: amp_hours_generated, at: now });
+            VescData::StatusMessage2 {
+                amp_hours_used,
+                amp_hours_generated,
+            } => {
+                self.ah_used = Some(Timed {
+                    value: amp_hours_used,
+                    at: now,
+                });
+                self.ah_gen = Some(Timed {
+                    value: amp_hours_generated,
+                    at: now,
+                });
             }
-            VescData::StatusMessage3 { watt_hours_used, watt_hours_generated } => {
-                self.wh_used = Some(Timed { value: watt_hours_used, at: now });
-                self.wh_gen = Some(Timed { value: watt_hours_generated, at: now });
+            VescData::StatusMessage3 {
+                watt_hours_used,
+                watt_hours_generated,
+            } => {
+                self.wh_used = Some(Timed {
+                    value: watt_hours_used,
+                    at: now,
+                });
+                self.wh_gen = Some(Timed {
+                    value: watt_hours_generated,
+                    at: now,
+                });
             }
-            VescData::StatusMessage4 { fet_temp, motor_temp: _, total_input_current: _, current_pid_position: _ } => {
+            VescData::StatusMessage4 {
+                fet_temp,
+                motor_temp: _,
+                total_input_current: _,
+                current_pid_position: _,
+            } => {
                 // motor_temp is deliberately never read — broken on this boat; motor
                 // temperature comes only from TemperatureData::MotorNtc (0x219).
-                self.fet_celsius = Some(Timed { value: fet_temp, at: now });
+                self.fet_celsius = Some(Timed {
+                    value: fet_temp,
+                    at: now,
+                });
             }
-            VescData::StatusMessage5 { input_voltage, tachometer } => {
-                self.tacho = Some(Timed { value: tachometer, at: now });
-                self.input_v = Some(Timed { value: input_voltage, at: now });
+            VescData::StatusMessage5 {
+                input_voltage,
+                tachometer,
+            } => {
+                self.tacho = Some(Timed {
+                    value: tachometer,
+                    at: now,
+                });
+                self.input_v = Some(Timed {
+                    value: input_voltage,
+                    at: now,
+                });
             }
         }
     }
@@ -287,7 +379,10 @@ impl LiveState {
                 self.throttle_rel = Some(Timed { value: v, at: now });
             }
             ThrottleData::Status(s) => {
-                self.throttle_pos = Some(Timed { value: s.value, at: now });
+                self.throttle_pos = Some(Timed {
+                    value: s.value,
+                    at: now,
+                });
                 self.throttle_errors = throttle_error_bits(&s.error);
                 self.throttle_err_at = Some(now);
             }
@@ -299,16 +394,41 @@ impl LiveState {
     fn apply_gnss(&mut self, g: GnssData, now: Instant) {
         match g {
             GnssData::GnssStatus(s) => {
-                self.gnss_fix = Some(Timed { value: s.fix as u32, at: now });
-                self.gnss_sats = Some(Timed { value: s.sats as u32, at: now });
-                self.gnss_sats_used = Some(Timed { value: s.sats_used as u32, at: now });
+                self.gnss_fix = Some(Timed {
+                    value: s.fix as u32,
+                    at: now,
+                });
+                self.gnss_sats = Some(Timed {
+                    value: s.sats as u32,
+                    at: now,
+                });
+                self.gnss_sats_used = Some(Timed {
+                    value: s.sats_used as u32,
+                    at: now,
+                });
             }
             GnssData::GnssSpeedAndHeading(speed_kmh, heading_deg) => {
-                self.speed_kmh = Some(Timed { value: speed_kmh, at: now });
-                self.heading_deg = Some(Timed { value: heading_deg, at: now });
+                self.speed_kmh = Some(Timed {
+                    value: speed_kmh,
+                    at: now,
+                });
+                self.heading_deg = Some(Timed {
+                    value: heading_deg,
+                    at: now,
+                });
             }
-            GnssData::GnssLatitude(lat) => self.lat = Some(Timed { value: lat, at: now }),
-            GnssData::GnssLongitude(lon) => self.lon = Some(Timed { value: lon, at: now }),
+            GnssData::GnssLatitude(lat) => {
+                self.lat = Some(Timed {
+                    value: lat,
+                    at: now,
+                })
+            }
+            GnssData::GnssLongitude(lon) => {
+                self.lon = Some(Timed {
+                    value: lon,
+                    at: now,
+                })
+            }
             // Not part of the Snapshot; the bridge doesn't need the boat's own clock.
             GnssData::GnssDateTime(_) => {}
         }
@@ -317,26 +437,49 @@ impl LiveState {
     fn apply_rudder(&mut self, r: RudderControllerData, now: Instant) {
         match r {
             RudderControllerData::Servo(ServoData::Setpoint(sp)) => {
-                self.rudder_setpoint = Some(Timed { value: sp as u32, at: now });
+                self.rudder_setpoint = Some(Timed {
+                    value: sp as u32,
+                    at: now,
+                });
             }
             RudderControllerData::Servo(ServoData::Status(s)) => {
-                self.rudder_state = Some(Timed { value: servo_state_num(&s.state), at: now });
-                self.rudder_setpoint = Some(Timed { value: s.setpoint as u32, at: now });
-                self.rudder_actual = Some(Timed { value: s.actual_position as u32, at: now });
-                self.rudder_fault =
-                    Some(Timed { value: servo_fault_num(&s.fault_cause), at: now });
+                self.rudder_state = Some(Timed {
+                    value: servo_state_num(&s.state),
+                    at: now,
+                });
+                self.rudder_setpoint = Some(Timed {
+                    value: s.setpoint as u32,
+                    at: now,
+                });
+                self.rudder_actual = Some(Timed {
+                    value: s.actual_position as u32,
+                    at: now,
+                });
+                self.rudder_fault = Some(Timed {
+                    value: servo_fault_num(&s.fault_cause),
+                    at: now,
+                });
             }
             // Not decoded by the old bridge either; no Snapshot field for it yet.
             RudderControllerData::Servo(ServoData::Command(_)) => {}
             RudderControllerData::CoolingPumpStatus(_) => {}
             RudderControllerData::SteeringAngle(s) => {
-                self.steering_deg = Some(Timed { value: s.angle as f32, at: now });
+                self.steering_deg = Some(Timed {
+                    value: s.angle as f32,
+                    at: now,
+                });
             }
             RudderControllerData::FlowSensorIn(f) => {
-                self.flow_in = Some(Timed { value: f.flow_rate as f32, at: now });
+                self.flow_in = Some(Timed {
+                    value: f.flow_rate as f32,
+                    at: now,
+                });
             }
             RudderControllerData::FlowSensorOut(f) => {
-                self.flow_out = Some(Timed { value: f.flow_rate as f32, at: now });
+                self.flow_out = Some(Timed {
+                    value: f.flow_rate as f32,
+                    at: now,
+                });
             }
             // Retired (0x217): kept decodable upstream only so archived logs replay.
             // Never routed into a live field — see the module doc comment.
@@ -405,14 +548,19 @@ impl LiveState {
             .iter()
             .all(|g| g.is_some_and(|at| now.saturating_duration_since(at) <= STALE_AFTER));
         let cell_v = if cells_all_fresh {
-            self.cells.iter().filter_map(|c| c.and_then(|t| t.fresh(now))).collect()
+            self.cells
+                .iter()
+                .filter_map(|c| c.and_then(|t| t.fresh(now)))
+                .collect()
         } else {
             Vec::new()
         };
 
         let batt_temps: Vec<(String, Option<f32>, Quality)> = (0..4)
             .map(|i| {
-                let c = self.thermistors[i].and_then(|t| t.fresh(now)).map(|v| v as f32);
+                let c = self.thermistors[i]
+                    .and_then(|t| t.fresh(now))
+                    .map(|v| v as f32);
                 (format!("Cell block {}", i + 1), c, Quality::Ok)
             })
             .chain(std::iter::once({
@@ -490,7 +638,11 @@ impl LiveState {
             tacho: self.tacho.and_then(|t| t.fresh(now)),
             fet_celsius: fet_c,
             motor_celsius: motor_c,
-            motor_temp_quality: if motor_c.is_some() { self.motor_quality } else { Quality::Absent },
+            motor_temp_quality: if motor_c.is_some() {
+                self.motor_quality
+            } else {
+                Quality::Absent
+            },
             ah_used: self.ah_used.and_then(|t| t.fresh(now)),
             ah_gen: self.ah_gen.and_then(|t| t.fresh(now)),
             wh_used: self.wh_used.and_then(|t| t.fresh(now)),
@@ -510,7 +662,11 @@ impl LiveState {
             throttle_rpm: self.throttle_rpm.and_then(|t| t.fresh(now)),
             throttle_rel: self.throttle_rel.and_then(|t| t.fresh(now)),
             throttle_pos: self.throttle_pos.and_then(|t| t.fresh(now)),
-            throttle_errors: if throttle_err_fresh { self.throttle_errors } else { 0 },
+            throttle_errors: if throttle_err_fresh {
+                self.throttle_errors
+            } else {
+                0
+            },
             mppts,
             heights,
             hottest_mppt: hottest_mppt.clone(),
@@ -546,8 +702,14 @@ impl LiveState {
 fn apply_mppt_info(slot: &mut MpptSlot, info: &MpptInfo, now: Instant) {
     let apply_channel = |ch_slot: &mut MpptChannelSlot, ch: &MpptChannel| match ch {
         MpptChannel::Power(p) => {
-            ch_slot.vin = Some(Timed { value: p.voltage_in, at: now });
-            ch_slot.iin = Some(Timed { value: p.current_in, at: now });
+            ch_slot.vin = Some(Timed {
+                value: p.voltage_in,
+                at: now,
+            });
+            ch_slot.iin = Some(Timed {
+                value: p.current_in,
+                at: now,
+            });
         }
         // Duty cycle/algorithm state has no Snapshot field yet.
         MpptChannel::State(_) => {}
@@ -560,12 +722,24 @@ fn apply_mppt_info(slot: &mut MpptSlot, info: &MpptInfo, now: Instant) {
         // No channel index to attribute this to; drop it, same as the old decoder did.
         MpptInfo::ChannelUnknown(_) => {}
         MpptInfo::Power(p) => {
-            slot.vout = Some(Timed { value: p.voltage_out, at: now });
-            slot.iout = Some(Timed { value: p.current_out, at: now });
+            slot.vout = Some(Timed {
+                value: p.voltage_out,
+                at: now,
+            });
+            slot.iout = Some(Timed {
+                value: p.current_out,
+                at: now,
+            });
         }
         MpptInfo::Status(s) => {
-            slot.celsius = Some(Timed { value: s.temperature as f32, at: now });
-            slot.state = Some(Timed { value: s.state as u32, at: now });
+            slot.celsius = Some(Timed {
+                value: s.temperature as f32,
+                at: now,
+            });
+            slot.state = Some(Timed {
+                value: s.state as u32,
+                at: now,
+            });
             slot.flags = (s.pwm_enabled as u32) | ((s.switch_on as u32) << 1);
         }
     }
@@ -574,15 +748,36 @@ fn apply_mppt_info(slot: &mut MpptSlot, info: &MpptInfo, now: Instant) {
 fn apply_gan_packet(slot: &mut MpptSlot, packet: &GanMpptPacket, now: Instant) {
     match packet {
         GanMpptPacket::Power(p) => {
-            slot.channels[0].vin = Some(Timed { value: p.input_voltage, at: now });
-            slot.channels[0].iin = Some(Timed { value: p.input_current, at: now });
-            slot.vout = Some(Timed { value: p.output_voltage, at: now });
-            slot.iout = Some(Timed { value: p.output_current, at: now });
+            slot.channels[0].vin = Some(Timed {
+                value: p.input_voltage,
+                at: now,
+            });
+            slot.channels[0].iin = Some(Timed {
+                value: p.input_current,
+                at: now,
+            });
+            slot.vout = Some(Timed {
+                value: p.output_voltage,
+                at: now,
+            });
+            slot.iout = Some(Timed {
+                value: p.output_current,
+                at: now,
+            });
         }
         GanMpptPacket::Status(s) => {
-            slot.celsius = Some(Timed { value: s.board_temp as f32, at: now });
-            slot.heat_sink_celsius = Some(Timed { value: s.heat_sink_temp as f32, at: now });
-            slot.state = Some(Timed { value: gan_mode_num(&s.mode), at: now });
+            slot.celsius = Some(Timed {
+                value: s.board_temp as f32,
+                at: now,
+            });
+            slot.heat_sink_celsius = Some(Timed {
+                value: s.heat_sink_temp as f32,
+                at: now,
+            });
+            slot.state = Some(Timed {
+                value: gan_mode_num(&s.mode),
+                at: now,
+            });
             slot.flags = gan_fault_num(&s.fault);
         }
         // No Snapshot field for a sweep trace.
@@ -630,7 +825,11 @@ fn mppt_view(gan: bool, id: u32, slot: &MpptSlot, now: Instant) -> MpptView {
     };
 
     MpptView {
-        label: if gan { format!("GaN {id}") } else { format!("MPPT {id}") },
+        label: if gan {
+            format!("GaN {id}")
+        } else {
+            format!("MPPT {id}")
+        },
         id,
         gan,
         vin,
@@ -643,10 +842,7 @@ fn mppt_view(gan: bool, id: u32, slot: &MpptSlot, now: Instant) -> MpptView {
     }
 }
 
-fn motor_ntc_quality(
-    status: &eoi_can_decoder::MotorNtcStatus,
-    has_temp: bool,
-) -> Quality {
+fn motor_ntc_quality(status: &eoi_can_decoder::MotorNtcStatus, has_temp: bool) -> Quality {
     if !has_temp || status.sensor_open || status.sensor_short || status.acquisition_error {
         Quality::Absent
     } else if status.out_of_range {
@@ -793,7 +989,10 @@ pub fn apply_frame(state: &mut LiveState, id: u32, data: &[u8]) {
             state.apply(update, Instant::now());
         }
         None => {
-            tracing::debug!(id = format_args!("{id:#x}"), "unknown or malformed CAN frame");
+            tracing::debug!(
+                id = format_args!("{id:#x}"),
+                "unknown or malformed CAN frame"
+            );
             state.note_unknown(Instant::now());
         }
     }

@@ -34,8 +34,7 @@ impl TelemetrySvc {
 
 #[tonic::async_trait]
 impl Telemetry for TelemetrySvc {
-    type StreamStateStream =
-        Pin<Box<dyn Stream<Item = Result<Snapshot, Status>> + Send + 'static>>;
+    type StreamStateStream = Pin<Box<dyn Stream<Item = Result<Snapshot, Status>> + Send + 'static>>;
 
     async fn stream_state(
         &self,
@@ -81,7 +80,9 @@ impl Telemetry for TelemetrySvc {
         _request: Request<ListSessionsRequest>,
     ) -> Result<Response<ListSessionsResponse>, Status> {
         // The bridge has no archive — only the relay does (eoi-grpc-telemetry).
-        Err(Status::unimplemented("the bridge does not archive sessions; ask the relay"))
+        Err(Status::unimplemented(
+            "the bridge does not archive sessions; ask the relay",
+        ))
     }
 
     type ReplayStream = Pin<Box<dyn Stream<Item = Result<Snapshot, Status>> + Send + 'static>>;
@@ -90,7 +91,9 @@ impl Telemetry for TelemetrySvc {
         &self,
         _request: Request<ReplayRequest>,
     ) -> Result<Response<Self::ReplayStream>, Status> {
-        Err(Status::unimplemented("the bridge does not archive sessions; ask the relay"))
+        Err(Status::unimplemented(
+            "the bridge does not archive sessions; ask the relay",
+        ))
     }
 }
 

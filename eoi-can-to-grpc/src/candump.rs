@@ -28,7 +28,7 @@ pub fn parse_line(line: &str) -> Option<(f64, u32, Vec<u8>)> {
 }
 
 fn hex_bytes(s: &str) -> Option<Vec<u8>> {
-    if s.len() % 2 != 0 {
+    if !s.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(s.len() / 2);

@@ -24,6 +24,10 @@ pub mod pb {
     pub mod eoi {
         pub mod telemetry {
             pub mod v1 {
+                // tonic-build's generated service methods return Result<_, tonic::Status>,
+                // and Status is larger than clippy's default threshold — not something we
+                // control from generated code.
+                #![allow(clippy::result_large_err)]
                 tonic::include_proto!("eoi.telemetry.v1");
             }
         }

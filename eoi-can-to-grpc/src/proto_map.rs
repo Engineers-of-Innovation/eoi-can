@@ -1,5 +1,5 @@
 use crate::live_state::{Quality, SnapshotView};
-use crate::pb::eoi::telemetry::v1 as v1;
+use crate::pb::eoi::telemetry::v1;
 
 pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot {
     let now = std::time::SystemTime::now()
@@ -110,11 +110,14 @@ pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot
                 height: h.height,
             })
             .collect(),
-        hottest_mppt: view.hottest_mppt.as_ref().map(|(label, c)| v1::Temperature {
-            label: label.clone(),
-            celsius: Some(*c),
-            quality: v1::Quality::Ok.into(),
-        }),
+        hottest_mppt: view
+            .hottest_mppt
+            .as_ref()
+            .map(|(label, c)| v1::Temperature {
+                label: label.clone(),
+                celsius: Some(*c),
+                quality: v1::Quality::Ok.into(),
+            }),
         hottest_battery: view
             .hottest_battery
             .as_ref()
