@@ -1,0 +1,16 @@
+[Unit]
+Description=CAN to gRPC telemetry bridge, serves decoded CAN data over gRPC
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+
+[Service]
+ExecStart=/home/engineer/eoi-can-to-grpc --source can0 --bind 0.0.0.0:50051
+WorkingDirectory=/home/engineer
+User=engineer
+Group=engineer
+Environment=RUST_LOG=info
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
