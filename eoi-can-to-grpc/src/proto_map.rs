@@ -110,6 +110,18 @@ pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot
                 height: h.height,
             })
             .collect(),
+        hydrofoil: Some(v1::Hydrofoil {
+            roll_deg: view.roll_deg,
+            pitch_deg: view.pitch_deg,
+            yaw_deg: view.yaw_deg,
+            lua_height_mm: view.lua_height_mm,
+            ekf_height_mm: view.ekf_height_mm,
+            status_flags: view.hydrofoil_status_flags,
+            mode: view.hydrofoil_mode,
+            rangefinder_status: view.rangefinder_status,
+            elevon_left_us: view.elevon_left_us,
+            elevon_right_us: view.elevon_right_us,
+        }),
         hottest_mppt: view
             .hottest_mppt
             .as_ref()

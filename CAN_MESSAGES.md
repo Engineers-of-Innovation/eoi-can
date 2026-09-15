@@ -45,6 +45,9 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x203 | GnssLongitude | GNSS |
 | 0x204 | GnssDateTime | GNSS |
 | 0x205 | DataLoggerWifiIp | Data Logger |
+| 0x250 | HydrofoilAttitude | Hydrofoil |
+| 0x251 | HydrofoilState | Hydrofoil |
+| 0x252 | HydrofoilElevons | Hydrofoil |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
@@ -206,6 +209,41 @@ the command ID against their own application type — rebooting one board leaves
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DataLoggerWifiIp | 0x205 | 4 | 0–3 | IPv4 address octets | u8 ×4 | | Address order: `192.168.1.5` → `C0 A8 01 05`. Sent every 1 s while the data logger has a WiFi IPv4; not sent otherwise |
+
+## Hydrofoil
+
+ArduPilot / foiling-controller telemetry. Sent at ~10 Hz on the water. Not yet
+documented in firmware here — layouts match the Python CAN visualizer and live candumps.
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| HydrofoilAttitude | 0x250 | 6 | 0–1 | Roll | i16 | LE | Centidegrees. NED; positive = starboard side down. |
+| | | | 2–3 | Pitch | i16 | LE | Centidegrees. |
+| | | | 4–5 | Yaw | u16 | LE | Centidegrees, compass 0–360°. |
+| HydrofoilState | 0x251 | 8 | 0–1 | Lua height | u16 | LE | mm, roll-corrected. `0xFFFF` = invalid. |
+| | | | 2–3 | EKF height | u16 | LE | mm. `0xFFFF` = invalid. |
+| | | | 4–5 | Status flags | u16 | LE | Bitfield — see below. |
+| | | | 6 | Mode | u8 | | ArduPilot vehicle mode: `0`=MANUAL, `5`=FBWA. |
+| | | | 7 | Rangefinder status | u8 | | Downward rangefinder status byte. |
+| HydrofoilElevons | 0x252 | 4 | 0–1 | Elevon left PWM | u16 | LE | µs, front-left. 1500 = neutral. |
+| | | | 2–3 | Elevon right PWM | u16 | LE | µs, front-right. 1500 = neutral. |
+
+Status flag bits in `HydrofoilState` bytes 4–5:
+
+| Bit | Name | Meaning |
+| --- | --- | --- |
+| 0 | WingsEnabled | Foiling / wings control enabled |
+| 1 | LeftSensorFresh | Left height sensor recently updated |
+| 2 | RightSensorFresh | Right height sensor recently updated |
+| 3 | BothFresh | Both height sensors fresh |
+| 4 | CtrlHeightValid | Control height is valid |
+| 5 | CtrlSrcEKF | Control height sourced from EKF |
+| 6 | EKFHealthy | EKF healthy |
+| 7 | EKFInitialised | EKF initialised |
+| 8 | HomeSet | Home position set |
+| 9 | EKFOriginSet | EKF origin set |
+| 10 | HAGLAvailable | Height-above-ground available |
+| 11 | VelAvailable | Velocity available |
 
 ## Controller Temperatures
 

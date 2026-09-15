@@ -65,6 +65,7 @@ message Snapshot {
   Temperature hottest_battery = 19;
   Warnings warnings = 20;
   BusHealth bus = 21;
+  Hydrofoil hydrofoil = 22;
 }
 
 // Absent optional field == stale or never seen. Render as dashes.
@@ -168,6 +169,21 @@ message HeightSensor {
   string label = 1;
   optional uint32 state = 2;
   optional float height = 3;
+}
+
+// Hydrofoil / ArduPilot controller (CAN 0x250–0x252). Absent optional field ==
+// stale or never seen. Roll sign: positive = starboard side down (NED / solar heel).
+message Hydrofoil {
+  optional float roll_deg = 1;
+  optional float pitch_deg = 2;
+  optional float yaw_deg = 3;
+  optional float lua_height_mm = 4; // roll-corrected; omitted when wire sent 0xFFFF
+  optional float ekf_height_mm = 5;
+  optional uint32 status_flags = 6; // bitfield — see CAN_MESSAGES.md HydrofoilState
+  optional uint32 mode = 7; // 0=MANUAL, 5=FBWA
+  optional uint32 rangefinder_status = 8;
+  optional uint32 elevon_left_us = 9; // front-left PWM µs, 1500=neutral
+  optional uint32 elevon_right_us = 10;
 }
 
 message Warnings {

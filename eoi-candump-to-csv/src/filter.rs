@@ -14,6 +14,7 @@ pub struct Filter {
     pub gnss: bool,
     pub rudder: bool,
     pub height: bool,
+    pub hydrofoil: bool,
     pub temperature: bool,
     pub mppt: Option<BTreeSet<u8>>,
     pub gan_mppt: Option<BTreeSet<u8>>,
@@ -51,6 +52,7 @@ impl Filter {
                 self.gnss = true;
                 self.rudder = true;
                 self.height = true;
+                self.hydrofoil = true;
                 self.temperature = true;
                 self.mppt = Some(BTreeSet::new());
                 self.gan_mppt = Some(BTreeSet::new());
@@ -61,6 +63,7 @@ impl Filter {
             ("gnss", None) => self.gnss = true,
             ("rudder", None) => self.rudder = true,
             ("height", None) => self.height = true,
+            ("hydrofoil", None) => self.hydrofoil = true,
             ("temperature", None) => self.temperature = true,
             ("mppt", None) => self.mppt = Some(BTreeSet::new()),
             ("mppt", Some(idx)) => {
@@ -100,6 +103,7 @@ impl Filter {
             || self.gnss
             || self.rudder
             || self.height
+            || self.hydrofoil
             || self.temperature
             || self.mppt.is_some()
             || self.gan_mppt.is_some()
@@ -113,6 +117,7 @@ impl Filter {
             EoiCanData::Gnss(_) => self.gnss,
             EoiCanData::RudderController(_) => self.rudder,
             EoiCanData::HeightSensors(_) => self.height,
+            EoiCanData::Hydrofoil(_) => self.hydrofoil,
             EoiCanData::Temperature(_) => self.temperature,
             EoiCanData::Mppt(m) => match &self.mppt {
                 None => false,
@@ -147,7 +152,7 @@ impl Filter {
 }
 
 fn help_text() -> &'static str {
-    "valid selectors: all, battery, vesc, throttle, mppt, mppt:N (0..7), gan-mppt, gan-mppt:N (0..15), gnss, rudder, height, temperature"
+    "valid selectors: all, battery, vesc, throttle, mppt, mppt:N (0..7), gan-mppt, gan-mppt:N (0..15), gnss, rudder, height, hydrofoil, temperature"
 }
 
 #[cfg(test)]

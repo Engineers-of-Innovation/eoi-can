@@ -29,6 +29,9 @@ pub fn column_schema(filter: &Filter) -> Vec<String> {
     if filter.height {
         cols.extend(height_columns().iter().map(|s| s.to_string()));
     }
+    if filter.hydrofoil {
+        cols.extend(hydrofoil_columns().iter().map(|s| s.to_string()));
+    }
     if filter.temperature {
         cols.extend(temperature_columns().iter().map(|s| s.to_string()));
     }
@@ -46,6 +49,7 @@ pub fn flatten(data: &EoiCanData, out: &mut Vec<(String, String)>) {
         EoiCanData::Gnss(g) => flatten_gnss(g, out),
         EoiCanData::RudderController(r) => flatten_rudder(r, out),
         EoiCanData::HeightSensors(h) => flatten_height(h, out),
+        EoiCanData::Hydrofoil(h) => flatten_hydrofoil(h, out),
         EoiCanData::Temperature(t) => flatten_temperature(t, out),
         // Filtered out before it gets here -- see `Filter::accepts`.
         EoiCanData::DataLogger(_) => {}
@@ -535,6 +539,51 @@ fn flatten_height(h: &HeightSensorData, out: &mut Vec<(String, String)>) {
         format!("{:?}", status.state),
     ));
     out.push((format!("height.{prefix}.value"), status.value.to_string()));
+}
+
+// ---------- Hydrofoil ----------
+
+fn hydrofoil_columns() -> &'static [&'static str] {
+    &[
+        "hydrofoil.roll_deg",
+        "hydrofoil.pitch_deg",
+        "hydrofoil.yaw_deg",
+        "hydrofoil.lua_height_mm",
+        "hydrofoil.ekf_height_mm",
+        "hydrofoil.status_flags",
+        "hydrofoil.mode",
+        "hydrofoil.rangefinder_status",
+        "hydrofoil.elevon_left_us",
+        "hydrofoil.elevon_right_us",
+    ]
+}
+
+fn flatten_hydrofoil(h: &HydrofoilData, out: &mut Vec<(String, String)>) {
+    match h {
+        HydrofoilData::Attitude(a) => {
+            out.push(("hydrofoil.roll_deg".into(), fmt_f(a.roll_deg)));
+            out.push(("hydrofoil.pitch_deg".into(), fmt_f(a.pitch_deg)));
+            out.push(("hydrofoil.yaw_deg".into(), fmt_f(a.yaw_deg)));
+        }
+        HydrofoilData::State(s) => {
+            if let Some(v) = s.lua_height_mm {
+                out.push(("hydrofoil.lua_height_mm".into(), fmt_f(v)));
+            }
+            if let Some(v) = s.ekf_height_mm {
+                out.push(("hydrofoil.ekf_height_mm".into(), fmt_f(v)));
+            }
+            out.push(("hydrofoil.status_flags".into(), s.status_flags.to_string()));
+            out.push(("hydrofoil.mode".into(), s.mode.to_string()));
+            out.push((
+                "hydrofoil.rangefinder_status".into(),
+                s.rangefinder_status.to_string(),
+            ));
+        }
+        HydrofoilData::Elevons(e) => {
+            out.push(("hydrofoil.elevon_left_us".into(), e.left_us.to_string()));
+            out.push(("hydrofoil.elevon_right_us".into(), e.right_us.to_string()));
+        }
+    }
 }
 
 // ---------- Temperature ----------
