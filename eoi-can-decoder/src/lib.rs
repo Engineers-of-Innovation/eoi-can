@@ -1006,13 +1006,15 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             pitch_deg: bytes_le_to_i16(data.get(2..4)?)? as f32 / 100.0,
             yaw_deg: bytes_le_to_u16(data.get(4..6)?)? as f32 / 100.0,
         }))),
-        0x251 => Some(EoiCanData::Hydrofoil(HydrofoilData::State(HydrofoilState {
-            lua_height_mm: optional_height_mm(bytes_le_to_u16(data.get(0..2)?)?),
-            ekf_height_mm: optional_height_mm(bytes_le_to_u16(data.get(2..4)?)?),
-            status_flags: bytes_le_to_u16(data.get(4..6)?)?,
-            mode: *data.get(6)?,
-            rangefinder_status: *data.get(7)?,
-        }))),
+        0x251 => Some(EoiCanData::Hydrofoil(HydrofoilData::State(
+            HydrofoilState {
+                lua_height_mm: optional_height_mm(bytes_le_to_u16(data.get(0..2)?)?),
+                ekf_height_mm: optional_height_mm(bytes_le_to_u16(data.get(2..4)?)?),
+                status_flags: bytes_le_to_u16(data.get(4..6)?)?,
+                mode: *data.get(6)?,
+                rangefinder_status: *data.get(7)?,
+            },
+        ))),
         0x252 => Some(EoiCanData::Hydrofoil(HydrofoilData::Elevons(Elevons {
             left_us: bytes_le_to_u16(data.get(0..2)?)?,
             right_us: bytes_le_to_u16(data.get(2..4)?)?,
@@ -1784,7 +1786,10 @@ mod tests {
         };
         assert_eq!(s.lua_height_mm, Some(513.0));
         assert_eq!(s.ekf_height_mm, None);
-        assert_eq!(s.status_flags & HYDROFOIL_STATUS_WINGS_ENABLED, HYDROFOIL_STATUS_WINGS_ENABLED);
+        assert_eq!(
+            s.status_flags & HYDROFOIL_STATUS_WINGS_ENABLED,
+            HYDROFOIL_STATUS_WINGS_ENABLED
+        );
         assert_eq!(s.mode, 5);
         assert_eq!(s.rangefinder_status, 4);
     }
