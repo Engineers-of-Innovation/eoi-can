@@ -231,6 +231,7 @@ impl DisplayData {
                 GnssData::GnssLongitude(_) => {}
             },
             EoiCanData::RudderController(_) => {}
+            EoiCanData::Hydrofoil(_) => {}
             EoiCanData::HeightSensors(height) => match height {
                 HeightSensorData::FrontLeft(status) => {
                     self.height_sensor_front_left.update(status.value);

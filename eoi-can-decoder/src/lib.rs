@@ -15,6 +15,7 @@ pub enum EoiCanData {
     Gnss(GnssData),
     RudderController(RudderControllerData),
     HeightSensors(HeightSensorData),
+    Hydrofoil(HydrofoilData),
     GanMppt(GanMpptData),
     Temperature(TemperatureData),
     DataLogger(DataLoggerData),
@@ -737,6 +738,74 @@ pub enum HeightSensorData {
     Reserved2(HeightSensorStatus),
 }
 
+// --- Hydrofoil (ArduPilot attitude / elevon controller) ---
+
+#[derive(Debug, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum HydrofoilData {
+    /// `0x250` — NED Euler attitude in centidegrees.
+    Attitude(Attitude),
+    /// `0x251` — roll-corrected / EKF height, status bits, flight mode.
+    State(HydrofoilState),
+    /// `0x252` — front elevon PWM outputs.
+    Elevons(Elevons),
+}
+
+/// Boat attitude from the hydrofoil controller (`0x250`).
+///
+/// Angles are degrees. Sign convention matches NED / solar heel:
+/// positive `roll_deg` = starboard side down.
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Attitude {
+    pub roll_deg: f32,
+    pub pitch_deg: f32,
+    /// Compass yaw, degrees in `[0, 360)`.
+    pub yaw_deg: f32,
+}
+
+/// Foiling controller state from `0x251`.
+///
+/// Height fields are `None` when the wire sent `0xFFFF` (invalid).
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilState {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lua_height_mm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ekf_height_mm: Option<f32>,
+    /// Bitfield — see `HYDROFOIL_STATUS_*` constants / CAN_MESSAGES.md.
+    pub status_flags: u16,
+    /// ArduPilot vehicle mode byte (`0` = MANUAL, `5` = FBWA).
+    pub mode: u8,
+    pub rangefinder_status: u8,
+}
+
+pub const HYDROFOIL_STATUS_WINGS_ENABLED: u16 = 1 << 0;
+pub const HYDROFOIL_STATUS_LEFT_SENSOR_FRESH: u16 = 1 << 1;
+pub const HYDROFOIL_STATUS_RIGHT_SENSOR_FRESH: u16 = 1 << 2;
+pub const HYDROFOIL_STATUS_BOTH_FRESH: u16 = 1 << 3;
+pub const HYDROFOIL_STATUS_CTRL_HEIGHT_VALID: u16 = 1 << 4;
+pub const HYDROFOIL_STATUS_CTRL_SRC_EKF: u16 = 1 << 5;
+pub const HYDROFOIL_STATUS_EKF_HEALTHY: u16 = 1 << 6;
+pub const HYDROFOIL_STATUS_EKF_INITIALISED: u16 = 1 << 7;
+pub const HYDROFOIL_STATUS_HOME_SET: u16 = 1 << 8;
+pub const HYDROFOIL_STATUS_EKF_ORIGIN_SET: u16 = 1 << 9;
+pub const HYDROFOIL_STATUS_HAGL_AVAILABLE: u16 = 1 << 10;
+pub const HYDROFOIL_STATUS_VEL_AVAILABLE: u16 = 1 << 11;
+
+/// Front elevon PWM outputs from `0x252` (µs, 1500 = neutral).
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct Elevons {
+    pub left_us: u16,
+    pub right_us: u16,
+}
+
+fn optional_height_mm(raw: u16) -> Option<f32> {
+    (raw != 0xFFFF).then_some(raw as f32)
+}
+
 #[derive(Debug, Serialize)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HeightSensorStatus {
@@ -931,6 +1000,25 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 },
             )))
         }
+        // Hydrofoil — ~10 Hz on the water.
+        0x250 => Some(EoiCanData::Hydrofoil(HydrofoilData::Attitude(Attitude {
+            roll_deg: bytes_le_to_i16(data.get(0..2)?)? as f32 / 100.0,
+            pitch_deg: bytes_le_to_i16(data.get(2..4)?)? as f32 / 100.0,
+            yaw_deg: bytes_le_to_u16(data.get(4..6)?)? as f32 / 100.0,
+        }))),
+        0x251 => Some(EoiCanData::Hydrofoil(HydrofoilData::State(
+            HydrofoilState {
+                lua_height_mm: optional_height_mm(bytes_le_to_u16(data.get(0..2)?)?),
+                ekf_height_mm: optional_height_mm(bytes_le_to_u16(data.get(2..4)?)?),
+                status_flags: bytes_le_to_u16(data.get(4..6)?)?,
+                mode: *data.get(6)?,
+                rangefinder_status: *data.get(7)?,
+            },
+        ))),
+        0x252 => Some(EoiCanData::Hydrofoil(HydrofoilData::Elevons(Elevons {
+            left_us: bytes_le_to_u16(data.get(0..2)?)?,
+            right_us: bytes_le_to_u16(data.get(2..4)?)?,
+        }))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -1667,6 +1755,57 @@ mod tests {
         assert!(ntc.temperature == Some(23.5));
         assert!(ntc.status == MotorNtcStatus::default());
         assert!(ntc.frame_counter.is_none());
+    }
+
+    #[test]
+    fn hydrofoil_attitude() {
+        // candump sample 250#A4FF0D00F989 → roll=-0.92°, pitch=0.13°, yaw=353.21°
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x250).unwrap()),
+            &[0xA4, 0xFF, 0x0D, 0x00, 0xF9, 0x89],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::Hydrofoil(HydrofoilData::Attitude(a)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert!((a.roll_deg - -0.92).abs() < 1e-3);
+        assert!((a.pitch_deg - 0.13).abs() < 1e-3);
+        assert!((a.yaw_deg - 353.21).abs() < 1e-3);
+    }
+
+    #[test]
+    fn hydrofoil_state_invalid_ekf() {
+        // lua=513, ekf=0xFFFF, status has WingsEnabled|…, mode=FBWA(5), rf=4
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x251).unwrap()),
+            &[0x01, 0x02, 0xFF, 0xFF, 0x1F, 0x19, 0x05, 0x04],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::Hydrofoil(HydrofoilData::State(s)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(s.lua_height_mm, Some(513.0));
+        assert_eq!(s.ekf_height_mm, None);
+        assert_eq!(
+            s.status_flags & HYDROFOIL_STATUS_WINGS_ENABLED,
+            HYDROFOIL_STATUS_WINGS_ENABLED
+        );
+        assert_eq!(s.mode, 5);
+        assert_eq!(s.rangefinder_status, 4);
+    }
+
+    #[test]
+    fn hydrofoil_elevons() {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x252).unwrap()),
+            &[0xCF, 0x05, 0xDF, 0x05], // 1487 / 1503 µs
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::Hydrofoil(HydrofoilData::Elevons(e)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(e.left_us, 1487);
+        assert_eq!(e.right_us, 1503);
     }
 
     #[test]

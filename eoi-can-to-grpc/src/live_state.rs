@@ -17,6 +17,15 @@
 //!   and `discharge_a` **negative** = discharging, symmetric with each other — whereas
 //!   the old crate exposed `discharge_a` as a positive magnitude. Any dashboard reading
 //!   of `Battery.discharge_a` should expect the new sign.
+//! - **`pack_current` on `0x100` is not a true net.** The BMS reports
+//!   `charge + |discharge| + peri` rather than Kirchhoff's sum. `eoi-can-to-mqtt` already
+//!   overrides it; we do the same here for `pack_a` / `net_w`. Net power is
+//!   `(charge + discharge + peri) × pack_v` — positive means charging — matching
+//!   `draw-display`.
+//! - **Power out uses BMS discharge, not VESC phase current.** VESC Status 1
+//!   `total_current` is motor-phase amps (often ≫ battery amps). Out watts are
+//!   `|(discharge + peri)| × pack_v` like the e-paper; Status 4 `total_input_current`
+//!   is only a fallback when discharge is stale.
 //! - **MPPT per-channel conflation bug fixed.** The old decoder mapped all four
 //!   channel vin/iin sub-messages (field IDs 0/2/4/6) of one MPPT node into a single
 //!   slot, so each new channel frame silently overwrote the last — `MpptView` only
@@ -43,8 +52,8 @@ use eoi_can_decoder::can_frame::CanFrame;
 use eoi_can_decoder::{
     parse_eoi_can_data, BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData,
     GanMpptPacket, GanPhaseFault, GanPhaseMode, GnssData, HeightSensorData, HeightSensorState,
-    MpptChannel, MpptInfo, RudderControllerData, ServoData, ServoFaultCause, ServoState,
-    TemperatureData, ThrottleData, ThrottleErrors, ThrottleTwiErrors, VescData,
+    HydrofoilData, MpptChannel, MpptInfo, RudderControllerData, ServoData, ServoFaultCause,
+    ServoState, TemperatureData, ThrottleData, ThrottleErrors, ThrottleTwiErrors, VescData,
 };
 
 pub const STALE_AFTER: Duration = Duration::from_secs(5);
@@ -135,7 +144,10 @@ pub struct LiveState {
     motor_celsius: Option<Timed<f32>>,
     motor_quality: Quality,
     rpm: Option<Timed<f32>>,
+    /// VESC Status 1 motor-phase current (displayed on Motor; not used for pack power).
     motor_current_a: Option<Timed<f32>>,
+    /// VESC Status 4 DC input current — battery-side fallback for power out.
+    motor_input_a: Option<Timed<f32>>,
     motor_duty: Option<Timed<f32>>,
     tacho: Option<Timed<i32>>,
     fet_celsius: Option<Timed<f32>>,
@@ -152,6 +164,20 @@ pub struct LiveState {
     throttle_errors: u32,
     throttle_err_at: Option<Instant>,
     mppts: BTreeMap<(bool, u32), MpptSlot>,
+    roll_deg: Option<Timed<f32>>,
+    pitch_deg: Option<Timed<f32>>,
+    yaw_deg: Option<Timed<f32>>,
+    lua_height_mm: Option<Timed<f32>>,
+    ekf_height_mm: Option<Timed<f32>>,
+    hydrofoil_status_flags: Option<Timed<u32>>,
+    hydrofoil_mode: Option<Timed<u32>>,
+    rangefinder_status: Option<Timed<u32>>,
+    elevon_left_us: Option<Timed<u32>>,
+    elevon_right_us: Option<Timed<u32>>,
+    /// Tracks whether optional height fields were valid on the last State frame so
+    /// a subsequent invalid (0xFFFF) wire value can clear the held reading.
+    lua_height_valid: bool,
+    ekf_height_valid: bool,
     frames_total: u64,
     frames_unknown: u64,
     frame_times: Vec<Instant>,
@@ -190,6 +216,7 @@ impl LiveState {
             EoiCanData::Gnss(g) => self.apply_gnss(g, now),
             EoiCanData::RudderController(r) => self.apply_rudder(r, now),
             EoiCanData::HeightSensors(h) => self.apply_height(h, now),
+            EoiCanData::Hydrofoil(h) => self.apply_hydrofoil(h, now),
             EoiCanData::Temperature(t) => self.apply_temperature(t, now),
             // No live field consumes these; decoded successfully but nothing to do.
             EoiCanData::DataLogger(_) => {}
@@ -338,13 +365,17 @@ impl LiveState {
             VescData::StatusMessage4 {
                 fet_temp,
                 motor_temp: _,
-                total_input_current: _,
+                total_input_current,
                 current_pid_position: _,
             } => {
                 // motor_temp is deliberately never read — broken on this boat; motor
                 // temperature comes only from TemperatureData::MotorNtc (0x219).
                 self.fet_celsius = Some(Timed {
                     value: fet_temp,
+                    at: now,
+                });
+                self.motor_input_a = Some(Timed {
+                    value: total_input_current,
                     at: now,
                 });
             }
@@ -500,6 +531,69 @@ impl LiveState {
         });
     }
 
+    fn apply_hydrofoil(&mut self, h: HydrofoilData, now: Instant) {
+        match h {
+            HydrofoilData::Attitude(a) => {
+                self.roll_deg = Some(Timed {
+                    value: a.roll_deg,
+                    at: now,
+                });
+                self.pitch_deg = Some(Timed {
+                    value: a.pitch_deg,
+                    at: now,
+                });
+                self.yaw_deg = Some(Timed {
+                    value: a.yaw_deg,
+                    at: now,
+                });
+            }
+            HydrofoilData::State(s) => {
+                match s.lua_height_mm {
+                    Some(v) => {
+                        self.lua_height_mm = Some(Timed { value: v, at: now });
+                        self.lua_height_valid = true;
+                    }
+                    None => {
+                        self.lua_height_mm = None;
+                        self.lua_height_valid = false;
+                    }
+                }
+                match s.ekf_height_mm {
+                    Some(v) => {
+                        self.ekf_height_mm = Some(Timed { value: v, at: now });
+                        self.ekf_height_valid = true;
+                    }
+                    None => {
+                        self.ekf_height_mm = None;
+                        self.ekf_height_valid = false;
+                    }
+                }
+                self.hydrofoil_status_flags = Some(Timed {
+                    value: s.status_flags as u32,
+                    at: now,
+                });
+                self.hydrofoil_mode = Some(Timed {
+                    value: s.mode as u32,
+                    at: now,
+                });
+                self.rangefinder_status = Some(Timed {
+                    value: s.rangefinder_status as u32,
+                    at: now,
+                });
+            }
+            HydrofoilData::Elevons(e) => {
+                self.elevon_left_us = Some(Timed {
+                    value: e.left_us as u32,
+                    at: now,
+                });
+                self.elevon_right_us = Some(Timed {
+                    value: e.right_us as u32,
+                    at: now,
+                });
+            }
+        }
+    }
+
     fn apply_temperature(&mut self, t: TemperatureData, now: Instant) {
         match t {
             TemperatureData::HeightSensorsController(c) => {
@@ -524,23 +618,34 @@ impl LiveState {
     }
 
     pub fn view(&self, now: Instant) -> SnapshotView {
-        let pack_a = self.pack_a.and_then(|t| t.fresh(now));
+        let pack_a_raw = self.pack_a.and_then(|t| t.fresh(now));
         let peri_a = self.peri_a.and_then(|t| t.fresh(now));
         let charge_a = self.charge_a.and_then(|t| t.fresh(now));
         let discharge_a = self.discharge_a.and_then(|t| t.fresh(now));
         let pack_v = self.pack_v.and_then(|t| t.fresh(now));
         let motor_a = self.motor_current_a.and_then(|t| t.fresh(now));
+        let motor_input_a = self.motor_input_a.and_then(|t| t.fresh(now));
 
-        // Wire: charge current is positive-when-charging; discharge current is
-        // negative-when-discharging (eoi-can-decoder's convention, see module doc).
-        // Positive net power still means charging.
+        // Wire: charge positive-when-charging; discharge/peri negative-when-leaving.
+        // BMS 0x100 pack_current is charge+|discharge|+peri (not true net) — prefer
+        // Kirchhoff sum like draw-display / eoi-can-to-mqtt. Positive net = charging.
+        let pack_a = match (charge_a, discharge_a, peri_a) {
+            (Some(c), Some(d), Some(p)) => Some(c + d + p),
+            _ => pack_a_raw,
+        };
         let net_w = pack_a.zip(pack_v).map(|(i, v)| i * v);
         let in_w = charge_a.zip(pack_v).map(|(i, v)| i * v);
-        let out_w = match (motor_a, peri_a, pack_v) {
-            (Some(m), Some(p), Some(v)) => Some((m + p.abs()) * v),
-            (Some(m), None, Some(v)) => Some(m * v),
-            (None, Some(p), Some(v)) => Some(p.abs() * v),
-            _ => discharge_a.zip(pack_v).map(|(i, v)| i.abs() * v),
+        // Positive watts leaving the pack (web UI). Same currents as e-paper power
+        // out, which renders the signed (typically negative) product.
+        let out_w = match (discharge_a, peri_a, pack_v) {
+            (Some(d), Some(p), Some(v)) => Some(-(d + p) * v),
+            (Some(d), None, Some(v)) => Some(-d * v),
+            (None, Some(p), Some(v)) => Some(-p * v),
+            _ => match (motor_input_a, peri_a, pack_v) {
+                (Some(m), Some(p), Some(v)) => Some((m.abs() + p.abs()) * v),
+                (Some(m), None, Some(v)) => Some(m.abs() * v),
+                _ => None,
+            },
         };
 
         let cells_all_fresh = self
@@ -669,6 +774,16 @@ impl LiveState {
             },
             mppts,
             heights,
+            roll_deg: self.roll_deg.and_then(|t| t.fresh(now)),
+            pitch_deg: self.pitch_deg.and_then(|t| t.fresh(now)),
+            yaw_deg: self.yaw_deg.and_then(|t| t.fresh(now)),
+            lua_height_mm: self.lua_height_mm.and_then(|t| t.fresh(now)),
+            ekf_height_mm: self.ekf_height_mm.and_then(|t| t.fresh(now)),
+            hydrofoil_status_flags: self.hydrofoil_status_flags.and_then(|t| t.fresh(now)),
+            hydrofoil_mode: self.hydrofoil_mode.and_then(|t| t.fresh(now)),
+            rangefinder_status: self.rangefinder_status.and_then(|t| t.fresh(now)),
+            elevon_left_us: self.elevon_left_us.and_then(|t| t.fresh(now)),
+            elevon_right_us: self.elevon_right_us.and_then(|t| t.fresh(now)),
             hottest_mppt: hottest_mppt.clone(),
             hottest_battery: hottest_battery.clone(),
             warnings: WarningsView {
@@ -1054,6 +1169,16 @@ pub struct SnapshotView {
     pub throttle_errors: u32,
     pub mppts: Vec<MpptView>,
     pub heights: Vec<HeightView>,
+    pub roll_deg: Option<f32>,
+    pub pitch_deg: Option<f32>,
+    pub yaw_deg: Option<f32>,
+    pub lua_height_mm: Option<f32>,
+    pub ekf_height_mm: Option<f32>,
+    pub hydrofoil_status_flags: Option<u32>,
+    pub hydrofoil_mode: Option<u32>,
+    pub rangefinder_status: Option<u32>,
+    pub elevon_left_us: Option<u32>,
+    pub elevon_right_us: Option<u32>,
     pub hottest_mppt: Option<(String, f32)>,
     pub hottest_battery: Option<(String, f32)>,
     pub warnings: WarningsView,
@@ -1154,5 +1279,52 @@ mod tests {
         // Both channels contribute: total current 3A, current-weighted voltage.
         assert_eq!(mppt.iin, Some(3.0));
         assert!((mppt.vin.unwrap() - ((20.0 * 1.0 + 18.0 * 2.0) / 3.0)).abs() < 1e-4);
+    }
+
+    /// Decoder fixture frames: charge≈9.98 A, discharge≈−17.53 A, peri≈−0.24 A,
+    /// pack_v=56 V. BMS pack_current is the bogus charge+|discharge|+peri sum.
+    #[test]
+    fn net_and_out_power_match_draw_display_kirchhoff() {
+        let mut state = LiveState::new();
+        apply_frame(&mut state, 0x100, &0x5817DA41EBF577BE_u64.to_be_bytes());
+        apply_frame(&mut state, 0x101, &0xE89F1F4150378C41_u64.to_be_bytes());
+        apply_frame(&mut state, 0x106, &0x39103110C0DA0EE2_u64.to_be_bytes());
+
+        // Inflated VESC phase current must not drive power out.
+        let mut vesc1 = [0u8; 8];
+        vesc1[0..4].copy_from_slice(&0i32.to_be_bytes());
+        vesc1[4..6].copy_from_slice(&2000i16.to_be_bytes()); // 200.0 A phase
+        vesc1[6..8].copy_from_slice(&500i16.to_be_bytes());
+        apply_frame(&mut state, 0x0909, &vesc1);
+
+        let view = state.view(Instant::now());
+        let charge = 9.9765f32;
+        let discharge = -17.5270f32;
+        let peri = -0.2421f32;
+        let pack_v = 56.0f32;
+        let net_a = charge + discharge + peri;
+
+        assert!(
+            (view.pack_a.unwrap() - net_a).abs() < 1e-3,
+            "pack_a should be Kirchhoff sum, got {:?}",
+            view.pack_a
+        );
+        assert!(
+            (view.net_w.unwrap() - net_a * pack_v).abs() < 0.1,
+            "net_w should be negative while discharging hard, got {:?}",
+            view.net_w
+        );
+        assert!(
+            view.net_w.unwrap() < 0.0,
+            "net must be negative when |discharge| ≫ charge"
+        );
+        assert!((view.in_w.unwrap() - charge * pack_v).abs() < 0.1);
+        assert!(
+            (view.out_w.unwrap() - (-(discharge + peri) * pack_v)).abs() < 0.1,
+            "out_w must use BMS discharge+peri, not VESC phase current; got {:?}",
+            view.out_w
+        );
+        // Sanity: phase-current formula would be ~200*56 ≈ 11 kW.
+        assert!(view.out_w.unwrap() < 2000.0);
     }
 }
