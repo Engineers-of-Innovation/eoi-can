@@ -20,8 +20,10 @@ pub const CAN_ID_SERVO_STATUS: StandardId = unsafe { StandardId::new_unchecked(0
 
 pub const SETPOINT_MIN: u16 = 1000;
 pub const SETPOINT_MAX: u16 = 2000;
-const FAILSAFE_SETPOINT: u16 = 1000;
 const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
+// The servo homes by itself at power-up, after this delay for the motor supply
+// to settle. The foil moves without a command, so keep clear at power-on.
+const BOOT_HOME_DELAY: Duration = Duration::from_secs(1);
 
 // MS1 (AD0) and MS2 (AD1) are strapped to 3V3 on the board, so the driver
 // listens on UART slave address 3.
@@ -31,37 +33,48 @@ const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 
 // Motor: 11HS12-0674D-PG14, 0.67 A/phase, 200 full-steps/rev, 13.73:1 gearbox.
 // Driver: 0.1 ohm external sense resistors, vsense=1 -> full scale ~1.06 A rms.
-// IRUN 13 -> ~0.47 A rms (0.67 A sine peak = rated phase current).
-// TODO(bench): raise IRUN (max 19 = rated rms heating) only if torque is
-// short under real load, watching motor temperature.
-const IRUN: u8 = 13;
-const IRUN_HOMING: u8 = 8;
+// IRUN 31 = full scale -> ~1.06 A rms (~1.5 A sine peak) at vsense=1:
+// ~1.58x the rated 0.67 A, so ~2.5x the rated copper loss while moving.
+// Raised from 19 via 26 and 28 because the motor stayed cold at the low duty
+// cycle (bench, 2026-09); it is only worth it while the motor stays cool.
+// TODO(bench): watch MotorTemp on long moves. More needs vsense=0 (~1.9 A rms
+// full scale), beyond this motor.
+const IRUN: u8 = 31;
+// IRUN_HOMING 31 -> ~1.06 A rms, equal to IRUN for now: at 14 homing did not
+// move the wing (bench, 2026-09). Kept separate so it can be lowered again.
+const IRUN_HOMING: u8 = 31;
 const IHOLD: u8 = 4;
 const IHOLD_DELAY: u8 = 8;
-const MRES_8_MICROSTEPS: u32 = 5;
+// Full steps (mres 8). CHOPCONF intpol (on in the reset value) still
+// interpolates to 256 microsteps, so the coil currents and torque are the same
+// as at any microstep setting; only the angle per STEP pulse changes. Every
+// step-counted constant below is in full steps, halved from the 2-microstep
+// values, and the step rates halved with them, so the motion is unchanged.
+const MRES_FULLSTEP: u32 = 8;
 // TMC2209 CHOPCONF reset value (toff=3, hstrt=5, tbl=2, intpol=1); writing
 // CHOPCONF from all-zeroes would set toff=0 and disable the driver.
 const CHOPCONF_RESET: u32 = 0x1000_0053;
 
-// StallGuard: DIAG trips when SG_RESULT < 2*SGTHRS.
-// Bench-measured (2026-08): unloaded SG_RESULT ~70 at the homing speed, so
-// trip below 34 (~half the free-running value). The previous value of 60
-// tripped at <120 and stalled instantly against the free-running 70.
-// TODO(bench): verify a hand-stall still trips DIAG reliably under real load.
-const SGTHRS_HOMING: u32 = 17;
+// The driver runs SpreadCycle throughout (GCONF en_spread_cycle) for torque at
+// speed, and StallGuard only works in StealthChop, so there is no stall
+// detection: SGTHRS 0 keeps the StallGuard output off DIAG, which then only
+// reports driver errors (overtemperature, short to ground). Homing is open
+// loop, see `home_inner`. TCOOLTHRS and SGTHRS are still written so the
+// IFCNT check in `configure_driver` covers a fixed five writes.
+const SGTHRS: u32 = 0;
 const TCOOLTHRS_VAL: u32 = 0xF_FFFF;
-// Ignore DIAG for the first steps of a move (StallGuard is unreliable while
-// accelerating from standstill).
-const STALL_BLANK_STEPS: u32 = 32;
+// Ignore DIAG for the first steps of a move.
+const STALL_BLANK_STEPS: u32 = 16;
 
-// Full travel (setpoint 1000..2000) in microsteps.
+// Full travel (setpoint 2000 at home .. 1000 at the far stop) in full steps.
 // TODO(bench): calibrate on the real mechanics: home, then drive slowly into
 // the far stop and take the position from the "Stall detected at position"
 // log message.
-const TRAVEL_STEPS: i32 = 20_000;
+// Bench (2026-09): tuned up from 18_000, 20_000 and 22_000.
+const TRAVEL_STEPS: i32 = 24_000;
 // TODO(bench): verify the backoff clears the stop with enough margin that
-// normal moves to setpoint 1000 never re-touch it.
-const BACKOFF_STEPS: i32 = 200;
+// normal moves to setpoint 2000 never re-touch it.
+const BACKOFF_STEPS: i32 = 25; // = 50 at 2 microsteps; same angle
 const HOMING_BUDGET_PERCENT: u32 = 120;
 // Which DIR level moves toward the home stop.
 // TODO(bench): verify before first homing; if wrong, the foil runs to the
@@ -70,15 +83,34 @@ const HOME_DIR_LEVEL: Level = Level::Low;
 
 // Step rates are software-timed on the 32.768 kHz embassy tick (~30.5 us).
 const TICK_HZ: u64 = embassy_time::TICK_HZ;
-const START_DELAY_TICKS: u64 = TICK_HZ / 400; // ~400 Hz ramp start
-// TODO(bench): ~2 kHz cruise = ~33 deg/s at the foil shaft (8 microsteps,
-// 13.73:1 gearbox); drop MRES to 4 microsteps if the rudder must be faster.
-const MIN_DELAY_TICKS: u64 = TICK_HZ / 2000; // ~2 kHz cruise
-// TODO(bench): StallGuard needs enough speed for a usable SG_RESULT signal;
-// raise the homing rate if SG_RESULT sits near zero while running free.
-const HOMING_DELAY_TICKS: u64 = TICK_HZ / 400;
-const ACCEL_EVERY_N_STEPS: u32 = 4;
-const SG_SAMPLE_EVERY_STEPS: u32 = 40; // ~100 ms at homing speed
+// Move profile, in full steps: start at START_SPEED, accelerate at a constant
+// ACCEL to CRUISE_SPEED, brake symmetrically. The old ramp took one tick off
+// the step delay every 2 steps: ~120 steps/s^2 at the bottom but ~15000 at the
+// top, exactly where a stepper has least torque. ACCEL 5000 steps/s^2 covers
+// 200 -> 4000 steps/s in ~0.76 s / ~1600 steps. Bench (2026-09): 8000 and
+// 10000 stalled at any cruise speed (the rotor falls behind while ramping),
+// with motor and driver both cool, so it is acceleration, not heat.
+const START_SPEED: f32 = 200.0; // steps/s, 60 motor RPM
+// 4000 steps/s = 1200 motor RPM = ~524 deg/s at the gearbox output (13.73:1).
+// Bench (2026-09): ran well with ACCEL up to 5000; 5000 steps/s was too fast.
+// The step period is ~8 ticks here, so single steps alternate 244/275 us (the
+// carry keeps the average exact), and any task holding the executor for more
+// than ~0.5 ms costs sync.
+const CRUISE_SPEED: f32 = 4000.0; // steps/s
+const ACCEL: f32 = 5000.0; // steps/s^2
+// Open-loop homing ramps from START_SPEED at ACCEL to HOMING_SPEED and holds
+// it into the stop, at the reduced IRUN_HOMING current. It must not lose steps
+// on the way: that would silently put home short of the stop. The backoff off
+// the stop runs at START_SPEED.
+const HOMING_SPEED: f32 = CRUISE_SPEED;
+// Open-load check during homing: a DRV_STATUS read pauses stepping ~1.2 ms,
+// under one step at 600 steps/s but several at full speed (a stepper loses
+// sync beyond two). So it only runs in the slow start of the ramp, which still
+// catches an unplugged motor; the at-stop check covers the rest.
+// Every 8: at ACCEL 5000 the ramp spends only ~32 steps below the limit, and
+// the open-load rule needs two consecutive samples.
+const STATUS_SAMPLE_EVERY_STEPS: u32 = 8;
+const STATUS_SAMPLE_MAX_SPEED: f32 = 600.0; // steps/s
 const STEP_PULSE_CYCLES: u32 = 40; // ~500 ns high at 80 MHz (datasheet min 100 ns)
 
 pub static SERVO_SETPOINT: Signal<CriticalSectionRawMutex, u16> = Signal::new();
@@ -86,7 +118,7 @@ pub static SERVO_COMMAND: Signal<CriticalSectionRawMutex, ServoRudderCommand> = 
 
 static STATE: AtomicU8 = AtomicU8::new(State::Uninitialized as u8);
 static FAULT_CAUSE: AtomicU8 = AtomicU8::new(FaultCause::None as u8);
-static CURRENT_SETPOINT: AtomicU16 = AtomicU16::new(FAILSAFE_SETPOINT);
+static CURRENT_SETPOINT: AtomicU16 = AtomicU16::new(SETPOINT_MAX); // home
 static POSITION_STEPS: AtomicI32 = AtomicI32::new(0);
 
 #[derive(Clone, Copy, PartialEq, Format)]
@@ -104,25 +136,18 @@ enum State {
 enum FaultCause {
     None = 0,
     StallDuringMove = 1,
+    // No longer produced (homing is open loop); kept so 2 stays reserved on CAN.
+    #[allow(dead_code)]
     HomingTimeout = 2,
     DriverNoUartResponse = 3,
     DriverError = 4,
     DriverOpenLoad = 5,
 }
 
-#[derive(PartialEq)]
-enum MoveMode {
-    /// Setpoints retarget the move and feed the watchdog.
-    Tracking,
-    /// Only an Initialize command can interrupt (failsafe move).
-    Fixed,
-}
-
 enum MoveResult {
     Reached,
     Stalled,
     Initialize,
-    WatchdogExpired,
 }
 
 enum TmcError {
@@ -130,15 +155,18 @@ enum TmcError {
     Timeout,
 }
 
+// Home (step 0) is setpoint 2000 and the far stop is 1000, matching the
+// autopilot's PWM sense for this foil (bench, 2026-09): steps count away from
+// home as the setpoint falls.
 fn setpoint_to_steps(setpoint: u16) -> i32 {
-    let units = setpoint.clamp(SETPOINT_MIN, SETPOINT_MAX) - SETPOINT_MIN;
+    let units = SETPOINT_MAX - setpoint.clamp(SETPOINT_MIN, SETPOINT_MAX);
     units as i32 * TRAVEL_STEPS / (SETPOINT_MAX - SETPOINT_MIN) as i32
 }
 
 fn steps_to_setpoint(steps: i32) -> u16 {
     let units = (steps * (SETPOINT_MAX - SETPOINT_MIN) as i32 / TRAVEL_STEPS)
         .clamp(0, (SETPOINT_MAX - SETPOINT_MIN) as i32);
-    SETPOINT_MIN + units as u16
+    SETPOINT_MAX - units as u16
 }
 
 fn away_level() -> Level {
@@ -250,13 +278,52 @@ struct Servo {
     tmc: Tmc2209Uart,
     position: i32,
     watchdog_deadline: Instant,
+    state: State,
+    /// Why the position is only approximate while tracking: a stall since the
+    /// last homing (the step count may be off), or a homing that timed out and
+    /// was accepted anyway (`servo-timeout-homes`). None after a clean homing.
+    tracking_fault: FaultCause,
 }
 
 impl Servo {
-    fn set_state(&self, state: State, cause: FaultCause) {
+    fn set_state(&mut self, state: State, cause: FaultCause) {
         info!("Servo state: {} (fault cause: {})", state, cause);
+        self.state = state;
         STATE.store(state as u8, Ordering::Relaxed);
         FAULT_CAUSE.store(cause as u8, Ordering::Relaxed);
+    }
+
+    /// Fault cause reported while tracking (Operational / FailSafe): sticky
+    /// until the next homing, so the bus knows the position is approximate.
+    fn tracking_cause(&self) -> FaultCause {
+        self.tracking_fault
+    }
+
+    /// A valid setpoint: feed the watchdog and, if it had expired, resume.
+    fn accept_setpoint(&mut self, setpoint: u16) {
+        self.watchdog_deadline = Instant::now() + WATCHDOG_TIMEOUT;
+        CURRENT_SETPOINT.store(setpoint, Ordering::Relaxed);
+        if self.state == State::FailSafe {
+            info!("Setpoints resumed");
+            self.set_state(State::Operational, self.tracking_cause());
+        }
+    }
+
+    /// Watchdog expiry: report it and hold the last setpoint. Parking the foil
+    /// somewhere else would take authority away without making anything safer;
+    /// the next valid setpoint resumes tracking.
+    fn enter_failsafe(&mut self) {
+        warn!("Setpoint watchdog expired; holding last setpoint");
+        self.set_state(State::FailSafe, self.tracking_cause());
+    }
+
+    /// Stall while tracking: flag it and carry on with the step count as is,
+    /// so the autopilot keeps (degraded) authority. The move is abandoned; the
+    /// next setpoint retries it.
+    fn note_stall(&mut self) {
+        warn!("Stall at position {}; continuing on the step count", self.position);
+        self.tracking_fault = FaultCause::StallDuringMove;
+        self.set_state(self.state, FaultCause::StallDuringMove);
     }
 
     fn step_pulse(&mut self, direction: i32) {
@@ -284,6 +351,7 @@ impl Servo {
         gconf.set_pdn_disable(true);
         gconf.set_mstep_reg_select(true);
         gconf.set_multistep_filt(true);
+        gconf.set_en_spread_cycle(true);
         self.tmc
             .write(gconf)
             .await
@@ -291,7 +359,7 @@ impl Servo {
 
         let mut chopconf = reg::CHOPCONF::from(CHOPCONF_RESET);
         chopconf.set_vsense(true);
-        chopconf.set_mres(MRES_8_MICROSTEPS);
+        chopconf.set_mres(MRES_FULLSTEP);
         self.tmc
             .write(chopconf)
             .await
@@ -310,7 +378,7 @@ impl Servo {
             .map_err(|_| FaultCause::DriverError)?;
 
         self.tmc
-            .write(reg::SGTHRS(SGTHRS_HOMING))
+            .write(reg::SGTHRS(SGTHRS))
             .await
             .map_err(|_| FaultCause::DriverError)?;
 
@@ -353,7 +421,7 @@ impl Servo {
         }
     }
 
-    /// Stall-seek toward the home stop, back off, and define position 0.
+    /// Open-loop homing: drive into the home stop, back off, define position 0.
     async fn home(&mut self) -> Result<(), FaultCause> {
         let result = self.home_inner().await;
         if result.is_err() {
@@ -364,6 +432,7 @@ impl Servo {
     }
 
     async fn home_inner(&mut self) -> Result<(), FaultCause> {
+        self.tracking_fault = FaultCause::None;
         self.configure_driver().await?;
 
         self.enable.set_low();
@@ -376,34 +445,26 @@ impl Servo {
         self.dir.set_level(HOME_DIR_LEVEL);
         Timer::after_ticks(1).await;
 
+        // No stall detection, so step the whole budget: from anywhere in the
+        // travel that ends against the stop, the motor slipping at reduced
+        // current for whatever remains. The margin covers TRAVEL_STEPS being
+        // an estimate.
         let budget = TRAVEL_STEPS as u32 * HOMING_BUDGET_PERCENT / 100;
-        let mut stepped: u32 = 0;
-        let mut blank = STALL_BLANK_STEPS;
         let mut open_load_samples: u32 = 0;
+        // Same constant-acceleration ramp as `move_to`, accelerating only.
+        let mut v2 = START_SPEED * START_SPEED;
+        let mut speed = START_SPEED;
+        let mut carry: f32 = 0.0;
         let mut next = Instant::now();
-        loop {
-            if stepped >= budget {
-                warn!("Homing gave up after {} steps without a stall", stepped);
-                return Err(FaultCause::HomingTimeout);
-            }
-            if blank > 0 {
-                blank -= 1;
-            } else if self.diag.is_high() {
-                break;
-            }
-
+        for stepped in 1..=budget {
             self.step.set_high();
             cortex_m::asm::delay(STEP_PULSE_CYCLES);
             self.step.set_low();
-            stepped += 1;
 
-            if stepped.is_multiple_of(SG_SAMPLE_EVERY_STEPS) {
-                match self.tmc.read::<reg::SG_RESULT>().await {
-                    Ok(sg) => info!("Homing SG_RESULT: {}", sg.get()),
-                    Err(_) => warn!("SG_RESULT read failed during homing"),
-                }
+            if speed < STATUS_SAMPLE_MAX_SPEED && stepped.is_multiple_of(STATUS_SAMPLE_EVERY_STEPS) {
                 // Open-load flags can flicker; require two consecutive
-                // samples before faulting.
+                // samples before faulting. Without this an unplugged motor
+                // would "home" successfully.
                 if let Ok(s) = self.tmc.read::<reg::DRV_STATUS>().await {
                     if s.ola() || s.olb() {
                         open_load_samples += 1;
@@ -420,27 +481,25 @@ impl Servo {
                         open_load_samples = 0;
                     }
                 }
-                // The reads pause stepping; re-blank so the restart does not
-                // false-trigger DIAG.
-                blank = STALL_BLANK_STEPS;
+                // The read paused stepping; restart the schedule from now.
                 next = Instant::now();
+                carry = 0.0;
             }
 
-            next += Duration::from_ticks(HOMING_DELAY_TICKS);
+            v2 = (v2 + 2.0 * ACCEL).min(HOMING_SPEED * HOMING_SPEED);
+            speed = 0.5 * (speed + v2 / speed);
+            let period = TICK_HZ as f32 / speed + carry;
+            let whole = period as u64;
+            carry = period - whole as f32;
+            next += Duration::from_ticks(whole);
             let now = Instant::now();
             if next < now {
                 next = now;
+                carry = 0.0;
             }
             Timer::at(next).await;
         }
-        info!("Home stop found after {} steps", stepped);
-        match self.tmc.read::<reg::SG_RESULT>().await {
-            Ok(sg) => info!("SG_RESULT at stop: {}", sg.get()),
-            Err(_) => warn!("SG_RESULT read failed at stop"),
-        }
-        // An open coil reads SG_RESULT = 0 and trips DIAG right after the
-        // blanking window — without this check that would pass as a
-        // successful home.
+        info!("Homing drove {} steps; taking this as the home stop", budget);
         if let Some(s) = self.read_driver_status("at stop").await
             && (s.ola() || s.olb())
         {
@@ -456,7 +515,7 @@ impl Servo {
             self.step.set_high();
             cortex_m::asm::delay(STEP_PULSE_CYCLES);
             self.step.set_low();
-            next += Duration::from_ticks(HOMING_DELAY_TICKS);
+            next += Duration::from_ticks((TICK_HZ as f32 / START_SPEED) as u64);
             Timer::at(next).await;
         }
 
@@ -470,77 +529,115 @@ impl Servo {
         Ok(())
     }
 
-    async fn move_to(&mut self, target_steps: i32, mode: MoveMode) -> MoveResult {
+    /// Move toward `target_steps`, retargeting on every new setpoint. If the
+    /// watchdog expires mid-move the move still finishes: it holds the last
+    /// setpoint rather than stopping dead.
+    ///
+    /// Constant-acceleration ramp: speed^2 changes by 2 * ACCEL every step, so
+    /// the motor gets the same acceleration at every speed. The braking
+    /// distance (v^2 - START^2) / (2 * ACCEL) is exact in steps, so the move
+    /// slows down in time for the target. A retarget behind the direction of
+    /// travel brakes to START_SPEED first, overshooting if it must, and only
+    /// then reverses.
+    async fn move_to(&mut self, target_steps: i32) -> MoveResult {
         let mut target = target_steps.clamp(0, TRAVEL_STEPS);
-        let mut delay_ticks = START_DELAY_TICKS;
-        let mut accel_counter: u32 = 0;
         let mut blank = STALL_BLANK_STEPS;
-        let mut current_dir: Option<Level> = None;
+        // Direction of travel: 0 at standstill, +1 away from home, -1 toward it.
+        let mut moving: i32 = 0;
+        let mut v2 = START_SPEED * START_SPEED;
+        let mut speed = START_SPEED;
+        // Step period in ticks is fractional; carry the remainder so the
+        // average rate is exact despite the 30.5 us tick.
+        let mut carry: f32 = 0.0;
         let mut next = Instant::now();
 
-        while self.position != target {
+        loop {
             if let Some(command) = SERVO_COMMAND.try_take()
                 && command == ServoRudderCommand::Initialize
             {
                 return MoveResult::Initialize;
             }
-            if mode == MoveMode::Tracking {
-                if let Some(setpoint) = SERVO_SETPOINT.try_take() {
-                    self.watchdog_deadline = Instant::now() + WATCHDOG_TIMEOUT;
-                    CURRENT_SETPOINT.store(setpoint, Ordering::Relaxed);
-                    target = setpoint_to_steps(setpoint).clamp(0, TRAVEL_STEPS);
-                    continue;
-                }
-                if Instant::now() >= self.watchdog_deadline {
-                    return MoveResult::WatchdogExpired;
-                }
+            if let Some(setpoint) = SERVO_SETPOINT.try_take() {
+                self.accept_setpoint(setpoint);
+                target = setpoint_to_steps(setpoint).clamp(0, TRAVEL_STEPS);
             }
-            if blank > 0 {
-                blank -= 1;
-            } else if self.diag.is_high() {
-                warn!("Stall detected at position {}", self.position);
-                return MoveResult::Stalled;
+            if self.state == State::Operational && Instant::now() >= self.watchdog_deadline {
+                self.enter_failsafe();
             }
 
-            let direction = if target > self.position { 1 } else { -1 };
-            let dir_level = if direction > 0 {
-                away_level()
+            let to_go = target - self.position;
+            // Steps still to go in the current direction of travel.
+            let ahead = if moving != 0 && to_go.signum() == moving {
+                to_go.unsigned_abs()
             } else {
-                HOME_DIR_LEVEL
+                0
             };
-            if current_dir != Some(dir_level) {
-                self.dir.set_level(dir_level);
-                current_dir = Some(dir_level);
-                delay_ticks = START_DELAY_TICKS;
+            // Stop once slowed down with nothing ahead, and always at the ends
+            // of travel (a hard stop, but never a run into the stops).
+            let at_limit = (moving < 0 && self.position <= 0)
+                || (moving > 0 && self.position >= TRAVEL_STEPS);
+            // Test v2, not speed: v2 is clamped to exactly START^2, while the
+            // Newton-updated speed only approaches START from above and may
+            // never compare <= in f32, which would run past the target.
+            if moving != 0 && ((ahead == 0 && v2 <= START_SPEED * START_SPEED) || at_limit) {
+                moving = 0;
+            }
+
+            if moving == 0 {
+                if to_go == 0 {
+                    return MoveResult::Reached;
+                }
+                moving = to_go.signum();
+                self.dir.set_level(if moving > 0 {
+                    away_level()
+                } else {
+                    HOME_DIR_LEVEL
+                });
+                v2 = START_SPEED * START_SPEED;
+                speed = START_SPEED;
+                carry = 0.0;
                 blank = STALL_BLANK_STEPS;
                 Timer::after_ticks(1).await;
                 next = Instant::now();
+                continue;
             }
 
-            accel_counter += 1;
-            if accel_counter >= ACCEL_EVERY_N_STEPS {
-                accel_counter = 0;
-                let remaining = (target - self.position).unsigned_abs();
-                let decel_steps = (START_DELAY_TICKS - delay_ticks) as u32 * ACCEL_EVERY_N_STEPS;
-                if remaining <= decel_steps {
-                    if delay_ticks < START_DELAY_TICKS {
-                        delay_ticks += 1;
-                    }
-                } else if delay_ticks > MIN_DELAY_TICKS {
-                    delay_ticks -= 1;
-                }
+            if blank > 0 {
+                blank -= 1;
+            } else if self.diag.is_high() {
+                warn!("DIAG tripped at position {}", self.position);
+                return MoveResult::Stalled;
             }
 
-            self.step_pulse(direction);
+            // Steps needed to brake to START_SPEED from here. This step uses up
+            // one of `ahead`, and accelerating adds one to the braking
+            // distance, so: accelerate only with two to spare, hold with one,
+            // otherwise brake. (Comparing `ahead` to `braking` alone creeps
+            // one step past the target at START_SPEED and oscillates.)
+            let braking = (v2 - START_SPEED * START_SPEED) / (2.0 * ACCEL);
+            let ahead = ahead as f32;
+            if ahead >= braking + 2.0 {
+                v2 = (v2 + 2.0 * ACCEL).min(CRUISE_SPEED * CRUISE_SPEED);
+            } else if ahead < braking + 1.0 {
+                v2 = (v2 - 2.0 * ACCEL).max(START_SPEED * START_SPEED);
+            }
+            // One Newton step from the previous speed: sqrt without libm, and
+            // exact to well under a step/s since v2 changes little per step.
+            speed = 0.5 * (speed + v2 / speed);
 
-            next += Duration::from_ticks(delay_ticks);
+            self.step_pulse(moving);
+
+            let period = TICK_HZ as f32 / speed + carry;
+            let whole = period as u64;
+            carry = period - whole as f32;
+            next += Duration::from_ticks(whole);
             let now = Instant::now();
             if next < now {
                 next = now;
+                carry = 0.0;
             }
             Timer::at(next).await;
         }
-        MoveResult::Reached
     }
 
     async fn initialize(&mut self) -> State {
@@ -549,7 +646,7 @@ impl Servo {
             Ok(()) => {
                 self.watchdog_deadline = Instant::now() + WATCHDOG_TIMEOUT;
                 CURRENT_SETPOINT.store(steps_to_setpoint(self.position), Ordering::Relaxed);
-                self.set_state(State::Operational, FaultCause::None);
+                self.set_state(State::Operational, self.tracking_cause());
                 State::Operational
             }
             Err(cause) => {
@@ -559,33 +656,7 @@ impl Servo {
         }
     }
 
-    /// A stall made the step counter untrustworthy: re-find the home stop so
-    /// the servo at least parks (holding) at the failsafe position.
-    async fn stall_recover(&mut self) -> State {
-        self.set_state(State::Fault, FaultCause::StallDuringMove);
-        Timer::after_millis(100).await;
-        match self.home().await {
-            Ok(()) => info!("Stall recovery: parked at home position"),
-            Err(cause) => warn!("Stall recovery failed: {}", cause),
-        }
-        State::Fault
-    }
-
-    async fn enter_failsafe(&mut self) -> State {
-        warn!("Setpoint watchdog expired; moving to failsafe position");
-        self.set_state(State::FailSafe, FaultCause::None);
-        CURRENT_SETPOINT.store(FAILSAFE_SETPOINT, Ordering::Relaxed);
-        match self
-            .move_to(setpoint_to_steps(FAILSAFE_SETPOINT), MoveMode::Fixed)
-            .await
-        {
-            MoveResult::Reached | MoveResult::WatchdogExpired => State::FailSafe,
-            MoveResult::Initialize => self.initialize().await,
-            MoveResult::Stalled => self.stall_recover().await,
-        }
-    }
-
-    /// Uninitialized / FailSafe / Fault: only an Initialize command acts.
+    /// Uninitialized / Fault: only an Initialize command acts.
     async fn idle_locked(&mut self, state: State) -> State {
         match select(SERVO_COMMAND.wait(), SERVO_SETPOINT.wait()).await {
             Either::First(ServoRudderCommand::Initialize) => self.initialize().await,
@@ -600,33 +671,37 @@ impl Servo {
         }
     }
 
-    async fn operational(&mut self) -> State {
-        match select3(
-            SERVO_SETPOINT.wait(),
-            SERVO_COMMAND.wait(),
-            Timer::at(self.watchdog_deadline),
-        )
-        .await
-        {
+    /// Operational / FailSafe: follow setpoints. The watchdog only runs while
+    /// Operational; in FailSafe the servo holds until a setpoint arrives.
+    async fn tracking(&mut self) -> State {
+        let deadline = self.watchdog_deadline;
+        let operational = self.state == State::Operational;
+        let watchdog = async {
+            if operational {
+                Timer::at(deadline).await
+            } else {
+                core::future::pending::<()>().await
+            }
+        };
+        match select3(SERVO_SETPOINT.wait(), SERVO_COMMAND.wait(), watchdog).await {
             Either3::First(setpoint) => {
-                self.watchdog_deadline = Instant::now() + WATCHDOG_TIMEOUT;
-                CURRENT_SETPOINT.store(setpoint, Ordering::Relaxed);
-                match self
-                    .move_to(setpoint_to_steps(setpoint), MoveMode::Tracking)
-                    .await
-                {
-                    MoveResult::Reached => State::Operational,
-                    MoveResult::Initialize => self.initialize().await,
-                    MoveResult::Stalled => self.stall_recover().await,
-                    MoveResult::WatchdogExpired => self.enter_failsafe().await,
+                self.accept_setpoint(setpoint);
+                match self.move_to(setpoint_to_steps(setpoint)).await {
+                    MoveResult::Reached => {}
+                    MoveResult::Stalled => self.note_stall(),
+                    MoveResult::Initialize => return self.initialize().await,
                 }
+                self.state
             }
             Either3::Second(ServoRudderCommand::Initialize) => self.initialize().await,
             Either3::Second(_) => {
                 warn!("Unknown servo command ignored");
-                State::Operational
+                self.state
             }
-            Either3::Third(_) => self.enter_failsafe().await,
+            Either3::Third(()) => {
+                self.enter_failsafe();
+                self.state
+            }
         }
     }
 }
@@ -659,13 +734,21 @@ pub async fn servo_control_task(
         },
         position: 0,
         watchdog_deadline: Instant::now(),
+        state: State::Uninitialized,
+        tracking_fault: FaultCause::None,
     };
-    let mut state = State::Uninitialized;
-    servo.set_state(state, FaultCause::None);
+    servo.set_state(State::Uninitialized, FaultCause::None);
+
+    // Home at power-up instead of waiting for Initialize. An Initialize that
+    // arrived during the delay is dropped, or it would re-home right after.
+    Timer::after(BOOT_HOME_DELAY).await;
+    SERVO_COMMAND.reset();
+    info!("Power-up homing");
+    let mut state = servo.initialize().await;
 
     loop {
         state = match state {
-            State::Operational => servo.operational().await,
+            State::Operational | State::FailSafe => servo.tracking().await,
             State::Homing => core::unreachable!(),
             _ => servo.idle_locked(state).await,
         };

@@ -27,7 +27,7 @@ const STATE_SETTLE_GRACE: Duration = Duration::from_secs(2);
 pub enum RudderCommand {
     /// Hold the rudder at a setpoint, re-sending it to feed the firmware's 2 s watchdog
     Set {
-        /// Servo setpoint: 1000 (home/failsafe end) to 2000 (far end)
+        /// Servo setpoint: 2000 (home end) to 1000 (far end)
         #[arg(value_parser = clap::value_parser!(u16).range(SETPOINT_MIN as i64..=SETPOINT_MAX as i64))]
         setpoint: u16,
 
@@ -228,9 +228,10 @@ impl StatusTracker {
     }
 
     /// A state in which the controller ignores setpoints, persisting past the grace.
+    /// FailSafe is not one: it holds position and resumes on the next setpoint.
     fn locked_state_timeout(&self) -> Option<&ServoStatus> {
         let last = self.last.as_ref()?;
-        (matches!(last.state, ServoState::Uninitialized | ServoState::FailSafe)
+        (last.state == ServoState::Uninitialized
             && self.state_since.elapsed() > STATE_SETTLE_GRACE)
             .then_some(last)
     }
@@ -619,10 +620,15 @@ mod tests {
     #[test]
     fn locked_states_time_out_but_active_states_do_not() {
         let mut tracker = StatusTracker::new();
-        tracker.record(status(ServoState::FailSafe, ServoFaultCause::None));
+        tracker.record(status(ServoState::Uninitialized, ServoFaultCause::None));
         assert!(tracker.locked_state_timeout().is_none());
         tracker.state_since = Instant::now() - STATE_SETTLE_GRACE - Duration::from_millis(1);
         assert!(tracker.locked_state_timeout().is_some());
+
+        let mut tracker = StatusTracker::new();
+        tracker.record(status(ServoState::FailSafe, ServoFaultCause::None));
+        tracker.state_since = Instant::now() - STATE_SETTLE_GRACE - Duration::from_millis(1);
+        assert!(tracker.locked_state_timeout().is_none());
 
         let mut tracker = StatusTracker::new();
         tracker.record(status(ServoState::Homing, ServoFaultCause::None));
