@@ -923,6 +923,7 @@ fn add_throttle(v: &mut Vec<HaEntity>) {
             .measurement()
             .diagnostic(),
     );
+    v.push(sensor("throttle_state", "Throttle State", "Throttle.State").icon("mdi:power"));
 
     v.push(
         sensor(
@@ -1731,6 +1732,7 @@ mod tests {
                 lever_forward: 0,
                 lever_backward: 0,
             })),
+            EoiCanData::Throttle(ThrottleData::State(ThrottleState::Armed)),
             // Rudder
             EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Setpoint(0))),
             EoiCanData::RudderController(RudderControllerData::Servo(ServoData::Status(

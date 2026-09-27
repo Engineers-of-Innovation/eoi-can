@@ -28,6 +28,7 @@ See [CAN_MESSAGES.md](../../CAN_MESSAGES.md) for the byte layouts.
 | 0x010 | ServoRudderSetpoint | to rudder controller | u16 LE, 1000–2000. Out-of-range values are rejected and do **not** feed the watchdog. |
 | 0x020 | ServoRudderStatus | from rudder controller | Every 100 ms: state, current setpoint, actual position (setpoint units), fault cause. |
 | 0x021 | ServoRudderCommand | to rudder controller | 0 = Initialize. Starts (re-)homing from **any** state. |
+| 0x339 | ThrottleState | from the throttle | Armed at power-up → no homing (see Transitions). |
 
 Design rule: once homed, the servo never takes authority away from the
 autopilot. A timeout or a stall is reported on 0x020, and the servo keeps
@@ -39,7 +40,7 @@ make a flying boat any safer.
 
 | State | Meaning | Setpoints | Motor |
 | --- | --- | --- | --- |
-| 0 Uninitialized | The first second after power-up, before homing starts. No absolute position known. | Ignored | Driver disabled (free) |
+| 0 Uninitialized | The first second after power-up, before homing starts; or held after a power-up with the throttle armed. No absolute position known. | Ignored | Driver disabled (free); energized, holding, when held for an armed throttle |
 | 1 Operational | Homed, following setpoints. | Followed | Energized (hold current at standstill) |
 | 2 Homing | Running the homing sequence. | Ignored (latest one is picked up when Operational) | Energized, homing current (`IRUN_HOMING`) |
 | 3 FailSafe | Setpoint watchdog expired; holding the last setpoint. | The next valid one resumes Operational | Energized, holding |
@@ -55,8 +56,16 @@ Transitions:
   Initialize is needed. The foil moves without a command, so keep clear of the
   mechanism at power-on. If the driver is not ready (e.g. motor supply off),
   this ends in Fault and needs an Initialize once it is.
-- **Initialize (0x021)** from any state → Homing. This is the only way out of
-  Fault or Uninitialized, and the only thing that clears a StallDuringMove flag.
+- **Power-up with the throttle armed** (ThrottleState 0x339 = Armed within
+  that 1 s): no homing. The board reset under way, and homing would swing the
+  foil through its whole travel. The driver is configured and energized at
+  once, so the foil holds where it is, and the state stays Uninitialized
+  (setpoints ignored, position unknown) until an Initialize homes it. A driver
+  that does not configure → Fault, driver disabled. No ThrottleState at all
+  (throttle off, bench) homes as usual.
+- **Initialize (0x021)** from any state → Homing, whatever the throttle
+  state. This is the only way out of Fault or Uninitialized, and the only
+  thing that clears a StallDuringMove flag.
 - **Homing success** → Operational with the fault cause cleared. The watchdog
   starts immediately.
 - **Homing failure** → Fault, driver disabled.
@@ -132,7 +141,7 @@ All in one block at the top of `app/src/servo_rudder.rs`.
 | `HOMING_SPEED` | = `CRUISE_SPEED` | Open-loop homing speed, reached with the same ramp from `START_SPEED`, at `IRUN_HOMING`. The backoff runs at `START_SPEED`. |
 | `START_SPEED` / `CRUISE_SPEED` / `ACCEL` | 200 / 4000 steps/s, 5000 steps/s² | Constant-acceleration move profile (full steps). Bench-tuned (2026-09): ACCEL 8000+ stalled at any cruise speed with motor and driver cool; 5000 steps/s was too fast. |
 | `WATCHDOG_TIMEOUT` | 2 s | Setpoint watchdog. |
-| `BOOT_HOME_DELAY` | 1 s | Delay before the automatic power-up homing. |
+| `BOOT_HOME_DELAY` | 1 s | Delay before the automatic power-up homing, and how long an Armed ThrottleState (every 200 ms) is waited for. |
 
 ## Bring-up checklist
 

@@ -87,6 +87,38 @@ pub enum ThrottleData {
     ToVescRpm(f32),
     Status(ThrottleStatus),
     Config(ThrottleConfig),
+    State(ThrottleState),
+}
+
+/// The throttle's state machine (`mainState_t` in the can-throttle firmware),
+/// sent on 0x339 with every status frame while Disarmed or Armed.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Serialize)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub enum ThrottleState {
+    Booting,
+    /// Waiting to be armed; the VESC is commanded to zero.
+    Disarmed,
+    /// Armed: the lever drives the VESC.
+    Armed,
+    GoToBootloader,
+    Error,
+    Programming,
+    #[default]
+    Unknown,
+}
+
+impl From<u8> for ThrottleState {
+    fn from(value: u8) -> Self {
+        match value {
+            0 => Self::Booting,
+            1 => Self::Disarmed,
+            2 => Self::Armed,
+            3 => Self::GoToBootloader,
+            4 => Self::Error,
+            5 => Self::Programming,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 #[derive(Debug, Serialize)]
@@ -1267,6 +1299,7 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             }
             _ => None,
         },
+        0x339 => Some(EoiCanData::Throttle(ThrottleData::State((*data.first()?).into()))),
         _ => None,
     }
 }
@@ -1993,6 +2026,24 @@ mod tests {
         assert!(status.error.gain_invalid);
         assert!(status.error.deadman_missing);
         assert!(status.error.impedance_high);
+    }
+
+    #[test]
+    fn throttle_state_decode() {
+        let parse = |raw: &[u8]| {
+            let can_frame = can_frame::CanFrame::from_encoded(
+                embedded_can::Id::Standard(StandardId::new(0x339).unwrap()),
+                raw,
+            );
+            match parse_eoi_can_data(&can_frame) {
+                Some(EoiCanData::Throttle(ThrottleData::State(s))) => Some(s),
+                _ => None,
+            }
+        };
+        assert_eq!(parse(&[1]), Some(ThrottleState::Disarmed));
+        assert_eq!(parse(&[2]), Some(ThrottleState::Armed));
+        assert_eq!(parse(&[9]), Some(ThrottleState::Unknown));
+        assert_eq!(parse(&[]), None);
     }
 
     #[test]

@@ -251,6 +251,7 @@ fn throttle_columns() -> &'static [&'static str] {
         "throttle.config.control_type",
         "throttle.config.lever_forward",
         "throttle.config.lever_backward",
+        "throttle.state",
     ]
 }
 
@@ -286,6 +287,7 @@ fn flatten_throttle(t: &ThrottleData, out: &mut Vec<(String, String)>) {
                 c.lever_backward.to_string(),
             ));
         }
+        ThrottleData::State(s) => out.push(("throttle.state".into(), format!("{:?}", s))),
     }
 }
 
