@@ -222,7 +222,9 @@ impl LiveState {
             EoiCanData::Hydrofoil(h) => self.apply_hydrofoil(h, now),
             EoiCanData::Temperature(t) => self.apply_temperature(t, now),
             // No live field consumes these; decoded successfully but nothing to do.
-            EoiCanData::DataLogger(_) => {}
+            // FoilTune/FoilConfig (0x260-0x264) are the tuning keyboard's traffic,
+            // drawn by the foiling display, not telemetry.
+            EoiCanData::DataLogger(_) | EoiCanData::FoilTune(_) | EoiCanData::FoilConfig(_) => {}
         }
     }
 

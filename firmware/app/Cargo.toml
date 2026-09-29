@@ -3,6 +3,22 @@ name = "eoi-firmware"
 version = "0.1.0"
 edition = "2024"
 
+# One crate, one chip feature, four boards.
+#
+# The foiling display board is an STM32L476RG where the rest of the fleet is an
+# STM32L471RG, but the two are compatible enough to share a compiled image: the
+# whole difference in `stm32-metapac`'s generated PAC is the USB_OTG_FS and LCD
+# register blocks plus their two interrupt-table entries (67 and 78). Every base
+# address, RCC enable bit, DMA channel and request number, and every interrupt
+# number these binaries bind is identical, and both parts have 1 MB of flash.
+#
+# So everything is built for `stm32l471rg`, the *subset*, and the foiling image
+# runs unmodified on the L476. Building for the subset is what makes this safe
+# rather than lucky: the PAC cannot expose USB or the LCD, so no binary can
+# accidentally depend on a peripheral the L471 boards lack, and the two vector
+# slots that stay `_reserved` belong to peripherals whose clocks can never be
+# enabled. See `docs/crate-layout.md`.
+
 [[bin]]
 name = "height-sensor-controller"
 path = "src/bin/height_sensor_controller.rs"
@@ -14,6 +30,10 @@ path = "src/bin/rudder_controller.rs"
 [[bin]]
 name = "dashboard"
 path = "src/bin/dashboard.rs"
+
+[[bin]]
+name = "foiling"
+path = "src/bin/foiling.rs"
 
 [build-dependencies]
 built = { version = "0.8", features = [ "git2" ] }

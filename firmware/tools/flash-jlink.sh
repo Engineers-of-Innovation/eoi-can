@@ -23,8 +23,20 @@ set -e
 ELF="$1"
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
-CHIP=STM32L471RGTx        # probe-rs chip name
-JLINK_DEVICE=STM32L471RG  # J-Link Commander device name
+# Chip names. The foiling display board is an STM32L476RG where the rest of the
+# fleet is an STM32L471RG. The image is the same either way (everything is built
+# for the L471 subset, see app/Cargo.toml), but the flash programmer has to be
+# told the part it is really talking to. Override with FLASH_CHIP/JLINK_DEVICE.
+case "$(basename "$ELF")" in
+foiling)
+    CHIP="${FLASH_CHIP:-STM32L476RGTx}"          # probe-rs chip name
+    JLINK_DEVICE="${JLINK_DEVICE:-STM32L476RG}"  # J-Link Commander device name
+    ;;
+*)
+    CHIP="${FLASH_CHIP:-STM32L471RGTx}"
+    JLINK_DEVICE="${JLINK_DEVICE:-STM32L471RG}"
+    ;;
+esac
 HEADER_BASE=0x08014000    # HEADER partition, see linker/app.x
 APP_BASE=0x08014800       # FLASH origin with --features bootloader
 
@@ -35,6 +47,45 @@ ATTACH=()
 if [ "${FLASH_CONNECT_UNDER_RESET:-0}" != "0" ]; then
     ATTACH=(--connect-under-reset)
 fi
+
+# `JLink.exe` is an unfortunate name collision: the JDK ships `jlink.exe` (the
+# module linker) in its own bin directory, and on Windows' case-insensitive
+# filesystem that answers to `JLink.exe` too. Resolving through PATH alone picks
+# whichever directory comes first and then fails with Java usage text, so prefer
+# SEGGER's install locations and only accept a PATH hit from a SEGGER path.
+# Override with JLINK_EXE.
+find_jlink_exe() {
+    if [ -n "${JLINK_EXE:-}" ]; then
+        printf '%s\n' "$JLINK_EXE"
+        return 0
+    fi
+
+    local c
+    for c in "/mnt/c/Program Files/SEGGER/JLink/JLink.exe" \
+        "/mnt/c/Program Files (x86)/SEGGER/JLink/JLink.exe"; do
+        if [ -x "$c" ]; then
+            printf '%s\n' "$c"
+            return 0
+        fi
+    done
+
+    # Versioned installs, newest first, when the unversioned directory is absent.
+    c=$(ls -d /mnt/c/Program\ Files*/SEGGER/JLink_V*/JLink.exe 2>/dev/null |
+        sort -V | tail -1)
+    if [ -n "$c" ] && [ -x "$c" ]; then
+        printf '%s\n' "$c"
+        return 0
+    fi
+
+    c=$(command -v JLink.exe 2>/dev/null) || return 1
+    case "$c" in
+    *SEGGER*)
+        printf '%s\n' "$c"
+        return 0
+        ;;
+    esac
+    return 1
+}
 
 backend="${FLASH_BACKEND:-}"
 if [ -z "$backend" ]; then
@@ -58,7 +109,7 @@ APP_IMAGE=""
 if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     BIN=$(basename "$ELF")
     case "$BIN" in
-    rudder-controller | height-sensor-controller) ;;
+    rudder-controller | height-sensor-controller | dashboard | foiling) ;;
     *)
         echo "flash-jlink.sh: '$BIN' is linked at $APP_BASE but has no matching" >&2
         echo "  bootloader variant; set FLASH_BOOTLOADER=0 to flash it alone" >&2
@@ -79,21 +130,38 @@ if [ "$lowest_lma" = "$APP_BASE" ] && [ "${FLASH_BOOTLOADER:-1}" != "0" ]; then
     FLASH_TOOL="$REPO_ROOT/flash-tool/target/x86_64-unknown-linux-gnu/release/eoi-flash-tool"
     if [ ! -x "$FLASH_TOOL" ]; then
         echo "flash-jlink.sh: building the flash tool (generates the app header)"
-        cargo build --release --manifest-path "$REPO_ROOT/flash-tool/Cargo.toml"
+        # From inside its own directory, not via --manifest-path: cargo reads
+        # .cargo/config.toml from the working directory, so a --manifest-path
+        # build from the firmware workspace inherits `target =
+        # thumbv7em-none-eabihf` and tries to compile a host binary — clap and
+        # all — for the MCU. flash-tool/.cargo/config.toml sets the host target,
+        # and only a build run from there picks it up.
+        (cd "$REPO_ROOT/flash-tool" && cargo build --release)
     fi
-    APP_IMAGE="${ELF}.img"
+    # `.bin`, not `.img`: J-Link Commander picks a file format from the extension
+    # even under `loadbin`, and answers an unrecognised one with "File is of
+    # unknown / unsupported format" — after having already flashed the
+    # bootloader, which leaves a board with no app on it.
+    APP_IMAGE="${ELF}.bin"
     "$FLASH_TOOL" image "$ELF" --output "$APP_IMAGE"
 fi
 
 case "$backend" in
 jlink)
-    for tool in arm-none-eabi-objcopy JLink.exe wslpath; do
+    for tool in arm-none-eabi-objcopy wslpath; do
         if ! command -v "$tool" >/dev/null 2>&1; then
             echo "flash-jlink.sh: '$tool' not found; needed for the jlink backend" >&2
             echo "  (set FLASH_BACKEND=probe-rs to use probe-rs instead)" >&2
             exit 1
         fi
     done
+
+    if ! JLINK=$(find_jlink_exe); then
+        echo "flash-jlink.sh: SEGGER's JLink.exe not found; needed for the jlink" >&2
+        echo "  backend. Set JLINK_EXE to its full path, or FLASH_BACKEND=probe-rs" >&2
+        echo "  to use probe-rs instead." >&2
+        exit 1
+    fi
 
     SCRIPT=$(mktemp /tmp/flash_XXXXXX.jlink)
     # Clean up even when JLink.exe fails and `set -e` aborts.
@@ -120,7 +188,7 @@ jlink)
         echo "exit"
     } > "$SCRIPT"
 
-    JLink.exe -commanderscript "$WIN_SCRIPT"
+    "$JLINK" -commanderscript "$WIN_SCRIPT"
     ;;
 probe-rs)
     if ! command -v probe-rs >/dev/null 2>&1; then

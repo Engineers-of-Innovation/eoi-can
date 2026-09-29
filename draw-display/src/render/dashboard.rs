@@ -1,151 +1,24 @@
+//! The helm dashboard: speed in the centre, power on the left, temperatures on
+//! the right, and three times across the bottom.
+//!
+//! Geometry only -- the `Cell` model, the fonts and every widget come from
+//! [`super`]. What lives here is where things go, and the compile-time
+//! assertions that keep them from colliding as the constants are retuned.
+
 use core::fmt::Write;
 
 use embedded_graphics::{
     image::{Image, ImageRaw},
-    mono_font::{ascii::FONT_4X6, MonoTextStyle, MonoTextStyleBuilder},
     pixelcolor::BinaryColor,
     prelude::*,
-    text::{Alignment, Text},
+    text::Alignment,
 };
 use eoi_can_decoder::{BatteryState, ChargeState, DischargeState};
 use heapless::String;
-use u8g2_fonts::{
-    types::{FontColor, HorizontalAlignment, VerticalPosition},
-    FontRenderer,
-};
+use u8g2_fonts::types::HorizontalAlignment;
 
-use crate::{built_info, DisplayData, GnssFix, MpptId, Side};
-
-pub const DISPLAY_WIDTH: u32 = 792;
-pub const DISPLAY_HEIGHT: u32 = 272;
-
-/// A rectangular region in absolute screen pixels.
-///
-/// Layout is expressed by subdividing cells rather than by absolute magic
-/// numbers, so a cell's contents are positioned relative to its own edges and
-/// every split retunes when its parent changes. `embedded-graphics` has no
-/// layout engine -- it draws at absolute coordinates -- so this is the whole of
-/// the geometry model.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-struct Cell {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-}
-
-impl Cell {
-    const ZERO: Self = Self {
-        x: 0,
-        y: 0,
-        w: 0,
-        h: 0,
-    };
-
-    const fn right(&self) -> i32 {
-        self.x + self.w
-    }
-
-    const fn bottom(&self) -> i32 {
-        self.y + self.h
-    }
-
-    const fn center_x(&self) -> i32 {
-        self.x + self.w / 2
-    }
-
-    /// Split into columns proportional to `weights`. The last column absorbs
-    /// the rounding remainder, so the parts always tile the parent exactly.
-    const fn cols<const N: usize>(&self, weights: [i32; N]) -> [Self; N] {
-        let mut total = 0;
-        let mut i = 0;
-        while i < N {
-            total += weights[i];
-            i += 1;
-        }
-
-        let mut out = [Self::ZERO; N];
-        let mut x = self.x;
-        let mut i = 0;
-        while i < N {
-            let w = if i + 1 == N {
-                self.right() - x
-            } else {
-                self.w * weights[i] / total
-            };
-            out[i] = Self {
-                x,
-                y: self.y,
-                w,
-                h: self.h,
-            };
-            x += w;
-            i += 1;
-        }
-        out
-    }
-
-    /// Split into `N` equal-height rows, the last absorbing the remainder.
-    const fn rows<const N: usize>(&self) -> [Self; N] {
-        let mut out = [Self::ZERO; N];
-        let pitch = self.h / N as i32;
-        let mut i = 0;
-        while i < N {
-            let h = if i + 1 == N {
-                self.bottom() - (self.y + pitch * i as i32)
-            } else {
-                pitch
-            };
-            out[i] = Self {
-                x: self.x,
-                y: self.y + pitch * i as i32,
-                w: self.w,
-                h,
-            };
-            i += 1;
-        }
-        out
-    }
-
-    /// Shrink by `dx` on the left and right, `dy` on the top and bottom.
-    const fn inset(&self, dx: i32, dy: i32) -> Self {
-        Self {
-            x: self.x + dx,
-            y: self.y + dy,
-            w: self.w - 2 * dx,
-            h: self.h - 2 * dy,
-        }
-    }
-
-    /// Centre y of each item in a vertically centred stack of `heights`
-    /// separated by `gap`. Used to hang a label off a big value without
-    /// hand-tuning either position.
-    const fn stack_centers<const N: usize>(&self, heights: [i32; N], gap: i32) -> [i32; N] {
-        let mut total = gap * (N as i32 - 1);
-        let mut i = 0;
-        while i < N {
-            total += heights[i];
-            i += 1;
-        }
-
-        let mut out = [0; N];
-        let mut y = self.y + (self.h - total) / 2;
-        let mut i = 0;
-        while i < N {
-            out[i] = y + heights[i] / 2;
-            y += heights[i] + gap;
-            i += 1;
-        }
-        out
-    }
-}
-
-const SCREEN: Cell = Cell {
-    x: 0,
-    y: 0,
-    w: DISPLAY_WIDTH as i32,
-    h: DISPLAY_HEIGHT as i32,
-};
+use super::*;
+use crate::{built_info, DisplayData, Endurance, GnssFix, MpptId, Side};
 
 /// Height of the full-width bottom row holding the three times. Setting it also
 /// sets where the band above ends, and so how far down the icons, temperatures and
@@ -186,12 +59,6 @@ const COL_PAD_Y: i32 = 4;
 const LEFT_INNER: Cell = COL_LEFT.inset(COL_PAD_X, COL_PAD_Y);
 const RIGHT_INNER: Cell = COL_RIGHT.inset(COL_PAD_X, COL_PAD_Y);
 
-/// Height reserved across the very top for the 4x6 stamp line: the IP address in
-/// the left corner and the build stamp over the centre column. `FONT_4X6` at
-/// `VERSION_BASELINE_Y` reaches down to y=6, so this keeps the headlines' ink
-/// clear of it.
-const STAMP_BAND_H: i32 = 8;
-
 /// Both outer columns open with a headline value over a small label -- net power
 /// on the left, state of charge on the right. They share one block so the two big
 /// figures sit on the same line.
@@ -214,8 +81,6 @@ const LEFT_BODY: Cell = Cell {
     ..LEFT_INNER
 };
 
-/// Advance of '%' in `FONT_BIG`, pinned by `font_metrics_match_the_layout`.
-const BIG_PCT_W: i32 = 63;
 /// State of charge shares the net power font, with a percent sign after it at the
 /// same size as the speed's tenth. The pair is right-aligned on the column, so the
 /// sign lands on the same edge as the temperatures below it.
@@ -228,21 +93,14 @@ const SOC_VALUE_LEFT: i32 = SOC_VALUE_RIGHT - 3 * NET_DIGIT_W;
 /// The sign sits on the same bottom edge as the digits, as the speed's tenth does.
 const SOC_PCT_CENTER_Y: i32 = HEADLINE_VALUE_Y + NET_DIGIT_H / 2 - BIG_DIGIT_H / 2;
 
-/// Advance of "°C" in `FONT_SMALL`, pinned by `font_metrics_match_the_layout`.
-const SMALL_DEG_C_W: i32 = 21;
-/// Gap between a temperature and its degree sign.
-const TEMP_UNIT_GAP: i32 = 4;
 /// Width reserved for a temperature's digits, to the left of its degree sign:
 /// three digits, so the sign holds still whether the value is 8 or 108. The draw
 /// code right-aligns from the cell edge instead, so this only records the space
 /// the grid must leave -- `widest_values_fit_their_cells` enforces it.
 #[allow(dead_code)]
 const TEMP_FIELD_W: i32 = 3 * MID_DIGIT_W;
-/// Gap between a temperature and its label. Independent of `STACK_LABEL_GAP` --
-/// this one separates a value from a label, not two label lines.
-const TEMP_LABEL_GAP: i32 = 7;
 /// Height of one temperature: value over label.
-const TEMP_BLOCK_H: i32 = MID_DIGIT_H + TEMP_LABEL_GAP + SMALL_CAP_H;
+const TEMP_BLOCK_H: i32 = MID_DIGIT_H + LABEL_GAP + SMALL_CAP_H;
 /// Gap between the two rows of the grid.
 const TEMP_ROW_GAP: i32 = 20;
 /// Air between the grid and the times under it. Measured against the times for the
@@ -263,17 +121,12 @@ const TEMP_ROWS: [Cell; 2] = TEMP_GRID.rows();
 // The grid must clear the headline's label line above it.
 const _: () = assert!(TEMP_GRID.y >= HEADLINE_LABEL_Y + SMALL_CAP_H / 2);
 
-/// Metrics of `FONT_NET`, pinned by `font_metrics_match_the_layout`.
-const NET_DIGIT_H: i32 = 58;
-const NET_DIGIT_W: i32 = 48;
 /// Gap between the net power value and its label line.
 const NET_STACK_GAP: i32 = 8;
 
 /// The in/out values are right-aligned against their labels, which start here.
 const POWER_LEFT_X: i32 = LEFT_INNER.x;
 
-/// Advance of '-' in `FONT_NET`, pinned by `font_metrics_match_the_layout`.
-const NET_MINUS_W: i32 = 32;
 /// The widest net power: a minus and four digits.
 const NET_FIELD_W: i32 = NET_MINUS_W + 4 * NET_DIGIT_W;
 /// The net power figure is right-justified and grows leftwards, so its last digit
@@ -309,15 +162,14 @@ const IN_OUT_BLOCK_H: i32 = if MID_DIGIT_H > 2 * SMALL_CAP_H + STACK_LABEL_GAP {
 };
 /// Value centres of the temperature grid's two rows.
 const TEMP_VALUE_CENTERS: [i32; 2] = [
-    TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0],
-    TEMP_ROWS[1].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0],
+    TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], LABEL_GAP)[0],
+    TEMP_ROWS[1].stack_centers([MID_DIGIT_H, SMALL_CAP_H], LABEL_GAP)[0],
 ];
 
 /// How far a label sits under its value, taken from the temperature grid so the
 /// in/out rows match it exactly rather than by eye.
-const TEMP_LABEL_OFFSET: i32 = TEMP_ROWS[0]
-    .stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[1]
-    - TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP)[0];
+const TEMP_LABEL_OFFSET: i32 = TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], LABEL_GAP)[1]
+    - TEMP_ROWS[0].stack_centers([MID_DIGIT_H, SMALL_CAP_H], LABEL_GAP)[0];
 
 /// The in/out pair takes its y from the temperatures opposite, so the two columns
 /// line up on both lines and stay lined up when the grid moves.
@@ -327,44 +179,18 @@ const IN_OUT_CENTERS: [i32; 2] = TEMP_VALUE_CENTERS;
 const _: () = assert!(IN_OUT_CENTERS[0] - IN_OUT_BLOCK_H / 2 >= LEFT_BODY.y);
 const _: () = assert!(IN_OUT_CENTERS[1] + IN_OUT_BLOCK_H / 2 <= LEFT_BODY.bottom());
 
-/// Metrics of `FONT_MID`, pinned by `font_metrics_match_the_layout`.
-const MID_DIGIT_H: i32 = 29;
-const MID_DIGIT_W: i32 = 24;
-const MID_MINUS_W: i32 = 16;
 /// Width reserved for an in/out value: a minus and four digits, the widest these
 /// can reach. The values are left-aligned and shorter ones simply leave a gap, so
 /// that both stacked labels sit at the same x instead of tracking the digits.
 const POWER_FIELD_W: i32 = MID_MINUS_W + 4 * MID_DIGIT_W;
-/// Advance of "W" in `FONT_SMALL`, pinned by `font_metrics_match_the_layout`.
-const SMALL_W_W: i32 = 18;
 /// Right edge of an in/out reading: value, unit, and the label under them all end
 /// here, the same shape as a temperature.
-const IN_OUT_RIGHT: i32 = POWER_LEFT_X + POWER_FIELD_W + TEMP_UNIT_GAP + SMALL_W_W;
+const IN_OUT_RIGHT: i32 = POWER_LEFT_X + POWER_FIELD_W + VALUE_UNIT_GAP + SMALL_W_W;
 /// Two-line labels are gone: the unit drops beside the digits and the name goes
 /// underneath, matching the temperature grid opposite.
 const POWER_IN_LABEL: &str = "Power In";
 const POWER_OUT_LABEL: &str = "Power Out";
-/// Vertical gap between the two lines of a stacked unit/label block.
-const STACK_LABEL_GAP: i32 = 6;
 
-/// The speed's whole numbers are bitmaps, not a font: u8g2-fonts cannot decode a
-/// bit field wider than 7, which caps a font at a 63px advance and so at 76px
-/// digits for this face. `support/ttf-digits-to-raw.py` rasterises them instead,
-/// every glyph in a cell of the same size on a common baseline.
-///
-/// Uniform cells mean the "--" placeholder is exactly as wide as a real "14", so
-/// the block never shifts. `speed_glyphs_match_their_cells` checks the blob.
-const SPEED_GLYPH_ORDER: &str = "0123456789-";
-const SPEED_GLYPHS: &[u8] = include_bytes!("../assets/speed115.raw");
-const SPEED_GLYPH_ROW_BYTES: usize = (SPEED_DIGIT_W as usize).div_ceil(8);
-const SPEED_GLYPH_BYTES: usize = SPEED_GLYPH_ROW_BYTES * SPEED_DIGIT_H as usize;
-
-/// Cell size of those bitmaps, and the metrics of `FONT_SMALL`. Hardcoded so the
-/// speed layout is const; the tests fail if either drifts.
-const SPEED_DIGIT_H: i32 = 115;
-const SPEED_DIGIT_W: i32 = 95;
-const SPEED_DOT_W: i32 = 10;
-const SMALL_CAP_H: i32 = 14;
 /// Gap between the speed and the fix/unit line under it.
 const SPEED_STACK_GAP: i32 = 12;
 
@@ -372,17 +198,6 @@ const SPEED_STACK_GAP: i32 = 12;
 /// tenth. Measured ink-to-ink: each glyph carries side bearings inside its cell or
 /// advance, so positioning on those alone leaves a gap roughly twice this wide.
 const SPEED_DOT_GAP: i32 = 8;
-/// Blank columns inside a digit cell, and inside `FONT_BIG`'s glyphs. Subtracted
-/// out so `SPEED_DOT_GAP` means what it says. The digit figure is the *narrowest*
-/// bearing of any digit -- '1' and '4' reach furthest right -- so the gap holds for
-/// the worst case rather than the average.
-const SPEED_DIGIT_BEARING: i32 = 6;
-const BIG_DOT_BEARING: i32 = 5;
-const BIG_DIGIT_BEARING: i32 = 3;
-/// Metrics of `FONT_BIG`, which draws the right column and both the speed's dot
-/// and its tenth. Pinned by `font_metrics_match_the_layout`.
-const BIG_DIGIT_H: i32 = 49;
-const BIG_DIGIT_W: i32 = 40;
 /// Two whole digits, the dot, and the tenth.
 const SPEED_BLOCK_W: i32 = 2 * SPEED_DIGIT_W + SPEED_DOT_W + BIG_DIGIT_W + 2 * SPEED_DOT_GAP;
 /// Nudges the whole speed right of the column centre -- digits, dot, tenth and the
@@ -449,11 +264,6 @@ const ICON_BAND_TOP: i32 = SPEED_INFO_Y + SMALL_CAP_H / 2;
 const _: () = assert!(ICON_STRIP_Y >= ICON_BAND_TOP);
 const _: () = assert!(ICON_STRIP_Y + ICON_SIZE < TIME_TOP_Y);
 
-/// The build stamp sits at the very top of the centre column, above the speed.
-/// `FONT_4X6` is 6px tall, so a baseline here puts it flush with the screen edge.
-/// The IP address shares this baseline in the top-left corner.
-const VERSION_BASELINE_Y: i32 = 6;
-
 // The stamp line must stay clear of the headline digits under it -- that is what
 // `STAMP_BAND_H` buys.
 const _: () = assert!(VERSION_BASELINE_Y < HEADLINE_VALUE_Y - NET_DIGIT_H / 2);
@@ -473,342 +283,111 @@ const SPEED_UNIT_RIGHT: i32 = SPEED_DEC_X + BIG_DIGIT_W - BIG_DIGIT_BEARING;
 const _: () = assert!(SPEED_CENTER_Y + SPEED_DIGIT_H / 2 < SPEED_INFO_Y - SMALL_CAP_H / 2);
 const _: () = assert!(SPEED_INFO_Y + SMALL_CAP_H / 2 <= BAND_TOP.bottom());
 
-/// Colon advance of `FONT_MID`, pinned by `font_metrics_match_the_layout`. All
-/// three times share that font, so they share one set of metrics.
-const MID_COLON_W: i32 = 12;
-
-/// Geometry of one HH:MM:SS block.
-///
-/// The colons are drawn at fixed positions with each two-character group centred
-/// in its own slot, so the block holds still when dashes stand in for missing
-/// data -- a dash is narrower than a digit, so a plain string would shrink and
-/// shift the whole time.
-#[derive(Copy, Clone)]
-struct TimeMetrics {
-    digit_w: i32,
-    colon_w: i32,
-}
-
-impl TimeMetrics {
-    /// Two digits.
-    const fn group_w(&self) -> i32 {
-        2 * self.digit_w
-    }
-
-    const fn total_w(&self) -> i32 {
-        3 * self.group_w() + 2 * self.colon_w
-    }
-
-    /// Left edge of group `index` (0..3) in a block starting at `left`.
-    const fn group_x(&self, left: i32, index: i32) -> i32 {
-        left + index * (self.group_w() + self.colon_w)
-    }
-
-    /// Left edge of the colon after group `index` (0..2).
-    const fn colon_x(&self, left: i32, index: i32) -> i32 {
-        self.group_x(left, index) + self.group_w()
-    }
-}
-
-const TIME_METRICS: TimeMetrics = TimeMetrics {
-    digit_w: MID_DIGIT_W,
-    colon_w: MID_COLON_W,
-};
-
 /// Two-line label for each time, and the widest line of each -- pinned by
 /// `font_metrics_match_the_layout`. The clock is labelled too, for balance with the
 /// two beside it.
 const CURRENT_TIME_LABEL: [&str; 2] = ["Current", "Time"];
 const CURRENT_TIME_LABEL_W: i32 = 66;
-const RACE_TIME_LABEL: [&str; 2] = ["Race", "Time"];
-const RACE_TIME_LABEL_W: i32 = 44;
+/// The heading's label. Only its first line is fixed -- the second is the compass
+/// point, which changes -- so the block is sized for the widest of either.
+const HEADING_LABEL: &str = "Heading";
+const HEADING_LABEL_W: i32 = 72;
 const TIME_TO_EMPTY_LABEL: [&str; 2] = ["Time to", "Empty"];
+/// The same block the other way round, while the BMS has discharge switched off.
+/// "Full" is the narrower word, so [`TIME_TO_EMPTY_LABEL_W`] sizes the cell for
+/// both and nothing moves when the boat goes on the charger.
+const TIME_TO_FULL_LABEL: [&str; 2] = ["Time to", "Full"];
 const TIME_TO_EMPTY_LABEL_W: i32 = 66;
 
-/// Gap between a time and its label block.
-const TIME_LABEL_GAP: i32 = 8;
 /// Full width each time needs: the digits, plus its label.
 const TIME_BLOCK_W: i32 = TIME_METRICS.total_w();
 const CURRENT_TIME_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + CURRENT_TIME_LABEL_W;
-const RACE_TIME_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + RACE_TIME_LABEL_W;
+/// Three digits, zero-padded like a bearing is written, so the field never changes
+/// width -- and the degree sign after them, as the temperatures do it.
+const HEADING_DIGITS_W: i32 = 3 * MID_DIGIT_W;
+const HEADING_VALUE_W: i32 = HEADING_DIGITS_W + VALUE_UNIT_GAP + SMALL_DEG_W;
+const HEADING_BLOCK_W: i32 = HEADING_VALUE_W + TIME_LABEL_GAP + HEADING_LABEL_W;
 const TIME_TO_EMPTY_BLOCK_W: i32 = TIME_BLOCK_W + TIME_LABEL_GAP + TIME_TO_EMPTY_LABEL_W;
 
 /// Margin from the screen edges for the outer two times.
 const TIME_EDGE_MARGIN: i32 = 12;
 /// Left edge of each time block. Placed by anchor rather than by dividing the row
-/// into cells: the clock sits at the left edge, the race time is centred on the
+/// into cells: the clock sits at the left edge, the heading is centred on the
 /// screen, and time to empty is pushed out to the right edge. Even cells left the
 /// outer two looking inset from the edges they should hang off.
 const CLOCK_LEFT: i32 = TIME_EDGE_MARGIN;
-const RACE_TIME_LEFT: i32 = SCREEN.center_x() - RACE_TIME_BLOCK_W / 2;
+const HEADING_LEFT: i32 = SCREEN.center_x() - HEADING_BLOCK_W / 2;
 const TIME_TO_EMPTY_LEFT: i32 = SCREEN.right() - TIME_EDGE_MARGIN - TIME_TO_EMPTY_BLOCK_W;
 
 // The three blocks must not run into each other.
-const _: () = assert!(CLOCK_LEFT + CURRENT_TIME_BLOCK_W < RACE_TIME_LEFT);
-const _: () = assert!(RACE_TIME_LEFT + RACE_TIME_BLOCK_W < TIME_TO_EMPTY_LEFT);
-
-/// Gap between a value and the label block beside it.
-const BLOCK_GAP: i32 = 10;
-
-// IBM Plex Sans Medium (wght 500), rasterised from the Google Fonts variable TTF by
-// `support/build-fonts.py` (see fonts/README.md). u8g2 ships no Plex, so these
-// are our own blobs; the crate's `Font` trait is public, which is all it takes.
-//
-// Plex Sans has tabular figures -- all ten digits share one advance -- so values
-// don't shift width as they change without forcing a monospace build, and '-',
-// '.' and ':' keep their natural narrow widths. The stock Inconsolata _mn fonts
-// were monospace, which gave punctuation a full digit cell; in a proportional
-// face that reads as "- 2019" and "17: 42: 23", so these are proportional.
-//
-// Subset per font: the value fonts carry only " -.:0123456789", the label font
-// printable ASCII plus U+00B0 for "°C".
-macro_rules! plex_font {
-    ($name:ident, $file:literal) => {
-        struct $name;
-        impl u8g2_fonts::Font for $name {
-            const DATA: &'static [u8] = include_bytes!(concat!("../fonts/", $file));
-        }
-    };
-}
-
-plex_font!(PlexNet58, "plex_net58_tn.u8g2font");
-plex_font!(PlexBig49, "plex_big49_tn.u8g2font");
-plex_font!(PlexMid30, "plex_mid30_tn.u8g2font");
-plex_font!(PlexSmall14, "plex_small14_tf.u8g2font");
-
-/// Net power, the left column's headline.
-const FONT_NET: FontRenderer = FontRenderer::new::<PlexNet58>();
-/// The right column's values.
-const FONT_BIG: FontRenderer = FontRenderer::new::<PlexBig49>();
-const FONT_MID: FontRenderer = FontRenderer::new::<PlexMid30>();
-const FONT_SMALL: FontRenderer = FontRenderer::new::<PlexSmall14>();
-
-/// Offset applied to the GNSS (UTC) time for display, in hours.
-const TIME_OFFSET_HOURS: u8 = 2;
-
-/// Glyph coverage is fixed at compile time, so only actual display errors can
-/// occur here; anything else is a bug in this module.
-fn map_font_err<E>(e: u8g2_fonts::Error<E>) -> E {
-    match e {
-        u8g2_fonts::Error::DisplayError(e) => e,
-        _ => panic!("font rendering failed"),
-    }
-}
-
-/// Draw `text` vertically centred on `center_y`, aligned horizontally against
-/// `anchor_x`. The three alignments cover every element on the screen: values
-/// are right-aligned so digits line up, the speed is centred in its column, and
-/// labels sit left-aligned after the value they belong to.
-fn draw_text<D, C>(
-    display: &mut D,
-    font: &FontRenderer,
-    align: HorizontalAlignment,
-    anchor_x: i32,
-    center_y: i32,
-    text: &str,
-) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = C>,
-    C: PixelColor + From<BinaryColor>,
-{
-    font.render_aligned(
-        text,
-        Point::new(anchor_x, center_y),
-        VerticalPosition::Center,
-        align,
-        FontColor::Transparent(BinaryColor::Off.into()),
-        display,
-    )
-    .map_err(map_font_err)?;
-    Ok(())
-}
-
-/// A value with its unit beside it and its name underneath, all ending on `right`.
-///
-/// The shape both the temperature grid and the power in/out rows use, so the two
-/// columns read the same way: digits right-aligned, unit sitting on the digits'
-/// bottom edge rather than centred on them, label right-aligned below.
-#[allow(clippy::too_many_arguments)]
-fn draw_reading<D, C>(
-    display: &mut D,
-    buf: &mut String<16>,
-    right: i32,
-    value: Option<f32>,
-    unit: &str,
-    unit_w: i32,
-    label: &str,
-    value_y: i32,
-    label_y: i32,
-) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = C>,
-    C: PixelColor + From<BinaryColor>,
-{
-    let unit_x = right - unit_w;
-
-    draw_text(
-        display,
-        &FONT_MID,
-        HorizontalAlignment::Right,
-        unit_x - TEMP_UNIT_GAP,
-        value_y,
-        fmt_f32(buf, value, 0, "--"),
-    )?;
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Left,
-        unit_x,
-        value_y + MID_DIGIT_H / 2 - SMALL_CAP_H / 2,
-        unit,
-    )?;
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Right,
-        right,
-        label_y,
-        label,
-    )
-}
-
-/// One cell of the temperature grid.
-fn draw_temperature<D, C>(
-    display: &mut D,
-    cell: Cell,
-    buf: &mut String<16>,
-    value: Option<f32>,
-    label: &str,
-) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = C>,
-    C: PixelColor + From<BinaryColor>,
-{
-    let [value_y, label_y] = cell.stack_centers([MID_DIGIT_H, SMALL_CAP_H], TEMP_LABEL_GAP);
-    draw_reading(
-        display,
-        buf,
-        cell.right(),
-        value,
-        "°C",
-        SMALL_DEG_C_W,
-        label,
-        value_y,
-        label_y,
-    )
-}
-
-/// A two-line label block -- unit over qualifier -- left-aligned at `left_x` and
-/// vertically centred on `center_y`. Used for the "W" over "in"/"out" blocks.
-fn draw_stacked_label<D, C>(
-    display: &mut D,
-    left_x: i32,
-    center_y: i32,
-    unit: &str,
-    label: &str,
-) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = C>,
-    C: PixelColor + From<BinaryColor>,
-{
-    let block = Cell {
-        x: left_x,
-        y: center_y - SMALL_CAP_H,
-        w: 0,
-        h: 2 * SMALL_CAP_H,
-    };
-    let [unit_y, label_y] = block.stack_centers([SMALL_CAP_H, SMALL_CAP_H], STACK_LABEL_GAP);
-
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Left,
-        left_x,
-        unit_y,
-        unit,
-    )?;
-    draw_text(
-        display,
-        &FONT_SMALL,
-        HorizontalAlignment::Left,
-        left_x,
-        label_y,
-        label,
-    )
-}
-
-/// A time with its label hung off the right, filling one bottom-row cell.
-fn draw_time<D, C>(
-    display: &mut D,
-    font: &FontRenderer,
-    metrics: TimeMetrics,
-    left: i32,
-    groups: [&str; 3],
-    label: Option<([&str; 2], i32)>,
-) -> Result<(), D::Error>
-where
-    D: DrawTarget<Color = C>,
-    C: PixelColor + From<BinaryColor>,
-{
-    let center_y = TIME_CENTER_Y;
-
-    // Each group centred in its own slot, so a narrower "--" stays put.
-    for (index, group) in groups.iter().enumerate() {
-        let index = index as i32;
-        draw_text(
-            display,
-            font,
-            HorizontalAlignment::Center,
-            metrics.group_x(left, index) + metrics.digit_w,
-            center_y,
-            group,
-        )?;
-    }
-    for index in 0..2 {
-        draw_text(
-            display,
-            font,
-            HorizontalAlignment::Left,
-            metrics.colon_x(left, index),
-            center_y,
-            ":",
-        )?;
-    }
-
-    if let Some((lines, _)) = label {
-        draw_stacked_label(
-            display,
-            left + metrics.total_w() + TIME_LABEL_GAP,
-            center_y,
-            lines[0],
-            lines[1],
-        )?;
-    }
-    Ok(())
-}
-
-/// Format a float with the given number of decimals, or dashes when absent.
-fn fmt_f32<'a>(
-    buf: &'a mut String<16>,
-    value: Option<f32>,
-    decimals: usize,
-    dashes: &'static str,
-) -> &'a str {
-    match value {
-        Some(v) => {
-            buf.clear();
-            write!(buf, "{v:.decimals$}").unwrap();
-            buf.as_str()
-        }
-        None => dashes,
-    }
-}
+const _: () = assert!(CLOCK_LEFT + CURRENT_TIME_BLOCK_W < HEADING_LEFT);
+const _: () = assert!(HEADING_LEFT + HEADING_BLOCK_W < TIME_TO_EMPTY_LEFT);
 
 /// Split a speed into its whole-number part and its tenth, for drawing either
 /// side of the fixed dot.
 ///
 /// Rounds to tenths once so the two halves agree: 21.98 must read `22` and `0`,
 /// never `21` and `0`. Absent values give the dashes the old `"--.-"` showed.
+/// Below this the state of charge is drawn to a tenth.
+///
+/// The last tenth of the pack is where the reading has to work hardest: at 9 %
+/// the difference between 9.9 and 9.0 is most of a leg, and a whole number spends
+/// that whole leg saying "9". Above it the tenth is noise -- nobody trims a race
+/// on the difference between 62 and 62.4 %.
+///
+/// 9.95 rather than 10, because a value that rounds up to "10.0" would be four
+/// glyphs and the field has room for three -- the width "100" needs. So the cut
+/// sits exactly where a tenths reading would stop saying 9.9.
+const SOC_TENTHS_BELOW: f32 = 9.95;
+
+/// The state of charge, to a tenth once the pack is nearly out.
+///
+/// The separator is a point, not a comma: the font's subset carries no comma at
+/// this size, and a glyph a font lacks panics through `map_font_err` rather than
+/// dropping out. The speed above it reads `21.7` for the same reason, so the two
+/// agree.
+fn fmt_soc(buf: &mut String<16>, value: Option<f32>) -> &str {
+    let decimals = usize::from(value.is_some_and(|percent| percent < SOC_TENTHS_BELOW));
+    fmt_f32(buf, value, decimals, "--")
+}
+
+/// The 16-point compass name for a bearing in degrees/// The 16-point compass name for a bearing in degrees, which must already be
+/// normalised to 0..360.
+///
+/// Sixteen points rather than eight: the extra names cost nothing to read and
+/// eight would call everything from 023 to 067 "NE", which is most of a beat.
+fn compass_point(degrees: i32) -> &'static str {
+    const POINTS: [&str; 16] = [
+        "N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW",
+        "NW", "NNW",
+    ];
+    // Each point owns 22.5 deg centred on its bearing, so its boundary sits 11.25
+    // before it. Scaled by four to stay in integers: (deg + 11.25) / 22.5.
+    POINTS[(((4 * degrees + 45) / 90) % 16) as usize]
+}
+
+/// Split a heading into the digits to draw and the compass point to name them.
+///
+/// Zero-padded to three, the way a bearing is written and spoken, so the field is
+/// the same width at 007 as at 127.
+fn split_heading(buf: &mut String<16>, value: Option<f32>) -> (&str, &'static str) {
+    match value {
+        Some(v) => {
+            // Half-and-truncate as `split_speed` does it -- `f32::round` is
+            // std-only here. `as` saturates, so a NaN lands on 0 rather than
+            // wrapping to some plausible-looking bearing, and `rem_euclid` folds
+            // 360 back to 0 and tolerates a receiver that reports negatives.
+            let degrees = ((v + 0.5) as i32).rem_euclid(360);
+            buf.clear();
+            write!(buf, "{degrees:03}").ok();
+            (buf.as_str(), compass_point(degrees))
+        }
+        // No fix, or a receiver too slow to have a course yet: the point would be
+        // a guess, so it says nothing rather than pointing north.
+        None => ("---", ""),
+    }
+}
+
 fn split_speed(buf: &mut String<8>, value: Option<f32>) -> (&str, &'static str) {
     const TENTHS: [&str; 10] = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
@@ -857,22 +436,6 @@ fn fmt_gnss_fix(fix: Option<GnssFix>) -> &'static str {
         Some(GnssFix::Fix2D) => "2D fix",
         Some(GnssFix::None) => "No fix",
         None => "---",
-    }
-}
-
-/// Format hours/minutes/seconds as three two-character groups, or dashes.
-///
-/// The colons are not included: `draw_time` places them at fixed positions so the
-/// block does not move when dashes replace digits.
-fn fmt_hms_groups(buf: &mut String<16>, hms: Option<(u8, u8, u8)>) -> [&str; 3] {
-    match hms {
-        Some((h, m, s)) => {
-            buf.clear();
-            write!(buf, "{h:02}{m:02}{s:02}").unwrap();
-            let text = buf.as_str();
-            [&text[0..2], &text[2..4], &text[4..6]]
-        }
-        None => ["--", "--", "--"],
     }
 }
 
@@ -986,12 +549,7 @@ where
         HorizontalAlignment::Right,
         SOC_VALUE_RIGHT,
         HEADLINE_VALUE_Y,
-        fmt_f32(
-            &mut buf,
-            data.battery_state_of_charge.get().copied(),
-            0,
-            "--",
-        ),
+        fmt_soc(&mut buf, data.battery_state_of_charge.get().copied()),
     )?;
     draw_text(
         display,
@@ -1057,10 +615,10 @@ const BATTERY_TEMP_LIMIT: i8 = 45;
 /// A set bit is `BinaryColor::On`, which is this display's background, so the
 /// converter clears the bits where the icon has ink.
 const ICONS: [&[u8]; ICON_COUNT as usize] = [
-    include_bytes!("../assets/batt48.raw"),
-    include_bytes!("../assets/low48.raw"),
-    include_bytes!("../assets/temp48.raw"),
-    include_bytes!("../assets/throttle48.raw"),
+    include_bytes!("../../assets/batt48.raw"),
+    include_bytes!("../../assets/low48.raw"),
+    include_bytes!("../../assets/temp48.raw"),
+    include_bytes!("../../assets/throttle48.raw"),
 ];
 
 /// Draw the icon strip, each icon only while its condition holds.
@@ -1174,7 +732,7 @@ where
     Ok(())
 }
 
-/// Bottom row: time of day, race time, time to empty.
+/// Bottom row: time of day, heading, time to empty.
 fn draw_times<D, C>(
     display: &mut D,
     data: &DisplayData,
@@ -1187,34 +745,79 @@ where
     let time = data
         .time
         .get()
-        .map(|t| ((t.hours + TIME_OFFSET_HOURS) % 24, t.minutes, t.seconds));
+        // Widened before the shift so a negative offset cannot wrap the hour
+        // underneath itself, and `rem_euclid` so it lands back on 0..24 either way.
+        .map(|t| {
+            let hours = (i16::from(t.hours) + i16::from(CLOCK_OFFSET_HOURS)).rem_euclid(24);
+            (hours as u8, t.minutes, t.seconds)
+        });
 
     draw_time(
         display,
         &FONT_MID,
         TIME_METRICS,
         CLOCK_LEFT,
+        TIME_CENTER_Y,
         fmt_hms_groups(buf, time),
         Some((CURRENT_TIME_LABEL, CURRENT_TIME_LABEL_W)),
     )?;
-    // TODO: race time needs a data source (no race-start signal exists yet)
-    draw_time(
+    // Heading takes the centre slot, where the race time used to draw dashes it
+    // had no source for. Drawn as digits at the times' own size so the row still
+    // reads as one line, with the compass point under the label: the number is
+    // what you steer to, the point is what tells you at a glance which way that is.
+    let (degrees, point) = split_heading(buf, data.heading_deg.get().copied());
+    draw_text(
         display,
         &FONT_MID,
-        TIME_METRICS,
-        RACE_TIME_LEFT,
-        fmt_hms_groups(buf, None),
-        Some((RACE_TIME_LABEL, RACE_TIME_LABEL_W)),
+        HorizontalAlignment::Right,
+        HEADING_LEFT + HEADING_DIGITS_W,
+        TIME_CENTER_Y,
+        degrees,
     )?;
-    // TODO: time to empty is not calculated or sent by anything yet
+    // The unit sits on the digits' baseline, as the temperatures' "°C" does.
+    draw_text(
+        display,
+        &FONT_SMALL,
+        HorizontalAlignment::Left,
+        HEADING_LEFT + HEADING_DIGITS_W + VALUE_UNIT_GAP,
+        TIME_CENTER_Y + MID_DIGIT_H / 2 - SMALL_CAP_H / 2,
+        "°",
+    )?;
+    draw_stacked_label(
+        display,
+        HEADING_LEFT + HEADING_VALUE_W + TIME_LABEL_GAP,
+        TIME_CENTER_Y,
+        HEADING_LABEL,
+        point,
+    )?;
+    // Derived on ingest from the smoothed power and the state of charge, and
+    // dashes whenever that could not be worked out -- see `update_endurance`.
+    let (endurance, endurance_label) = endurance_block(data);
     draw_time(
         display,
         &FONT_MID,
         TIME_METRICS,
         TIME_TO_EMPTY_LEFT,
-        fmt_hms_groups(buf, None),
-        Some((TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W)),
+        TIME_CENTER_Y,
+        fmt_hms_groups(buf, endurance),
+        Some((endurance_label, TIME_TO_EMPTY_LABEL_W)),
     )
+}
+
+/// The bottom-right block: how long the pack has, and which way it is going.
+///
+/// The label rides with the figure rather than being worked out again here, so the
+/// word and the number are always the pair `update_endurance` decided together --
+/// they cannot end up contradicting each other. With no figure at all there is no
+/// direction to report either, and the block reads as it does under way.
+fn endurance_block(data: &DisplayData) -> (Option<(u8, u8, u8)>, [&'static str; 2]) {
+    match data.battery_endurance.get() {
+        Some(Endurance::ToEmpty(seconds)) => {
+            (Some(hms_from_seconds(*seconds)), TIME_TO_EMPTY_LABEL)
+        }
+        Some(Endurance::ToFull(seconds)) => (Some(hms_from_seconds(*seconds)), TIME_TO_FULL_LABEL),
+        None => (None, TIME_TO_EMPTY_LABEL),
+    }
 }
 
 fn draw_version<D, C>(display: &mut D) -> Result<(), D::Error>
@@ -1222,12 +825,6 @@ where
     D: DrawTarget<Color = C>,
     C: PixelColor + From<BinaryColor>,
 {
-    let style: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
-        .font(&FONT_4X6)
-        .text_color(BinaryColor::Off.into())
-        .background_color(BinaryColor::On.into())
-        .build();
-
     let mut version: String<64> = String::new();
     write!(
         &mut version,
@@ -1242,14 +839,12 @@ where
     )
     .unwrap();
 
-    Text::with_alignment(
-        version.as_str(),
-        Point::new(COL_MID.center_x(), VERSION_BASELINE_Y),
-        style,
+    draw_stamp(
+        display,
+        COL_MID.center_x(),
         Alignment::Center,
+        version.as_str(),
     )
-    .draw(display)?;
-    Ok(())
 }
 
 /// The data logger's WiFi IP, on the build stamp's line but in the left corner,
@@ -1266,49 +861,15 @@ where
         return Ok(());
     };
 
-    let style: MonoTextStyle<'_, C> = MonoTextStyleBuilder::new()
-        .font(&FONT_4X6)
-        .text_color(BinaryColor::Off.into())
-        .background_color(BinaryColor::On.into())
-        .build();
-
     let mut ip: String<24> = String::new();
     write!(&mut ip, "IP: {address}").unwrap();
 
-    Text::with_alignment(
-        ip.as_str(),
-        Point::new(COL_LEFT.x, VERSION_BASELINE_Y),
-        style,
-        Alignment::Left,
-    )
-    .draw(display)?;
-    Ok(())
+    draw_stamp(display, COL_LEFT.x, Alignment::Left, ip.as_str())
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use eoi_can_decoder::ThrottleErrors;
-
-    #[test]
-    fn fmt_f32_formats_and_dashes() {
-        let mut buf: String<16> = String::new();
-        assert_eq!(fmt_f32(&mut buf, Some(1234.4), 0, "---"), "1234");
-        assert_eq!(fmt_f32(&mut buf, Some(-950.6), 0, "---"), "-951");
-        assert_eq!(fmt_f32(&mut buf, Some(12.34), 1, "--.-"), "12.3");
-        assert_eq!(fmt_f32(&mut buf, None, 0, "---"), "---");
-    }
-
-    #[test]
-    fn fmt_hms_groups_splits_and_dashes() {
-        let mut buf: String<16> = String::new();
-        // Colons are excluded -- `draw_time` places them itself.
-        assert_eq!(
-            fmt_hms_groups(&mut buf, Some((23, 55, 1))),
-            ["23", "55", "01"]
-        );
-        assert_eq!(fmt_hms_groups(&mut buf, None), ["--", "--", "--"]);
-    }
 
     /// The strap-to-label mapping, checked against the documented CAN IDs.
     /// `node = 64 + strap`, `ID = (node << 4) | packet`, bit 3 of the strap selects
@@ -1376,24 +937,6 @@ mod tests {
         );
     }
 
-    /// Width of `text` as `font` will render it.
-    fn width(font: &FontRenderer, text: &str) -> i32 {
-        font.get_rendered_dimensions(text, Point::zero(), VerticalPosition::Center)
-            .unwrap()
-            .advance
-            .x
-    }
-
-    /// Height of a digit as `font` will render it.
-    fn digit_height(font: &FontRenderer) -> i32 {
-        font.get_rendered_dimensions("0", Point::zero(), VerticalPosition::Center)
-            .unwrap()
-            .bounding_box
-            .expect("digit renders")
-            .size
-            .height as i32
-    }
-
     /// The `Cell` splits must tile their parent exactly -- no gap, no overlap, no
     /// rounding loss -- or cells drift out of step with the content placed in them.
     #[test]
@@ -1421,83 +964,57 @@ mod tests {
         const { assert!(COL_LEFT.w > COL_MID.w && COL_RIGHT.w > COL_MID.w) };
     }
 
-    /// The speed layout is const arithmetic over hardcoded font metrics, so a
-    /// regenerated blob at a different size would silently shift the dot and the
-    /// stack. Pin every metric the layout assumes to what the fonts measure.
+    /// The strings this layout reserves width for, checked against the fonts as
+    /// built. The shared `font_metrics_match_their_consts` pins the glyph
+    /// advances; these are widths of text only this screen shows.
     #[test]
-    fn font_metrics_match_the_layout() {
-        // The dot is drawn in FONT_BIG, matching the tenth beside it.
-        let dot = FONT_BIG
-            .get_rendered_dimensions(".", Point::zero(), VerticalPosition::Center)
-            .unwrap()
-            .bounding_box
-            .expect("dot renders")
-            .size
-            .width as i32;
-        assert!(
-            dot <= SPEED_DOT_W,
-            "dot ink is {dot}px, wider than the {SPEED_DOT_W}px reserved for it"
-        );
-
-        let cap = FONT_SMALL
-            .get_rendered_dimensions("T", Point::zero(), VerticalPosition::Center)
-            .unwrap()
-            .bounding_box
-            .expect("cap renders")
-            .size
-            .height as i32;
-        assert_eq!(
-            cap, SMALL_CAP_H,
-            "FONT_SMALL cap height changed; update SMALL_CAP_H"
-        );
-
-        // FONT_BIG draws the right column and the speed's tenth; FONT_NET the net
-        // power figure. Both feed const layout arithmetic, and both must be
-        // tabular or their right-aligned values would shuffle.
-        // FONT_MID's minus and digit advances size the reserved in/out field, and
-        // '%' in FONT_BIG positions the state of charge.
-        assert_eq!(
-            width(&FONT_MID, "-"),
-            MID_MINUS_W,
-            "FONT_MID minus advance changed; update MID_MINUS_W"
-        );
-        assert_eq!(
-            width(&FONT_BIG, "%"),
-            BIG_PCT_W,
-            "FONT_BIG percent advance changed; update BIG_PCT_W"
-        );
-        assert_eq!(
-            width(&FONT_SMALL, "W"),
-            SMALL_W_W,
-            "FONT_SMALL \"W\" advance changed; update SMALL_W_W"
-        );
-        assert_eq!(
-            width(&FONT_SMALL, "°C"),
-            SMALL_DEG_C_W,
-            "FONT_SMALL \"°C\" advance changed; update SMALL_DEG_C_W"
-        );
-        assert_eq!(
-            width(&FONT_NET, "-"),
-            NET_MINUS_W,
-            "FONT_NET minus advance changed; update NET_MINUS_W"
-        );
+    fn label_widths_match_their_consts() {
         assert_eq!(
             width(&FONT_SMALL, "Net Power"),
             NET_LABEL_W,
             "FONT_SMALL \"Net Power\" advance changed; update NET_LABEL_W"
         );
-        // The time blocks are laid out from this, so a drift would move the colons
-        // out from under the digits.
+        // The heading's label block holds two lines that are not both fixed: the
+        // word, and whichever compass point is longest. Either one overflowing
+        // would run the label into the block beside it.
+        for line in [
+            "N",
+            "NNE",
+            "NE",
+            "ENE",
+            "E",
+            "ESE",
+            "SE",
+            "SSE",
+            "S",
+            "SSW",
+            "SW",
+            "WSW",
+            "W",
+            "WNW",
+            "NW",
+            "NNW",
+            HEADING_LABEL,
+        ] {
+            let w = width(&FONT_SMALL, line);
+            assert!(
+                w <= HEADING_LABEL_W,
+                "\"{line}\" is {w}px, past the {HEADING_LABEL_W}px the heading label reserves"
+            );
+        }
         assert_eq!(
-            width(&FONT_MID, ":"),
-            MID_COLON_W,
-            "FONT_MID colon advance changed; update MID_COLON_W"
+            width(&FONT_SMALL, HEADING_LABEL),
+            HEADING_LABEL_W,
+            "\"{HEADING_LABEL}\" no longer sets the label width; update HEADING_LABEL_W"
         );
+
         // The two-line time labels size their cells, so their widest line is layout.
         for (lines, w) in [
             (CURRENT_TIME_LABEL, CURRENT_TIME_LABEL_W),
-            (RACE_TIME_LABEL, RACE_TIME_LABEL_W),
             (TIME_TO_EMPTY_LABEL, TIME_TO_EMPTY_LABEL_W),
+            // Both words share the cell, so the narrower one must not need more
+            // than the wider one reserved.
+            (TIME_TO_FULL_LABEL, TIME_TO_EMPTY_LABEL_W),
         ] {
             let widest = lines.iter().map(|l| width(&FONT_SMALL, l)).max().unwrap();
             assert_eq!(
@@ -1505,22 +1022,115 @@ mod tests {
                 "the widest line of {lines:?} is {widest}px, not the {w}px recorded"
             );
         }
+    }
 
-        for (name, font, h, w) in [
-            ("FONT_BIG", &FONT_BIG, BIG_DIGIT_H, BIG_DIGIT_W),
-            ("FONT_NET", &FONT_NET, NET_DIGIT_H, NET_DIGIT_W),
-            ("FONT_MID", &FONT_MID, MID_DIGIT_H, MID_DIGIT_W),
-        ] {
-            assert_eq!(digit_height(font), h, "{name} digit height changed");
-            assert_eq!(width(font, "0"), w, "{name} digit advance changed");
-            for d in ["1", "4", "9"] {
-                assert_eq!(
-                    width(font, d),
-                    w,
-                    "{name} digit {d:?} is not the same width as '0'"
-                );
+    #[test]
+    fn the_endurance_block_says_which_way_the_pack_is_going() {
+        let mut data = DisplayData::default();
+        // Nothing heard from the BMS: counting down, because that is what a boat
+        // somebody is looking at is doing.
+        assert_eq!(endurance_block(&data), (None, TIME_TO_EMPTY_LABEL));
+
+        data.battery_endurance.update(Endurance::ToEmpty(2385));
+        assert_eq!(
+            endurance_block(&data),
+            (Some((0, 39, 45)), TIME_TO_EMPTY_LABEL)
+        );
+
+        data.battery_endurance.update(Endurance::ToFull(2681));
+        assert_eq!(
+            endurance_block(&data),
+            (Some((0, 44, 41)), TIME_TO_FULL_LABEL)
+        );
+    }
+
+    #[test]
+    fn soc_gains_a_tenth_as_the_pack_empties() {
+        let mut buf: String<16> = String::new();
+        // Plenty left: whole numbers, as before.
+        assert_eq!(fmt_soc(&mut buf, Some(87.0)), "87");
+        assert_eq!(fmt_soc(&mut buf, Some(100.0)), "100");
+        assert_eq!(fmt_soc(&mut buf, Some(10.4)), "10");
+        // Nearly out: the tenth is worth its width.
+        assert_eq!(fmt_soc(&mut buf, Some(9.4)), "9.4");
+        assert_eq!(fmt_soc(&mut buf, Some(9.94)), "9.9");
+        assert_eq!(fmt_soc(&mut buf, Some(0.4)), "0.4");
+        assert_eq!(fmt_soc(&mut buf, Some(0.0)), "0.0");
+        // The boundary is where a tenths reading would stop saying 9.9: 9.95
+        // rounds to "10.0", which is a glyph wider than the field holds.
+        assert_eq!(fmt_soc(&mut buf, Some(9.95)), "10");
+        assert_eq!(fmt_soc(&mut buf, None), "--");
+    }
+
+    /// The tenths reading has to fit the field sized for "100" -- there is no
+    /// wider case to reserve for, so this is what stops it reaching the speed.
+    #[test]
+    fn the_tenths_reading_fits_the_field() {
+        let reserved = SOC_VALUE_RIGHT - SOC_VALUE_LEFT;
+        for text in ["100", "9.9", "0.0"] {
+            let w = width(&FONT_NET, text);
+            assert!(
+                w <= reserved,
+                "\"{text}\" is {w}px, past the {reserved}px the value field reserves"
+            );
+        }
+    }
+
+    #[test]
+    fn split_heading_names_the_point_it_is_in() {
+        let mut buf: String<16> = String::new();
+        assert_eq!(split_heading(&mut buf, Some(0.0)), ("000", "N"));
+        assert_eq!(split_heading(&mut buf, Some(127.0)), ("127", "SE"));
+        // A point owns 11.25 deg either side of its bearing, so the name changes
+        // between 11 and 12, not at 22.
+        assert_eq!(split_heading(&mut buf, Some(11.0)), ("011", "N"));
+        assert_eq!(split_heading(&mut buf, Some(12.0)), ("012", "NNE"));
+        // And back onto north the long way round, which is the wrap the modulo
+        // exists for.
+        assert_eq!(split_heading(&mut buf, Some(348.0)), ("348", "NNW"));
+        assert_eq!(split_heading(&mut buf, Some(349.0)), ("349", "N"));
+        // Rounds to 360, which is 000 -- never a fourth digit.
+        assert_eq!(split_heading(&mut buf, Some(359.7)), ("000", "N"));
+        // No fix: dashes, and no point rather than a guessed one.
+        assert_eq!(split_heading(&mut buf, None), ("---", ""));
+    }
+
+    /// Values no receiver should send, which must still land on the dial rather
+    /// than off it -- or panic the render by indexing past the sixteen points.
+    #[test]
+    fn split_heading_survives_nonsense() {
+        let mut buf: String<16> = String::new();
+        // NaN casts to 0, which is a real bearing and the only sane one to pick.
+        assert_eq!(split_heading(&mut buf, Some(f32::NAN)), ("000", "N"));
+        // Truncation is towards zero, so a negative lands a degree off -- it is a
+        // glitch path, and being on the right point is what matters.
+        assert_eq!(split_heading(&mut buf, Some(-90.0)), ("271", "W"));
+        // The saturating casts put absurd values somewhere arbitrary on the dial.
+        // Which point is not worth pinning; staying on the dial is.
+        for absurd in [f32::INFINITY, f32::NEG_INFINITY, 1.0e9, -1.0e9] {
+            let (degrees, point) = split_heading(&mut buf, Some(absurd));
+            let value: i32 = degrees.parse().expect("three digits");
+            assert!(
+                (0..360).contains(&value),
+                "{absurd} drew {degrees}, which is off the dial"
+            );
+            assert_eq!(point, compass_point(value));
+        }
+    }
+
+    /// Every bearing has a name, and the index that finds it never leaves the
+    /// table -- this runs on a panel that must not die on a stray frame.
+    #[test]
+    fn every_degree_lands_on_a_point() {
+        let mut seen = heapless::Vec::<&str, 16>::new();
+        for degrees in 0..360 {
+            let point = compass_point(degrees);
+            if !seen.contains(&point) {
+                seen.push(point)
+                    .expect("no more than sixteen distinct points");
             }
         }
+        assert_eq!(seen.len(), 16, "not every compass point is reachable");
     }
 
     #[test]
@@ -1615,7 +1225,7 @@ mod tests {
             ("left", TEMP_ROWS[0].cols([1, 1])[0]),
             ("right", TEMP_ROWS[0].cols([1, 1])[1]),
         ] {
-            let digits_left = cell.right() - SMALL_DEG_C_W - TEMP_UNIT_GAP - TEMP_FIELD_W;
+            let digits_left = cell.right() - SMALL_DEG_C_W - VALUE_UNIT_GAP - TEMP_FIELD_W;
             assert!(
                 digits_left >= cell.x,
                 "{cell_name} temperature digits start at {digits_left}, left of the \
@@ -1669,7 +1279,10 @@ mod tests {
             d.battery_state_of_charge.update(LOW_SOC_PERCENT + 1.0);
             d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT - 1.0));
             d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT - 1.0);
-            d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT - 1);
+            d.mppt_heat[0].update(crate::MpptHeat {
+                board: MPPT_TEMP_LIMIT - 1,
+                heat_sink: MPPT_TEMP_LIMIT - 1,
+            });
             d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT - 1);
             d
         };
@@ -1694,7 +1307,10 @@ mod tests {
             match name {
                 "motor" => d.motor_ntc_temperature.update(Some(MOTOR_TEMP_LIMIT + 0.1)),
                 "driver" => d.motor_fet_temperature.update(DRIVER_TEMP_LIMIT + 0.1),
-                "mppt" => d.mppt_temperatures[0].update(MPPT_TEMP_LIMIT + 1),
+                "mppt" => d.mppt_heat[0].update(crate::MpptHeat {
+                    board: MPPT_TEMP_LIMIT + 1,
+                    heat_sink: MPPT_TEMP_LIMIT + 1,
+                }),
                 _ => d.battery_temperatures[0].update(BATTERY_TEMP_LIMIT + 1),
             }
             assert!(icon_conditions(&d)[slot], "{name} over-temperature missed");
@@ -2027,7 +1643,7 @@ mod tests {
         // anchors themselves.
         for (name, left, block_w) in [
             ("clock", CLOCK_LEFT, CURRENT_TIME_BLOCK_W),
-            ("race time", RACE_TIME_LEFT, RACE_TIME_BLOCK_W),
+            ("heading", HEADING_LEFT, HEADING_BLOCK_W),
             ("time to empty", TIME_TO_EMPTY_LEFT, TIME_TO_EMPTY_BLOCK_W),
         ] {
             assert!(
@@ -2042,11 +1658,11 @@ mod tests {
             );
         }
 
-        // The race time should read as centred on the screen.
-        let race_center = RACE_TIME_LEFT + RACE_TIME_BLOCK_W / 2;
+        // The heading should read as centred on the screen.
+        let heading_center = HEADING_LEFT + HEADING_BLOCK_W / 2;
         assert!(
-            (race_center - SCREEN.center_x()).abs() <= 1,
-            "the race time block centres on {race_center}, not the screen centre {}",
+            (heading_center - SCREEN.center_x()).abs() <= 1,
+            "the heading block centres on {heading_center}, not the screen centre {}",
             SCREEN.center_x()
         );
     }

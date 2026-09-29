@@ -49,6 +49,11 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x251 | HydrofoilState | Hydrofoil |
 | 0x252 | HydrofoilElevons | Hydrofoil |
 | 0x253 | HydrofoilAlarm | Hydrofoil |
+| 0x260 | FoilParamSet | Foil Tuner (Data Logger) |
+| 0x261 | FoilParamValue | Flight Controller (`foil_tune.lua`) |
+| 0x262 | FoilParamRequest | Foil Tuner (Data Logger) |
+| 0x263 | FoilConfigSlot | Data Logger |
+| 0x264 | FoilConfigEvent | Data Logger |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
@@ -71,8 +76,9 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | | | | 5 | Fault cause | u8 enum | | 0=None, 1=StallDuringMove, 2=HomingTimeout, 3=DriverNoUartResponse, 4=DriverError, 5=DriverOpenLoad. In Fault: why homing failed. In Operational/FailSafe: 1 means a stall since the last homing (position approximate; still tracking). |
 | ServoRudderCommand | 0x021 | 1 | 0 | Command | u8 enum | | 0=Initialize. Starts (re-)homing from any state; required to leave Fault. The controller also homes by itself at power-up. FailSafe (setpoint timeout, holding) resumes on the next valid setpoint. |
 | RudderControllerCoolingPumpStatus | 0x212 | 1 | 0 | Fault input level | u8 | | Raw PC5 level: 0=fault asserted (low), 1=ok (high). Sent every 1 s. |
-| SteeringAngle | 0x213 | 4 | 0–1 | Angle | i16 | LE | -180 to +180 degrees. Sent every 100 ms. |
-| | | | 2–3 | Raw ADC | u16 | LE | 0–4095 (12-bit). Linear mapping: 0=-180°, 4095=+180°. |
+| SteeringAngle | 0x213 | 5 | 0–1 | Position | i16 | LE | Normalised against the calibrated travel, in 0.1 % steps: full left `-1000`, centre `0`, full right `+1000`. Clamped to that range. **Not degrees** — the field is named `angle` in the decoder, and so in the MQTT topic and CSV column, for backwards compatibility only. Sent every 100 ms. |
+| | | | 2–3 | Raw ADC | u16 | LE | 0–4095 (12-bit), before normalisation. |
+| | | | 4 | Status | u8 bitfield | | bit0=CalValid, bit1=CalMissing, bit2=CalInvalid, bit3=OutOfRange, bit4=StorageError, bit5=NotConnected. Absent on a controller build predating this byte. The position means nothing unless bit0 is set and bit5 is clear. |
 | SteeringAngleCalibration | 0x214 | TBD | TBD | TBD | TBD | | Reserved for steering angle calibration; format not yet defined. |
 | FlowSensorIn | 0x215 | 8 | 0–1 | Flow rate | u16 | LE | mL/min. Sent every 1 s. Datasheet: 22.9 Hz at 1880 mL/min. |
 | | | | 2–3 | Temperature | i16 | LE | Centidegrees Celsius. `i16::MIN` (`-32768`) means open/shorted NTC. |
@@ -205,6 +211,27 @@ the command ID against their own application type — rebooting one board leaves
 | | | | 5 | Minutes | u8 | | 0–59 |
 | | | | 6 | Seconds | u8 | | 0–59 |
 
+**GnssSpeedAndHeading's heading is unreliable as sent.** Captured 2026-08-28:
+the autopilot interleaves an exact `00 00 00 00` heading with a good course --
+two frames in ten, at 13 km/h, while the course walked smoothly through the
+320s. Speed in the same frames was correct. A course computed as a float is
+never exactly zero (due north arrives as 359.87 or 0.14), so a consumer should
+read an exact zero as "no course" rather than as due north; the display does.
+Worth fixing at the sender, which this repo does not own.
+
+**GnssDateTime looks like local time, not UTC.** Observed 2026-08-30: the panel
+ran two hours fast with a CEST offset applied on top of the frame, so whatever
+sends `0x204` is applying the zone before it reaches the bus. The display
+therefore adds nothing -- `CLOCK_OFFSET_HOURS` in `draw-display` is zero, and is
+the single place to change if the boat sails in another zone or the sender
+switches to UTC.
+
+This is inferred from the panel rather than confirmed on the wire, and it is worth
+confirming, because the two readings are indistinguishable for half the year: a
+sender emitting UTC+2 the year round agrees with local time all summer and is an
+hour out all winter. `candump -n 1 can0,204:7FF` beside `date` on the datalogger
+settles it.
+
 ## Data Logger
 
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
@@ -271,6 +298,93 @@ what made it beep. Cause bits in byte 0:
 | 5 | SpeedHeight | Foiling height with a speed that says it cannot be — height mode only |
 | 6 | Rear | Rear stepper not Operational, reporting a fault, or silent > 1 s (`0x020`) — height mode only |
 | 7 | Enabled | The foiling system is switched on |
+
+## Foil Tuning
+
+`0x260`-`0x262` are `foil_tune.lua`'s protocol, running between the tuning
+keyboard on the data logger and the flight controller. `0x263`-`0x264` are the
+data logger's own: it keeps the nine stored tunes in RAM, and the foiling display
+draws them.
+
+The display is read-only on all five: it originates none of these frames, and
+everything it shows has to arrive on the bus. What it does with silence differs by
+kind, because the two halves are not the same sort of data.
+
+**Parameters (`0x261`) are held until replaced.** They are configuration, not
+telemetry -- `foil_tune.lua` sends one whole-table dump ~5 s after the flight
+controller boots and after that a `0x261` only as the ack for a `0x260` set or the
+reply to a `0x262` request. A value the flight controller last acknowledged is
+still the value in effect, so the display latches it. What keeps that honest is the
+ack on every set, plus the tuner re-requesting the selected cell once the cursor
+settles: navigating to a cell refreshes it, so a display that missed the boot dump
+recovers cell by cell. A cell nothing has ever been heard for still reads as
+dashes.
+
+**The slot column (`0x263`) and the cursor go stale after 5 s.** The datalogger
+republishes all nine slots at ~1 Hz, so a column that stops arriving really is
+unknown, and a slot wiped on the tuner has to stop being labelled here. The cursor
+is where the helm is *now*, so the highlight should not outlive the tuner.
+
+A consequence worth knowing: a parameter changed out of band -- by `hydrofoils.lua`
+or over MAVLink, neither of which sends a `0x260` -- is not seen, and the cell keeps
+its last acknowledged value until something re-reads it. Landing the cursor on the
+cell, or a reboot, corrects it.
+
+`index` is the parameter's number in `foil_tune.lua`'s table -- the wire contract
+between the two, listed with its range and step in `FOILING_PARAMETERS.md`.
+`0xFE` and `0xFF` are not parameters: they are the protocol version and the
+whole-table dump.
+
+The protocol is at **version 10** (2026-09-29), which retired index 54
+(`HYD_RKP`, the rear foil's pitch-error term, removed from `hydrofoils.lua`).
+Retired indices -- 37, 38, 54 and 58 -- answer `UnknownIndex` and are never reused;
+13-15 and 46-47 were never assigned; 59 (`HYD_RTKI`) is on the whitelist but not on
+the screen. A tool whose own copy of the table is older should check `0xFE` first.
+
+| Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| FoilParamSet | 0x260 | 6 | 0 | Parameter index | u8 | | 1-59 |
+| | | | 1 | Flags | u8 bitfield | | bit 0 = write to EEPROM as well as RAM |
+| | | | 2-5 | Value | f32 | LE | In the units the screen shows |
+| FoilParamValue | 0x261 | 6 | 0 | Parameter index | u8 | | 1-59, or 0xFE version / 0xFF end-of-dump |
+| | | | 1 | Status | u8 enum | | 0=Ok, 1=UnknownIndex, 2=Clamped, 3=SetFailed, 4=Unavailable, 5=Locked |
+| | | | 2-5 | Value | f32 | LE | The read-back, post-clamp. Only statuses 0, 2 and 5 carry a real value; the others are sent as 0 |
+| FoilParamRequest | 0x262 | 1 | 0 | Parameter index | u8 | | 1-59, 0xFE for the version, 0xFF for a whole-table dump |
+| FoilConfigSlot | 0x263 | 4 | 0 | Slot | u8 | | 1-9, numbered as printed on the screen |
+| | | | 1 | State | u8 enum | | 0=Empty, 1=Stored (time in bytes 2-3), 2=Stored without a GNSS fix |
+| | | | 2 | Hour | u8 | | 0-23; ignored unless state 1 |
+| | | | 3 | Minute | u8 | | 0-59; ignored unless state 1 |
+| FoilConfigEvent | 0x264 | 5 | 0 | Action | u8 enum | | 1=Stored, 2=Restored, 3=Undone, 4=FactoryReset, 5=SavedToFlash |
+| | | | 1 | Slot | u8 | | 1-9 for actions 1 and 2; ignored otherwise |
+| | | | 2 | State | u8 enum | | As above, for the tune involved: 1 = the time in bytes 3-4 is good |
+| | | | 3 | Hour | u8 | | 0-23 |
+| | | | 4 | Minute | u8 | | 0-59 |
+
+**FoilConfigSlot** is what the slot column is labelled with, and it is idempotent:
+send all nine at ~1 Hz and a display that reboots recovers the whole column. A slot
+sent as `Empty` reads as `empty` immediately; a slot nothing is sent for reads as
+`empty` after the 5 s timeout. Nothing has to re-read the parameter table alongside
+it -- the display latches those, as above.
+
+**FoilConfigEvent** is one-shot, for the status line in the bottom-right corner.
+Action 5 is the `]` key: it is not a slot at all, but the live tune committed to
+the flight controller's flash with `0x260`'s persist flag, which is the one action
+here that outlives a power cycle.
+
+| Action | Slot | Time | Line |
+| --- | --- | --- | --- |
+| 1 Stored | 4 | 14:32 | `config 4 stored at 14:32` |
+| 1 Stored | 4 | state 2 | `config 4 stored` |
+| 2 Restored | 2 | 09:15 | `config 2 restored from 09:15` |
+| 3 Undone | -- | -- | `last change undone` |
+| 4 FactoryReset | -- | -- | `factory tune restored` |
+| 5 SavedToFlash | -- | -- | `tune saved to flash` |
+
+Send it *once* per keypress, not repeatedly: a repeat reads as another keypress.
+Send it **after** the `0x260` writes an action performs -- a restore writes the
+whole table, and each read-back is a parameter change the display would otherwise
+report instead. The display also keeps the line for 3 s against parameter edits
+after any event, which covers the acks arriving out of order.
 
 ## Controller Temperatures
 

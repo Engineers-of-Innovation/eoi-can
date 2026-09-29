@@ -51,8 +51,8 @@ pub fn flatten(data: &EoiCanData, out: &mut Vec<(String, String)>) {
         EoiCanData::HeightSensors(h) => flatten_height(h, out),
         EoiCanData::Hydrofoil(h) => flatten_hydrofoil(h, out),
         EoiCanData::Temperature(t) => flatten_temperature(t, out),
-        // Filtered out before it gets here -- see `Filter::accepts`.
-        EoiCanData::DataLogger(_) => {}
+        // Both filtered out before they get here -- see `Filter::accepts`.
+        EoiCanData::DataLogger(_) | EoiCanData::FoilTune(_) | EoiCanData::FoilConfig(_) => {}
     }
 }
 
@@ -491,6 +491,9 @@ fn flatten_rudder(r: &RudderControllerData, out: &mut Vec<(String, String)>) {
         RudderControllerData::SteeringAngle(s) => {
             out.push(("rudder.steering.angle".into(), s.angle.to_string()));
             out.push(("rudder.steering.raw_adc".into(), s.raw_adc.to_string()));
+            if let Some(status) = s.status {
+                out.push(("rudder.steering.status".into(), status.to_string()));
+            }
         }
         RudderControllerData::FlowSensorIn(f) => push_flow_sensor(out, "flow_in", f),
         RudderControllerData::FlowSensorOut(f) => push_flow_sensor(out, "flow_out", f),

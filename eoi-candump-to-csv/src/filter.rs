@@ -131,6 +131,13 @@ impl Filter {
             },
             // The data logger's WiFi IP is plumbing, not telemetry -- no CSV columns.
             EoiCanData::DataLogger(_) => false,
+            // Foil tuning read-backs are a parameter table, not a time series: one
+            // column per parameter would be mostly empty, since the flight
+            // controller only answers what the tuner asks for.
+            EoiCanData::FoilTune(_) => false,
+            // Configuration slots are a UI state for the foiling display, and the
+            // events are keypresses. Neither is a measurement.
+            EoiCanData::FoilConfig(_) => false,
         }
     }
 

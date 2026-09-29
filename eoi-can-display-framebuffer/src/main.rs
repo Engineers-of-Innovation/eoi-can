@@ -16,6 +16,15 @@ struct Args {
     /// CAN interface
     #[arg(short, long, default_value_t = String::from("can0"))]
     can_interface: String,
+
+    /// Screen layout to draw: dashboard, foiling or information
+    #[arg(short, long, default_value_t = draw_display::Layout::default())]
+    layout: draw_display::Layout,
+
+    /// Fall back to this layout once the helm stops tuning, and start on it.
+    /// What the foiling board does.
+    #[arg(long)]
+    idle_layout: Option<draw_display::Layout>,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -38,6 +47,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
     register_tracing_subscriber(LevelFilter::DEBUG);
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
+    info!("Layout: {}", args.layout);
 
     let shared_can_collector = Arc::new(Mutex::new(can_collector::CanCollector::new()));
 
@@ -88,12 +98,17 @@ async fn main() -> Result<(), core::convert::Infallible> {
     );
     display.clear(BinaryColor::On.into()).unwrap();
 
+    let mut screens = match args.idle_layout {
+        Some(idle) => draw_display::ScreenSelector::switching(args.layout, idle),
+        None => draw_display::ScreenSelector::fixed(args.layout),
+    };
     let mut display_data = draw_display::DisplayData::default();
-    draw_display::draw_display(
-        &mut display.translated(offset).clipped(&clip_area),
-        &display_data,
-    )
-    .unwrap();
+    screens
+        .draw(
+            &mut display.translated(offset).clipped(&clip_area),
+            &display_data,
+        )
+        .unwrap();
     display.flush().unwrap();
 
     let mut display_battery_last_update = std::time::Instant::now();
@@ -129,11 +144,12 @@ async fn main() -> Result<(), core::convert::Infallible> {
             }
         }
 
-        draw_display::draw_display(
-            &mut display.translated(offset).clipped(&clip_area),
-            &display_data,
-        )
-        .unwrap();
+        screens
+            .draw(
+                &mut display.translated(offset).clipped(&clip_area),
+                &display_data,
+            )
+            .unwrap();
         display.flush().unwrap();
 
         tokio::time::sleep(Duration::from_millis(100)).await

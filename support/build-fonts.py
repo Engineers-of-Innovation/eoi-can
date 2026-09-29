@@ -8,8 +8,12 @@ writes the raw .u8g2font blobs the Font impls include_bytes!.
 Needs Pillow (with FreeType) and u8g2's bdfconv. See draw-display/fonts/README.md
 for how to get bdfconv; point BDFCONV at it if it is not on PATH.
 
-Usage: build-fonts.py <font.ttf> <weight> <outdir>
+Usage: build-fonts.py <font.ttf> <weight> <outdir> [blob ...]
    eg: support/build-fonts.py ~/IBMPlexSans.ttf 500 draw-display/fonts
+       support/build-fonts.py ~/IBMPlexSans.ttf 500 /tmp/f plex_semi12_tf
+
+Naming blobs builds only those, which is how one font is re-tuned without
+rebuilding -- or having to satisfy the size checks of -- the other four.
 """
 import os
 import re
@@ -31,11 +35,23 @@ DIGIT_MAP = "32,45,46,48-58"
 # in its subset.
 DIGITS_PCT = DIGITS + "%"
 DIGIT_PCT_MAP = "32,37,45,46,48-58"
-# Printable ASCII plus U+00B0 DEGREE SIGN, which "°C" needs.
-ASCII = "".join(chr(c) for c in range(32, 127)) + "°"
-ASCII_MAP = "32-126,176"
+# Printable ASCII, plus U+00B0 DEGREE SIGN for "°C" and U+2191/U+2193 ARROWS for
+# the foiling screen, which marks an asymmetric up/down parameter pair as
+# "5.0↑ 8.0↓" and collapses a symmetric one to a single number. U+00B5 MICRO SIGN
+# is for that screen's units column ("µs", the rear-foil jog PWM).
+#
+# Verify after regenerating: bdfconv drops a glyph the TTF does not have without
+# complaining, and a missing glyph only shows up as a `map_font_err` panic at
+# runtime. `fonts/README.md` has the check.
+ASCII = "".join(chr(c) for c in range(32, 127)) + "°↑↓µ"
+ASCII_MAP = "32-126,176,8593,8595,181"
 
-# (blob name, measured glyph, target height in px, glyph set, bdfconv map, build mode)
+# (blob name, measured glyph, target height in px, glyph set, bdfconv map, build
+#  mode, weight override)
+#   The weight override is None for everything that takes the weight given on the
+#   command line. Only the foiling screen's headings differ: they are the same size
+#   as the rows below them and are told apart by stroke weight alone, which is the
+#   one font property that costs no layout (see fonts/README.md).
 #   Everything uses build mode 0 (proportional). Plex Sans has tabular figures --
 #   all ten digits share one advance -- so values don't jitter without forcing
 #   monospace, and '-', '.' and ':' keep their natural narrow widths. Monospace
@@ -44,11 +60,24 @@ ASCII_MAP = "32-126,176"
 SPECS = [
     # Net power: between the speed and the plain values, and wide enough for
     # "-2000" in the left column.
-    ("plex_net58_tn",   "0", 58, DIGITS, DIGIT_MAP, 0),
+    ("plex_net58_tn",   "0", 58, DIGITS, DIGIT_MAP, 0, None),
     # The right column's three values.
-    ("plex_big49_tn",   "0", 49, DIGITS_PCT, DIGIT_PCT_MAP, 0),
-    ("plex_mid30_tn",   "0", 30, DIGITS, DIGIT_MAP, 0),
-    ("plex_small14_tf", "T", 14, ASCII,  ASCII_MAP, 0),
+    ("plex_big49_tn",   "0", 49, DIGITS_PCT, DIGIT_PCT_MAP, 0, None),
+    ("plex_mid30_tn",   "0", 30, DIGITS, DIGIT_MAP, 0, None),
+    ("plex_small14_tf", "T", 14, ASCII,  ASCII_MAP, 0, None),
+    # Two points smaller, for the foiling screen's four tables. A separate blob
+    # rather than shrinking the shared one: the dashboard's layout is tuned around
+    # a 14px cap and every constant in `render/dashboard.rs` derives from it.
+    ("plex_small12_tf", "T", 12, ASCII,  ASCII_MAP, 0, None),
+    # The foiling screen's table headings, at the same 12px cap as its rows: the
+    # tables are read by finding a heading first, and at this size a heavier stroke
+    # separates them from the parameter labels without costing a pixel of layout.
+    #
+    # 600 and not 700, which is as bold as Plex goes: at this cap a bold `r` arm
+    # touches the following `n`, and the Turn table's heading reads as "Tum". The
+    # gap survives at 600 and is gone by 650. Checked by eye at 6x -- no test can
+    # see two glyphs merge, because both are drawn exactly where the font says.
+    ("plex_semi12_tf",  "T", 12, ASCII,  ASCII_MAP, 0, 600),
 ]
 
 
@@ -82,7 +111,32 @@ def solve_em(ttf, weight, ch, target):
 MAX_FIELD_BITS = 7
 
 
-def check_bitfields(name, verbose_output):
+def glyph_maxima(bdf):
+    """Largest width and height of any single glyph in a BDF.
+
+    Not the same thing as bdfconv's `CalculateMaxBBX`, which reports the *union*
+    of every glyph box -- `max(y_off + h) - min(y_off)` and the same in x. The
+    union is one or two pixels larger than the tallest glyph whenever the
+    highest-reaching glyph is not also the deepest-descending one, which for a
+    text font is always. A u8g2 glyph stores its own width and height in those
+    bit fields, so the per-glyph maximum is what has to fit; comparing the union
+    rejects perfectly good fonts. That is what used to make a 12px cap look
+    impossible: bdfconv had correctly given `bbx.h` five bits for a 16px glyph,
+    and this check compared it against a 17px union.
+    """
+    widths, heights = [], []
+    with open(bdf) as handle:
+        for line in handle:
+            if line.startswith("BBX "):
+                _, w, h, _, _ = line.split()
+                widths.append(int(w))
+                heights.append(int(h))
+    if not widths:
+        sys.exit("%s: no glyphs found; refusing to ship an unverified font" % bdf)
+    return max(widths), max(heights)
+
+
+def check_bitfields(name, verbose_output, bdf):
     """Fail on a font bdfconv encoded in a way that cannot be decoded correctly.
 
     Two separate traps, both silent -- bdfconv exits 0 either way:
@@ -112,8 +166,10 @@ def check_bitfields(name, verbose_output):
                      "advances. Reduce the target size."
                      % (name, nbits, field, MAX_FIELD_BITS))
 
-    for what, value, nbits in (("width", int(maxbbx.group(1)), bits["w"]),
-                               ("height", int(maxbbx.group(2)), bits["h"]),
+    # Per-glyph maxima, not bdfconv's union box -- see glyph_maxima.
+    max_w, max_h = glyph_maxima(bdf)
+    for what, value, nbits in (("width", max_w, bits["w"]),
+                               ("height", max_h, bits["h"]),
                                ("advance", int(dwidth.group(2)), bits["dwidth"])):
         limit = (1 << nbits) - 1
         if value > limit:
@@ -127,11 +183,18 @@ def main():
         sys.exit("bdfconv not found; set BDFCONV=/path/to/bdfconv "
                  "(see draw-display/fonts/README.md)")
 
-    ttf, weight, outdir = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+    ttf, default_weight, outdir = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+    only = sys.argv[4:]
+    unknown = [name for name in only if name not in [spec[0] for spec in SPECS]]
+    if unknown:
+        sys.exit("no such blob: %s" % ", ".join(unknown))
     os.makedirs(outdir, exist_ok=True)
     total = 0
 
-    for name, probe, target, glyphs, cmap, mode in SPECS:
+    for name, probe, target, glyphs, cmap, mode, override in SPECS:
+        if only and name not in only:
+            continue
+        weight = default_weight if override is None else float(override)
         em, got = solve_em(ttf, weight, probe, target)
         bdf = os.path.join(outdir, name + ".bdf")
         cfile = os.path.join(outdir, name + ".c")
@@ -143,14 +206,14 @@ def main():
         out = subprocess.run([BDFCONV, "-v", "-f", "1", "-b", str(mode), "-m", cmap,
                               bdf, "-o", cfile, "-n", "u8g2_font_" + name],
                              check=True, capture_output=True, text=True).stdout
-        check_bitfields(name, out)
+        check_bitfields(name, out, bdf)
         subprocess.run([sys.executable, C2BIN, cfile, blob],
                        check=True, stdout=subprocess.DEVNULL)
 
         size = os.path.getsize(blob)
         total += size
-        print("%-16s em=%-3d %s height %2d px (target %2d)  %5d B"
-              % (name, em, probe, got, target, size))
+        print("%-16s em=%-3d w=%-3d %s height %2d px (target %2d)  %5d B"
+              % (name, em, weight, probe, got, target, size))
         os.remove(bdf)
         os.remove(cfile)
 

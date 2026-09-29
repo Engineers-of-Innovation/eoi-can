@@ -15,6 +15,7 @@ built = { version = "0.8", features = ["git2"] }
 rudder-controller = []
 height-sensor-controller = []
 dashboard = []
+foiling = []
 
 [dependencies]
 embassy-executor = { git = "https://github.com/embassy-rs/embassy", tag = "embassy-stm32-v0.6.0", features = ["platform-cortex-m", "executor-thread", "defmt"] }

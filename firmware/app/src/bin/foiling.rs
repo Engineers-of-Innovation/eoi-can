@@ -13,11 +13,9 @@ use eoi_firmware::declare_app_type;
 use eoi_firmware::display::{PanelMounting, run_display};
 use {defmt_rtt as _, panic_probe as _};
 
-declare_app_type!(AppType::Dashboard);
+declare_app_type!(AppType::FoilTuning);
 
-// Has to stay in the binary: `bind_interrupts!` emits `#[no_mangle]` handlers,
-// and one copy in the library would collide with the `CAN1_*` handlers
-// the rudder and height-sensor binaries declare for themselves.
+// Has to stay in the binary: see the note in the dashboard binary.
 bind_interrupts!(struct Irqs {
     CAN1_TX  => TxInterruptHandler<CAN1>;
     CAN1_RX0 => Rx0InterruptHandler<CAN1>;
@@ -30,13 +28,20 @@ bind_interrupts!(struct Irqs {
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_stm32::init(clock_config());
+    // Starboard side of the boat, in a mirrored case: the panel hangs upside
+    // down, so the image is rotated 180 degrees to match.
     run_display(
         spawner,
         p,
         Irqs,
         MY_APP_TYPE,
-        draw_display::ScreenSelector::fixed(draw_display::Layout::Dashboard),
-        PanelMounting::Upright,
+        // The tuning table only while the helm is at the keyboard; see
+        // `ScreenSelector`.
+        draw_display::ScreenSelector::switching(
+            draw_display::Layout::Foiling,
+            draw_display::Layout::Information,
+        ),
+        PanelMounting::Inverted,
     )
     .await
 }

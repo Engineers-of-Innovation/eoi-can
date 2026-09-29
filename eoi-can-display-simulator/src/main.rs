@@ -1,5 +1,7 @@
 use std::time::Duration;
 
+mod demo;
+
 use clap::Parser;
 use embedded_can::Frame;
 use embedded_graphics::{pixelcolor::BinaryColor, prelude::*};
@@ -21,6 +23,22 @@ struct Args {
     /// CAN interface
     #[arg(short, long, default_value_t = String::from("vcan0"))]
     can_interface: String,
+
+    /// Screen layout to draw: dashboard, foiling or information
+    #[arg(short, long, default_value_t = draw_display::Layout::default())]
+    layout: draw_display::Layout,
+
+    /// Fall back to this layout once the helm stops tuning, and start on it.
+    /// What the foiling board does, so the switching can be watched here rather
+    /// than on a panel that takes a second to redraw.
+    #[arg(long)]
+    idle_layout: Option<draw_display::Layout>,
+
+    /// Fill the foiling screen with plausible values instead of waiting for CAN.
+    /// Nothing broadcasts foiling parameters yet, so without this every cell of
+    /// that layout draws a dash.
+    #[arg(long)]
+    demo: bool,
 }
 
 fn register_tracing_subscriber(level_filter: LevelFilter) {
@@ -48,6 +66,7 @@ async fn main() -> Result<(), core::convert::Infallible> {
     register_tracing_subscriber(LevelFilter::DEBUG);
     let args = Args::parse();
     info!("CAN interface: {}", args.can_interface);
+    info!("Layout: {}", args.layout);
 
     let can_sock: socketcan::tokio::AsyncCanSocket<socketcan::CanSocket> =
         socketcan::tokio::AsyncCanSocket::open(args.can_interface.as_str())
@@ -89,13 +108,24 @@ async fn main() -> Result<(), core::convert::Infallible> {
     ));
     let output_settings = OutputSettingsBuilder::new().scale(1).max_fps(10).build();
     let mut window = Window::new(
-        "Engineers of Innovation CAN Display Simulator",
+        &format!(
+            "Engineers of Innovation CAN Display Simulator -- {}",
+            args.layout
+        ),
         &output_settings,
     );
 
+    let mut screens = match args.idle_layout {
+        Some(idle) => draw_display::ScreenSelector::switching(args.layout, idle),
+        None => draw_display::ScreenSelector::fixed(args.layout),
+    };
     let mut display_data = draw_display::DisplayData::default();
+    let mut tick = 0_u32;
 
-    draw_display::draw_display(&mut display, &display_data).unwrap();
+    if args.demo {
+        demo::populate(&mut display_data, tick);
+    }
+    screens.draw(&mut display, &display_data).unwrap();
 
     tokio::time::sleep(Duration::from_millis(1000)).await; // load CAN data
     let mut last_time_updated_display = Instant::now() - Duration::from_secs(100);
@@ -125,7 +155,11 @@ async fn main() -> Result<(), core::convert::Infallible> {
                 display_data.ip_address.update(ip);
             }
 
-            draw_display::draw_display(&mut display, &display_data).unwrap();
+            if args.demo {
+                tick = tick.wrapping_add(1);
+                demo::populate(&mut display_data, tick);
+            }
+            screens.draw(&mut display, &display_data).unwrap();
             window.update(&display);
         }
 

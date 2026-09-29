@@ -16,6 +16,16 @@ pub enum AppType {
     RudderController = 0x01,
     HeightSensorController = 0x02,
     Dashboard = 0x03,
+    /// The foiling display. Distinct from [`AppType::Dashboard`] even though the
+    /// two run the same board: the app type *is* the bootloader's CAN address, so
+    /// two boards sharing one type could not be addressed independently — a
+    /// `REBOOT` or a flash aimed at either would hit both.
+    ///
+    /// A bootloader was deployed here on 2026-08-29 -- `firmware/boot`'s `foiling`
+    /// feature -- so this address answers in the field like any other board's. It
+    /// was SWD-only before that, which is what the type existing separately kept
+    /// as a deployment decision rather than a firmware change.
+    FoilTuning = 0x04,
 }
 
 impl AppType {
@@ -24,6 +34,7 @@ impl AppType {
             0x01 => Some(Self::RudderController),
             0x02 => Some(Self::HeightSensorController),
             0x03 => Some(Self::Dashboard),
+            0x04 => Some(Self::FoilTuning),
             _ => None,
         }
     }

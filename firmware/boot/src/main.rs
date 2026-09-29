@@ -6,22 +6,23 @@ mod build_info;
 mod clock;
 mod flash;
 
-#[cfg(any(
-    all(feature = "rudder-controller", feature = "height-sensor-controller"),
-    all(feature = "rudder-controller", feature = "dashboard"),
-    all(feature = "height-sensor-controller", feature = "dashboard"),
-))]
-compile_error!(
-    "exactly one of the `rudder-controller` / `height-sensor-controller` / `dashboard` features must be enabled, not several"
-);
+/// How many board features are on. Counted rather than enumerated as `cfg(any(all(..)))`
+/// pairs: that grew quadratically and silently stopped covering everything the
+/// moment a fourth board was added.
+const BOARD_FEATURES: usize = cfg!(feature = "rudder-controller") as usize
+    + cfg!(feature = "height-sensor-controller") as usize
+    + cfg!(feature = "dashboard") as usize
+    + cfg!(feature = "foiling") as usize;
 
-#[cfg(not(any(
-    feature = "rudder-controller",
-    feature = "height-sensor-controller",
-    feature = "dashboard"
-)))]
-compile_error!(
-    "one of the `rudder-controller` / `height-sensor-controller` / `dashboard` features must be enabled"
+// `core::assert!` for the same reason `std_id` uses `core::panic!`: `defmt::*`
+// shadows the prelude macro with a non-const one.
+const _: () = core::assert!(
+    BOARD_FEATURES != 0,
+    "one of the `rudder-controller` / `height-sensor-controller` / `dashboard` / `foiling` features must be enabled"
+);
+const _: () = core::assert!(
+    BOARD_FEATURES == 1,
+    "exactly one of the `rudder-controller` / `height-sensor-controller` / `dashboard` / `foiling` features must be enabled, not several"
 );
 
 #[cfg(feature = "rudder-controller")]
@@ -33,6 +34,12 @@ pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
 #[cfg(feature = "dashboard")]
 pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
     eoi_boot_api::header::AppType::Dashboard;
+// The foiling display board. Same hardware as the dashboard — the LED on PC2, the
+// CAN standby on PB7 and CAN1 on PB8/PB9 are the pins this file already uses — and
+// a distinct app type so the two panels are addressed independently.
+#[cfg(feature = "foiling")]
+pub const EXPECTED_APP_TYPE: eoi_boot_api::header::AppType =
+    eoi_boot_api::header::AppType::FoilTuning;
 
 /// The three CAN IDs this board owns, derived from its app type. The same
 /// constant is both the bootloader's identity and its bus address.
