@@ -555,6 +555,11 @@ fn hydrofoil_columns() -> &'static [&'static str] {
         "hydrofoil.rangefinder_status",
         "hydrofoil.elevon_left_us",
         "hydrofoil.elevon_right_us",
+        "hydrofoil.alarm_causes",
+        "hydrofoil.alarm_blocked_code",
+        "hydrofoil.alarm_rear_state",
+        "hydrofoil.alarm_rear_fault",
+        "hydrofoil.alarm_active",
     ]
 }
 
@@ -582,6 +587,15 @@ fn flatten_hydrofoil(h: &HydrofoilData, out: &mut Vec<(String, String)>) {
         HydrofoilData::Elevons(e) => {
             out.push(("hydrofoil.elevon_left_us".into(), e.left_us.to_string()));
             out.push(("hydrofoil.elevon_right_us".into(), e.right_us.to_string()));
+        }
+        HydrofoilData::Alarm(a) => {
+            out.push(("hydrofoil.alarm_causes".into(), a.causes.to_string()));
+            out.push(("hydrofoil.alarm_blocked_code".into(), a.blocked_code.to_string()));
+            if let Some(s) = a.rear_state {
+                out.push(("hydrofoil.alarm_rear_state".into(), s.to_string()));
+            }
+            out.push(("hydrofoil.alarm_rear_fault".into(), a.rear_fault.to_string()));
+            out.push(("hydrofoil.alarm_active".into(), u8::from(a.active).to_string()));
         }
     }
 }

@@ -121,6 +121,11 @@ pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot
             rangefinder_status: view.rangefinder_status,
             elevon_left_us: view.elevon_left_us,
             elevon_right_us: view.elevon_right_us,
+            alarm_causes: view.hydrofoil_alarm.map(|a| a.0),
+            alarm_blocked_code: view.hydrofoil_alarm.map(|a| a.1),
+            alarm_rear_state: view.hydrofoil_alarm.map(|a| a.2),
+            alarm_rear_fault: view.hydrofoil_alarm.map(|a| a.3),
+            alarm_active: view.hydrofoil_alarm.map(|a| a.4),
         }),
         hottest_mppt: view
             .hottest_mppt

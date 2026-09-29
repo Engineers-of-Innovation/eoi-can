@@ -174,6 +174,9 @@ pub struct LiveState {
     rangefinder_status: Option<Timed<u32>>,
     elevon_left_us: Option<Timed<u32>>,
     elevon_right_us: Option<Timed<u32>>,
+    /// Last HydrofoilAlarm (0x253): causes, blocked code, rear state (255 = none),
+    /// rear fault, active.
+    hydrofoil_alarm: Option<Timed<(u32, u32, u32, u32, bool)>>,
     /// Tracks whether optional height fields were valid on the last State frame so
     /// a subsequent invalid (0xFFFF) wire value can clear the held reading.
     lua_height_valid: bool,
@@ -591,6 +594,18 @@ impl LiveState {
                     at: now,
                 });
             }
+            HydrofoilData::Alarm(a) => {
+                self.hydrofoil_alarm = Some(Timed {
+                    value: (
+                        a.causes as u32,
+                        a.blocked_code as u32,
+                        a.rear_state.map_or(255, u32::from),
+                        a.rear_fault as u32,
+                        a.active,
+                    ),
+                    at: now,
+                });
+            }
         }
     }
 
@@ -784,6 +799,7 @@ impl LiveState {
             rangefinder_status: self.rangefinder_status.and_then(|t| t.fresh(now)),
             elevon_left_us: self.elevon_left_us.and_then(|t| t.fresh(now)),
             elevon_right_us: self.elevon_right_us.and_then(|t| t.fresh(now)),
+            hydrofoil_alarm: self.hydrofoil_alarm.and_then(|t| t.fresh(now)),
             hottest_mppt: hottest_mppt.clone(),
             hottest_battery: hottest_battery.clone(),
             warnings: WarningsView {
@@ -1179,6 +1195,8 @@ pub struct SnapshotView {
     pub rangefinder_status: Option<u32>,
     pub elevon_left_us: Option<u32>,
     pub elevon_right_us: Option<u32>,
+    /// (causes, blocked code, rear state, rear fault, active) of the last 0x253.
+    pub hydrofoil_alarm: Option<(u32, u32, u32, u32, bool)>,
     pub hottest_mppt: Option<(String, f32)>,
     pub hottest_battery: Option<(String, f32)>,
     pub warnings: WarningsView,

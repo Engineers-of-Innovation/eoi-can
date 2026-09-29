@@ -177,13 +177,20 @@ message Hydrofoil {
   optional float roll_deg = 1;
   optional float pitch_deg = 2;
   optional float yaw_deg = 3;
-  optional float lua_height_mm = 4; // roll-corrected; omitted when wire sent 0xFFFF
+  optional float lua_height_mm = 4; // retired 2026-09-29: always omitted (wire sends 0xFFFF)
   optional float ekf_height_mm = 5;
   optional uint32 status_flags = 6; // bitfield — see CAN_MESSAGES.md HydrofoilState
   optional uint32 mode = 7; // 0=MANUAL, 5=FBWA
   optional uint32 rangefinder_status = 8;
   optional uint32 elevon_left_us = 9; // front-left PWM µs, 1500=neutral
   optional uint32 elevon_right_us = 10;
+  // HydrofoilAlarm 0x253 - why the beeper sounded. Sent with every beep, so an active
+  // alarm refreshes ~3 s apart; omitted once nothing has been heard for STALE_AFTER.
+  optional uint32 alarm_causes = 11; // bitfield - see CAN_MESSAGES.md HydrofoilAlarm
+  optional uint32 alarm_blocked_code = 12; // refusing-to-engage beep count, 0 = none
+  optional uint32 alarm_rear_state = 13; // ServoRudderStatus state; 255 = no status
+  optional uint32 alarm_rear_fault = 14;
+  optional bool alarm_active = 15; // false on the frame sent when an alarm clears
 }
 
 message Warnings {

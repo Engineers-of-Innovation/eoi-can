@@ -48,6 +48,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x250 | HydrofoilAttitude | Hydrofoil |
 | 0x251 | HydrofoilState | Hydrofoil |
 | 0x252 | HydrofoilElevons | Hydrofoil |
+| 0x253 | HydrofoilAlarm | Hydrofoil |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
@@ -227,6 +228,11 @@ documented in firmware here — layouts match the Python CAN visualizer and live
 | | | | 7 | Rangefinder status | u8 | | Downward rangefinder status byte. |
 | HydrofoilElevons | 0x252 | 4 | 0–1 | Elevon left PWM | u16 | LE | µs, front-left. 1500 = neutral. |
 | | | | 2–3 | Elevon right PWM | u16 | LE | µs, front-right. 1500 = neutral. |
+| HydrofoilAlarm | 0x253 | 5 | 0 | Cause bits | u8 bitfield | | Why the beeper sounded — see below. |
+| | | | 1 | Blocked code | u8 | | The refusing-to-engage beep count: `0` none, `2` config incomplete/reboot, `3` EKF height source, `4` enable pin, `5` IMU. |
+| | | | 2 | Rear node state | u8 | | `ServoRudderStatus` (`0x020`) byte 0 as the flight controller last saw it; `0xFF` = no fresh status. |
+| | | | 3 | Rear node fault cause | u8 | | `ServoRudderStatus` byte 5. |
+| | | | 4 | Active | u8 | | `1` = alarm active, `0` = the alarm just cleared. |
 
 Status flag bits in `HydrofoilState` bytes 4–5:
 
@@ -247,6 +253,24 @@ Status flag bits in `HydrofoilState` bytes 4–5:
 | 12 | RollTest | Roll-stability test mode active (`SCR_USER1 = 1`, height loop bypassed) |
 | 13 | — | Reserved, always 0 (was: EKF and Lua heights diverged) |
 | 14–15 | HeightReason | 2-bit code: `0` both height sensors fresh, `1` a sensor stale. `2` (sides disagree) and `3` (estimate ≤ 0) belonged to the Lua height and are no longer sent. |
+
+`HydrofoilAlarm` is **not periodic**: `hydrofoils.lua` sends it beside every beep it
+commands on the throttle unit (`0x338`) — each cut-throttle blast, ~every 3 s while the
+alarm lasts, and each pulse of a blocked-code group — plus once with Active = 0 when an
+alarm clears. A listener that has heard nothing for more than ~5 s can treat the alarm as
+over. The flight controller decides the alarm from the same bits, so they are exactly
+what made it beep. Cause bits in byte 0:
+
+| Bit | Name | Meaning |
+| --- | --- | --- |
+| 0 | Attitude | AHRS unhealthy or EKF failsafe |
+| 1 | Imu | IMU calibrating, or gyros/accels inconsistent |
+| 2 | Mode | Asked for FBWA and did not get it |
+| 3 | Height | No usable ride height (both sensors stale, or no EKF height) — height mode only |
+| 4 | Speed | No valid speed for the rear-foil schedule — height mode only |
+| 5 | SpeedHeight | Foiling height with a speed that says it cannot be — height mode only |
+| 6 | Rear | Rear stepper not Operational, reporting a fault, or silent > 1 s (`0x020`) — height mode only |
+| 7 | Enabled | The foiling system is switched on |
 
 ## Controller Temperatures
 

@@ -749,6 +749,8 @@ pub enum HydrofoilData {
     State(HydrofoilState),
     /// `0x252` — front elevon PWM outputs.
     Elevons(Elevons),
+    /// `0x253` — why the flight controller's beeper sounded (sent with every beep).
+    Alarm(HydrofoilAlarm),
 }
 
 /// Boat attitude from the hydrofoil controller (`0x250`).
@@ -801,6 +803,34 @@ pub const HYDROFOIL_STATUS_ROLL_TEST: u16 = 1 << 12;
 /// Bits 14-15: `0` both height sensors fresh, `1` a sensor stale. `2` and `3`
 /// came from the retired Lua height and are no longer sent.
 pub const HYDROFOIL_STATUS_HEIGHT_REASON_SHIFT: u16 = 14;
+
+/// Why the flight controller's beeper sounded, from `0x253`.
+///
+/// Not periodic: one frame beside every beep (~3 s apart while an alarm lasts, and per
+/// pulse of a blocked-code group) and one with `active == false` when an alarm clears.
+#[derive(Debug, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilAlarm {
+    /// Bitfield — see `HYDROFOIL_ALARM_*` constants / CAN_MESSAGES.md.
+    pub causes: u8,
+    /// The blocked-code beep count (`0` = not blocked).
+    pub blocked_code: u8,
+    /// `ServoRudderStatus` state as the flight controller saw it; `None` = no status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rear_state: Option<u8>,
+    pub rear_fault: u8,
+    /// `false` on the frame sent when an alarm clears.
+    pub active: bool,
+}
+
+pub const HYDROFOIL_ALARM_ATTITUDE: u8 = 1 << 0;
+pub const HYDROFOIL_ALARM_IMU: u8 = 1 << 1;
+pub const HYDROFOIL_ALARM_MODE: u8 = 1 << 2;
+pub const HYDROFOIL_ALARM_HEIGHT: u8 = 1 << 3;
+pub const HYDROFOIL_ALARM_SPEED: u8 = 1 << 4;
+pub const HYDROFOIL_ALARM_SPEED_HEIGHT: u8 = 1 << 5;
+pub const HYDROFOIL_ALARM_REAR: u8 = 1 << 6;
+pub const HYDROFOIL_ALARM_ENABLED: u8 = 1 << 7;
 
 /// Front elevon PWM outputs from `0x252` (µs, 1500 = neutral).
 #[derive(Debug, Serialize, PartialEq)]
@@ -1026,6 +1056,13 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
         0x252 => Some(EoiCanData::Hydrofoil(HydrofoilData::Elevons(Elevons {
             left_us: bytes_le_to_u16(data.get(0..2)?)?,
             right_us: bytes_le_to_u16(data.get(2..4)?)?,
+        }))),
+        0x253 => Some(EoiCanData::Hydrofoil(HydrofoilData::Alarm(HydrofoilAlarm {
+            causes: *data.first()?,
+            blocked_code: *data.get(1)?,
+            rear_state: Some(*data.get(2)?).filter(|s| *s != 0xFF),
+            rear_fault: *data.get(3)?,
+            active: *data.get(4)? != 0,
         }))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
@@ -1814,6 +1851,35 @@ mod tests {
         };
         assert_eq!(e.left_us, 1487);
         assert_eq!(e.right_us, 1503);
+    }
+
+    #[test]
+    fn hydrofoil_alarm() {
+        // Enabled, rear stepper in FailSafe (state 3), alarm active.
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x253).unwrap()),
+            &[0xC0, 0x00, 0x03, 0x00, 0x01],
+        );
+        let data = parse_eoi_can_data(&can_frame).unwrap();
+        let EoiCanData::Hydrofoil(HydrofoilData::Alarm(a)) = data else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(a.causes, HYDROFOIL_ALARM_REAR | HYDROFOIL_ALARM_ENABLED);
+        assert_eq!(a.blocked_code, 0);
+        assert_eq!(a.rear_state, Some(3));
+        assert!(a.active);
+
+        // A clear frame with no rear status.
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(0x253).unwrap()),
+            &[0x80, 0x00, 0xFF, 0x00, 0x00],
+        );
+        let EoiCanData::Hydrofoil(HydrofoilData::Alarm(a)) = parse_eoi_can_data(&can_frame).unwrap()
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(a.rear_state, None);
+        assert!(!a.active);
     }
 
     #[test]
