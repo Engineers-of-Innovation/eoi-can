@@ -220,7 +220,7 @@ documented in firmware here — layouts match the Python CAN visualizer and live
 | HydrofoilAttitude | 0x250 | 6 | 0–1 | Roll | i16 | LE | Centidegrees. NED; positive = starboard side down. |
 | | | | 2–3 | Pitch | i16 | LE | Centidegrees. |
 | | | | 4–5 | Yaw | u16 | LE | Centidegrees, compass 0–360°. |
-| HydrofoilState | 0x251 | 8 | 0–1 | Lua height | u16 | LE | mm, roll-corrected. `0xFFFF` = invalid. |
+| HydrofoilState | 0x251 | 8 | 0–1 | Lua height (retired) | u16 | LE | Always `0xFFFF` since 2026-09-29: `hydrofoils.lua` no longer computes its own roll-corrected height. Older logs carry real mm here. |
 | | | | 2–3 | EKF height | u16 | LE | mm. `0xFFFF` = invalid. |
 | | | | 4–5 | Status flags | u16 | LE | Bitfield — see below. |
 | | | | 6 | Mode | u8 | | ArduPilot vehicle mode: `0`=MANUAL, `5`=FBWA. |
@@ -244,6 +244,9 @@ Status flag bits in `HydrofoilState` bytes 4–5:
 | 9 | EKFOriginSet | EKF origin set |
 | 10 | HAGLAvailable | Height-above-ground available |
 | 11 | VelAvailable | Velocity available |
+| 12 | RollTest | Roll-stability test mode active (`SCR_USER1 = 1`, height loop bypassed) |
+| 13 | — | Reserved, always 0 (was: EKF and Lua heights diverged) |
+| 14–15 | HeightReason | 2-bit code: `0` both height sensors fresh, `1` a sensor stale. `2` (sides disagree) and `3` (estimate ≤ 0) belonged to the Lua height and are no longer sent. |
 
 ## Controller Temperatures
 

@@ -745,7 +745,7 @@ pub enum HeightSensorData {
 pub enum HydrofoilData {
     /// `0x250` — NED Euler attitude in centidegrees.
     Attitude(Attitude),
-    /// `0x251` — roll-corrected / EKF height, status bits, flight mode.
+    /// `0x251` — EKF height, status bits, flight mode (the Lua height is retired).
     State(HydrofoilState),
     /// `0x252` — front elevon PWM outputs.
     Elevons(Elevons),
@@ -767,6 +767,10 @@ pub struct Attitude {
 /// Foiling controller state from `0x251`.
 ///
 /// Height fields are `None` when the wire sent `0xFFFF` (invalid).
+///
+/// `lua_height_mm` is always `None` from `hydrofoils.lua` of 2026-09-29 on, which
+/// stopped computing its own roll-corrected height and sends `0xFFFF` in bytes 0-1.
+/// The field stays so older logs still decode and the CSV column keeps its place.
 #[derive(Debug, Serialize, PartialEq)]
 #[cfg_attr(feature = "defmt", derive(defmt::Format))]
 pub struct HydrofoilState {
@@ -793,6 +797,10 @@ pub const HYDROFOIL_STATUS_HOME_SET: u16 = 1 << 8;
 pub const HYDROFOIL_STATUS_EKF_ORIGIN_SET: u16 = 1 << 9;
 pub const HYDROFOIL_STATUS_HAGL_AVAILABLE: u16 = 1 << 10;
 pub const HYDROFOIL_STATUS_VEL_AVAILABLE: u16 = 1 << 11;
+pub const HYDROFOIL_STATUS_ROLL_TEST: u16 = 1 << 12;
+/// Bits 14-15: `0` both height sensors fresh, `1` a sensor stale. `2` and `3`
+/// came from the retired Lua height and are no longer sent.
+pub const HYDROFOIL_STATUS_HEIGHT_REASON_SHIFT: u16 = 14;
 
 /// Front elevon PWM outputs from `0x252` (µs, 1500 = neutral).
 #[derive(Debug, Serialize, PartialEq)]
