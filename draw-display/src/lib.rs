@@ -639,7 +639,7 @@ pub struct FoilingData {
     pub pitch: [Latched<Reading>; 13],
     pub roll: [Latched<Reading>; 13],
     pub height: [Latched<Reading>; 7],
-    pub rear: [Latched<Reading>; 4],
+    pub rear: [Latched<Reading>; 3],
     pub turn: [Latched<Reading>; 6],
     pub mode: [Latched<Reading>; 4],
     pub global: [Latched<Reading>; 1],
@@ -2299,13 +2299,15 @@ mod foil_ingest_tests {
         let indices = [
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27,
             28, 29, 30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 52, 53,
-            54, 55, 56, 57,
+            55, 56, 57,
         ];
         assert_eq!(
             indices.len(),
-            50,
-            "foil_tune.lua PROTO_VERSION 9 has 50 the screen draws"
+            49,
+            "foil_tune.lua PROTO_VERSION 10 has 49 the screen draws"
         );
+        // 54 was HYD_RKP, retired at PROTO_VERSION 10: it must NOT land anywhere.
+        assert!(render::foiling::cell_for_index(54).is_none());
         let mut data = DisplayData::default();
         for index in indices {
             let cell = render::foiling::cell_for_index(index);
@@ -2396,7 +2398,7 @@ mod foil_ingest_tests {
     fn a_readback_is_drawn_in_the_cell_it_lands_in() {
         for (nth, index) in [
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 16, 17, 18, 19, 20, 21, 24, 27, 28, 29, 30, 31,
-            32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 54, 55, 56, 57,
+            32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45, 48, 49, 50, 51, 55, 56, 57,
         ]
         .into_iter()
         .enumerate()

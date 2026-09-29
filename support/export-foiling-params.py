@@ -40,9 +40,9 @@ AXIS_PARAMS = {
 }
 
 # ArduPilot name -> foil_tune.lua PT index, the wire contract for 0x260/0x261/0x262.
-# Mirrors tools/foil_tune.py's PARAMS at PROTO_VERSION 9. 13-15 and 46-47 are
-# unused; 37-38 and 58 are retired (HYD_HSRC, HYD_HDIV, HYD_IGATE) and must never
-# be reused. 59 (HYD_RTKI) is absent because the screen no longer draws it -- the
+# Mirrors tools/foil_tune.py's PARAMS at PROTO_VERSION 10. 13-15 and 46-47 are
+# unused; 37-38, 54 and 58 are retired (HYD_HSRC, HYD_HDIV, HYD_RKP, HYD_IGATE) and
+# must never be reused. 59 (HYD_RTKI) is absent because the screen no longer draws it -- the
 # parameter and its whitelist entry still exist on the flight controller, so the
 # index is not free either.
 INDEX = {
@@ -57,7 +57,7 @@ INDEX = {
     "PTCH_RATE_FLTD": 29, "PTCH_RATE_SMAX": 30, "SCALING_SPEED": 31,
     "HYD_KP": 32, "HYD_KI": 33, "HYD_KD": 34, "HYD_IMAX": 35, "HYD_TARGET": 36,
     "HYD_ARM": 39, "HYD_CMDMAX": 52, "HYD_CMDMIN": 53,
-    "HYD_RKP": 54, "HYD_RSCALE": 55, "HYD_RSCHED": 56, "HYD_FRNTFF": 57,
+    "HYD_RSCALE": 55, "HYD_RSCHED": 56, "HYD_FRNTFF": 57,
     "TRN_ENABLE": 40, "TRN_ON": 41, "TRN_FULL": 42, "TRN_MAX": 43,
     "TRN_RATE": 44, "TRN_REV": 45,
     "SCR_USER1": 48, "SCR_USER2": 49, "SCR_USER3": 50, "SCR_USER4": 51,
@@ -101,7 +101,6 @@ LIMITS = {
     "HYD_CMDMAX":         (0.5,  5,    0.1,   0.5,  False),
     "HYD_CMDMIN":         (-8,  -0.5,  0.1,   0.5,  False),
     "HYD_ARM":            (0,    3.8,  0.05,  0.2,  False),
-    "HYD_RKP":            (0.15, 1.2,  0.02,  0.1,  False),
     "HYD_RSCALE":         (0.5,  1.2,  0.02,  0.1,  False),
     "HYD_RSCHED":         (0,    1200, 5,     25,   False),
     "HYD_FRNTFF":         (0,    0.5,  0.01,  0.05, False),
@@ -121,7 +120,6 @@ LIMITS = {
 SINGLE_PARAMS = {
     "KP": "HYD_KP", "KI": "HYD_KI", "KD": "HYD_KD", "IMAX": "HYD_IMAX",
     "TARGET": "HYD_TARGET", "CMD": "HYD_CMDMAX+HYD_CMDMIN", "ARM": "HYD_ARM",
-    "RKP": "HYD_RKP",
     "RSCALE": "HYD_RSCALE", "RSCHED": "HYD_RSCHED",
     "FRNTFF": "HYD_FRNTFF",
     "ENABLE": "TRN_ENABLE", "ON": "TRN_ON", "FULL": "TRN_FULL",

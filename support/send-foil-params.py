@@ -11,7 +11,7 @@ for `--layout foiling` against `vcan0`, and for the real panel over `can0`.
 
 What it sends, in the order the flight controller would:
 
-    0x261 [0xFE, 0]  proto version 7
+    0x261 [0xFE, 0]  proto version 10
     0x261 [idx, 0]   one frame per parameter, a whole-table dump
     0x261 [0xFF, 0]  end-of-dump marker, value = entries sent
     0x261 [16, s]    the cursor cell, re-requested once the cursor settles --
@@ -52,7 +52,7 @@ CSV = os.path.join(os.path.dirname(HERE), "FOILING_PARAMETERS.csv")
 
 ID_VALUE = 0x261
 IDX_VERSION, IDX_ALL = 0xFE, 0xFF
-PROTO_VERSION = 9
+PROTO_VERSION = 10   # v10: HYD_RKP (54) retired
 ST_OK, ST_CLAMPED = 0, 2
 
 # The datalogger's half: the configuration slots and what was last done to one.
@@ -80,19 +80,22 @@ EVENTS = [
 ]
 EVENT_EVERY = 4
 
-# The derived tune, by ArduPilot name. Rate gains from `tools/foil_derive.py`
-# ("PASTE INTO hydrofoils.lua section 1b"); the height and rear loops from
-# `hydrofoils.lua`'s own constants at TUNE_REV 21. Anything absent falls back to
-# the midpoint of its min/max, which is enough to fill a cell.
+# The seeded tune, by ArduPilot name: `hydrofoils.lua`'s seed block at TUNE_REV 24.
+# The rate gains are HALF what they were before rev 23, because MIXING_GAIN went
+# 0.5 -> 1 with them (same servo command, see that script). IMAX is in AC_PID's
+# radian units, where full surface is 0.785 - these values mean "no limit".
+# Anything absent falls back to the midpoint of its min/max, enough to fill a cell.
 TUNE = {
-    "PTCH_RATE_FF": 2.93, "PTCH_RATE_P": 4.05, "PTCH_RATE_I": 3.82,
-    "RLL_RATE_FF": 0.33, "RLL_RATE_P": 0.44, "RLL_RATE_I": 0.43,
+    "PTCH_RATE_FF": 1.465, "PTCH_RATE_P": 2.025, "PTCH_RATE_I": 1.9,
+    "PTCH_RATE_IMAX": 17.5, "PTCH_RATE_SMAX": 50.0,
+    "RLL_RATE_FF": 0.165, "RLL_RATE_P": 0.22, "RLL_RATE_I": 0.215,
+    "RLL_RATE_IMAX": 10.0, "RLL_RATE_SMAX": 50.0,
     "PTCH_RATE_D": 0.0, "RLL_RATE_D": 0.0,
     "PTCH_LIM_MAX_DEG": 2.0, "PTCH_LIM_MIN_DEG": -3.0, "ROLL_LIMIT_DEG": 10.0,
     "HYD_KP": 960.0, "HYD_KI": 96.0, "HYD_KD": 1800.0, "HYD_IMAX": 150.0,
     "HYD_TARGET": 0.30, "HYD_ARM": 2.4,
     "HYD_CMDMAX": 2.0, "HYD_CMDMIN": -3.0,
-    "HYD_RKP": 0.4, "HYD_RSCALE": 0.8,
+    "HYD_RSCALE": 0.8,
     "HYD_RSCHED": 493.0, "HYD_FRNTFF": 0.2,
     "SCR_USER1": 0.0, "SCR_USER2": 0.0, "SCR_USER3": 0.0, "SCR_USER4": 0.0,
     "TRN_ENABLE": 0.0, "TRN_REV": 0.0,

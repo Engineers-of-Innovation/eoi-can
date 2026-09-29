@@ -235,8 +235,10 @@ fn foiling_renders_are_unchanged() {
         "foiling/stale",
         draw_display::draw_foiling,
         &stale(),
-        0x4d6c_bd40_8314_c586,
-        15797,
+        // 2026-09-29: RKP removed (foil_tune PROTO_VERSION 10), Rear heading one
+        // row down so RSCALE/RSCHED/FRNTFF keep rows 10-12.
+        0x340d_47ed_2217_4b2b,
+        15550,
     );
 }
 

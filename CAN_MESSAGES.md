@@ -270,6 +270,12 @@ between the two, listed with its range and step in `FOILING_PARAMETERS.md`.
 `0xFE` and `0xFF` are not parameters: they are the protocol version and the
 whole-table dump.
 
+The protocol is at **version 10** (2026-09-29), which retired index 54
+(`HYD_RKP`, the rear foil's pitch-error term, removed from `hydrofoils.lua`).
+Retired indices -- 37, 38, 54 and 58 -- answer `UnknownIndex` and are never reused;
+13-15 and 46-47 were never assigned; 59 (`HYD_RTKI`) is on the whitelist but not on
+the screen. A tool whose own copy of the table is older should check `0xFE` first.
+
 | Message | CAN ID | DLC | Byte | Field | Type | Endian | Values / Range |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | FoilParamSet | 0x260 | 6 | 0 | Parameter index | u8 | | 1-59 |
