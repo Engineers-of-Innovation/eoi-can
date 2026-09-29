@@ -8,11 +8,13 @@
 use defmt::*;
 use embassy_stm32::can::{BufferedCanReceiver, BufferedCanSender};
 use eoi_boot_api::header::AppType;
-use eoi_can_decoder::{EoiBattery, EoiCanData, RudderControllerData, ServoData};
+use eoi_can_decoder::{EoiBattery, EoiCanData, RudderControllerData, ServoData, ThrottleData};
 
 use crate::can::{decode, handle_bootloader_command};
 use crate::cooling_pump::BMS_DISCHARGE_STATE;
-use crate::servo_rudder::{SERVO_COMMAND, SERVO_SETPOINT, SETPOINT_MAX, SETPOINT_MIN};
+use crate::servo_rudder::{
+    SERVO_COMMAND, SERVO_SETPOINT, SETPOINT_MAX, SETPOINT_MIN, THROTTLE_STATE,
+};
 use crate::steering_angle::{CAN_ID_STEERING_CAL_CMD, CalCommand, STEERING_CAL_COMMAND};
 
 #[embassy_executor::task]
@@ -44,6 +46,9 @@ pub async fn rudder_can_rx_task(
                 match decode(frame) {
                     Some(EoiCanData::EoiBattery(EoiBattery::TemperaturesAndStates(t))) => {
                         BMS_DISCHARGE_STATE.signal(t.discharge_state);
+                    }
+                    Some(EoiCanData::Throttle(ThrottleData::State(state))) => {
+                        THROTTLE_STATE.signal(state);
                     }
                     Some(EoiCanData::RudderController(RudderControllerData::Servo(
                         ServoData::Setpoint(setpoint),

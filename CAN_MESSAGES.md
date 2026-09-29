@@ -56,6 +56,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x264 | FoilConfigEvent | Data Logger |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
+| 0x339 | ThrottleState | Throttle Controller |
 | 0x400–0x4FF | GanMppt\* | GaN MPPT Solar Controllers |
 | 0x700–0x77F | Mppt\* | MPPT Solar Controllers |
 | 0x909 | VescStatusMessage1 | VESC Motor Controller |
@@ -454,6 +455,7 @@ Source and DBC: `boat-fw/can-motor-temperature` on git.engineersofinnovation.nl.
 | | | | 1 | Control type | u8 enum | | 1=FilteredDutyCycle, 2=DutyCycle, 3=Current, 4=Rpm, 5=CurrentRelative |
 | | | | 2–3 | Lever forward | i16 | BE | Counts |
 | | | | 4–5 | Lever backward | i16 | BE | Counts |
+| ThrottleState | 0x339 | 1 | 0 | State | u8 enum | | 0=Booting, 1=Disarmed, 2=Armed, 3=GoToBootloader, 4=Error, 5=Programming. Sent with every ThrottleStatus (200 ms) while Disarmed or Armed. The rudder controller does not home at power-up while Armed. |
 
 ## MPPT Solar Controllers
 

@@ -422,8 +422,9 @@ impl LiveState {
                 self.throttle_errors = throttle_error_bits(&s.error);
                 self.throttle_err_at = Some(now);
             }
-            // Config frames carry no telemetry; nothing to update.
-            ThrottleData::Config(_) => {}
+            // Config frames carry no telemetry, and the arming state is not
+            // part of the telemetry proto; nothing to update.
+            ThrottleData::Config(_) | ThrottleData::State(_) => {}
         }
     }
 

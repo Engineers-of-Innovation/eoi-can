@@ -12,7 +12,7 @@ use embassy_stm32::usart::{UartRx, UartTx};
 use embassy_sync::blocking_mutex::raw::CriticalSectionRawMutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Duration, Instant, Ticker, Timer};
-use eoi_can_decoder::ServoRudderCommand;
+use eoi_can_decoder::{ServoRudderCommand, ThrottleState};
 use tmc2209::reg;
 use tmc2209::reg::{ReadableRegister, WritableRegister};
 
@@ -23,6 +23,9 @@ pub const SETPOINT_MAX: u16 = 2000;
 const WATCHDOG_TIMEOUT: Duration = Duration::from_secs(2);
 // The servo homes by itself at power-up, after this delay for the motor supply
 // to settle. The foil moves without a command, so keep clear at power-on.
+// Unless the throttle reports Armed within the delay: then this board reset
+// while under way, and it holds the foil where it is instead (`hold_unhomed`).
+// The throttle sends its state every 200 ms, so the delay covers ~5 frames.
 const BOOT_HOME_DELAY: Duration = Duration::from_secs(1);
 
 // MS1 (AD0) and MS2 (AD1) are strapped to 3V3 on the board, so the driver
@@ -115,6 +118,7 @@ const STEP_PULSE_CYCLES: u32 = 40; // ~500 ns high at 80 MHz (datasheet min 100 
 
 pub static SERVO_SETPOINT: Signal<CriticalSectionRawMutex, u16> = Signal::new();
 pub static SERVO_COMMAND: Signal<CriticalSectionRawMutex, ServoRudderCommand> = Signal::new();
+pub static THROTTLE_STATE: Signal<CriticalSectionRawMutex, ThrottleState> = Signal::new();
 
 static STATE: AtomicU8 = AtomicU8::new(State::Uninitialized as u8);
 static FAULT_CAUSE: AtomicU8 = AtomicU8::new(FaultCause::None as u8);
@@ -656,6 +660,34 @@ impl Servo {
         }
     }
 
+    /// Power-up with the throttle armed: the step count died with the reset, so
+    /// there is no position to track from, but homing would swing the foil
+    /// through its whole travel under way. Energize the driver so the foil holds
+    /// where it is, and stay Uninitialized (setpoints ignored) until an
+    /// Initialize homes it.
+    async fn hold_unhomed(&mut self) -> State {
+        let result = async {
+            self.configure_driver().await?;
+            // `configure_driver` leaves the homing current set.
+            self.tmc
+                .write(ihold_irun(IRUN))
+                .await
+                .map_err(|_| FaultCause::DriverError)
+        }
+        .await;
+        match result {
+            Ok(()) => {
+                self.enable.set_low();
+                self.set_state(State::Uninitialized, FaultCause::None);
+                State::Uninitialized
+            }
+            Err(cause) => {
+                self.set_state(State::Fault, cause);
+                State::Fault
+            }
+        }
+    }
+
     /// Uninitialized / Fault: only an Initialize command acts.
     async fn idle_locked(&mut self, state: State) -> State {
         match select(SERVO_COMMAND.wait(), SERVO_SETPOINT.wait()).await {
@@ -714,6 +746,20 @@ fn ihold_irun(irun: u8) -> reg::IHOLD_IRUN {
     register
 }
 
+/// Whether the throttle reports Armed before `window` runs out. Returns as soon
+/// as it does, so the foil is held with as little free time as possible. No
+/// state at all (throttle off, bench) counts as not armed.
+async fn throttle_armed_within(window: Duration) -> bool {
+    let deadline = Instant::now() + window;
+    loop {
+        match select(THROTTLE_STATE.wait(), Timer::at(deadline)).await {
+            Either::First(ThrottleState::Armed) => return true,
+            Either::First(_) => {}
+            Either::Second(()) => return false,
+        }
+    }
+}
+
 #[embassy_executor::task]
 pub async fn servo_control_task(
     step: Output<'static>,
@@ -739,12 +785,18 @@ pub async fn servo_control_task(
     };
     servo.set_state(State::Uninitialized, FaultCause::None);
 
-    // Home at power-up instead of waiting for Initialize. An Initialize that
-    // arrived during the delay is dropped, or it would re-home right after.
-    Timer::after(BOOT_HOME_DELAY).await;
+    // Home at power-up instead of waiting for Initialize, unless the throttle
+    // is armed. An Initialize that arrived during the delay is dropped, or it
+    // would re-home right after.
+    let armed = throttle_armed_within(BOOT_HOME_DELAY).await;
     SERVO_COMMAND.reset();
-    info!("Power-up homing");
-    let mut state = servo.initialize().await;
+    let mut state = if armed {
+        warn!("Throttle armed at power-up: not homing, holding position until Initialize");
+        servo.hold_unhomed().await
+    } else {
+        info!("Power-up homing");
+        servo.initialize().await
+    };
 
     loop {
         state = match state {
