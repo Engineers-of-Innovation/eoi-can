@@ -45,7 +45,7 @@ const TMC_READ_TIMEOUT: Duration = Duration::from_millis(20);
 const IRUN: u8 = 31;
 // IRUN_HOMING 31 -> ~1.06 A rms, equal to IRUN for now: at 14 homing did not
 // move the wing (bench, 2026-09). Kept separate so it can be lowered again.
-const IRUN_HOMING: u8 = 31;
+const IRUN_HOMING: u8 = 24;
 const IHOLD: u8 = 4;
 const IHOLD_DELAY: u8 = 8;
 // Full steps (mres 8). CHOPCONF intpol (on in the reset value) still
@@ -90,16 +90,17 @@ const TICK_HZ: u64 = embassy_time::TICK_HZ;
 // ACCEL to CRUISE_SPEED, brake symmetrically. The old ramp took one tick off
 // the step delay every 2 steps: ~120 steps/s^2 at the bottom but ~15000 at the
 // top, exactly where a stepper has least torque. ACCEL 5000 steps/s^2 covers
-// 200 -> 4000 steps/s in ~0.76 s / ~1600 steps. Bench (2026-09): 8000 and
+// 200 -> 3000 steps/s in ~0.56 s / ~900 steps. Bench (2026-09): 8000 and
 // 10000 stalled at any cruise speed (the rotor falls behind while ramping),
 // with motor and driver both cool, so it is acceleration, not heat.
-const START_SPEED: f32 = 200.0; // steps/s, 60 motor RPM
-// 4000 steps/s = 1200 motor RPM = ~524 deg/s at the gearbox output (13.73:1).
+const START_SPEED: f32 = 300.0; // steps/s, 60 motor RPM
+// 3000 steps/s = 900 motor RPM = ~393 deg/s at the gearbox output (13.73:1).
 // Bench (2026-09): ran well with ACCEL up to 5000; 5000 steps/s was too fast.
-// The step period is ~8 ticks here, so single steps alternate 244/275 us (the
-// carry keeps the average exact), and any task holding the executor for more
-// than ~0.5 ms costs sync.
-const CRUISE_SPEED: f32 = 4000.0; // steps/s
+// Lowered from 4000 (2026-10) because the motor stalled again: a stepper has
+// more torque at lower speed. The step period is ~11 ticks here, so single
+// steps alternate 305/336 us (the carry keeps the average exact), and any task
+// holding the executor for more than ~0.6 ms costs sync.
+const CRUISE_SPEED: f32 = 3000.0; // steps/s
 const ACCEL: f32 = 5000.0; // steps/s^2
 // Open-loop homing ramps from START_SPEED at ACCEL to HOMING_SPEED and holds
 // it into the stop, at the reduced IRUN_HOMING current. It must not lose steps

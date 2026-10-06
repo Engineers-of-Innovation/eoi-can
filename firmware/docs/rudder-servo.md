@@ -116,9 +116,9 @@ Transitions:
 STEP pulses are software-timed (embassy timer, 30.5 µs tick, with the
 fractional remainder carried so the average rate is exact). Moves use a
 constant-acceleration ramp: start at 200 full steps/s (60 motor RPM),
-accelerate at 5000 steps/s² to 4000 steps/s (1200 motor RPM, ~524°/s at the
-gearbox output), and brake symmetrically into the target (~0.76 s and ~1600
-steps each way). Full travel takes ~6.8 s. A new setpoint retargets a move in flight; one behind
+accelerate at 5000 steps/s² to 3000 steps/s (900 motor RPM, ~393°/s at the
+gearbox output), and brake symmetrically into the target (~0.56 s and ~900
+steps each way). Full travel takes ~8.5 s. A new setpoint retargets a move in flight; one behind
 the direction of travel brakes to the start speed first (overshooting if
 needed) and then reverses, instead of reversing at speed. At the ends of travel
 a move stops hard rather than run into a stop. Homing ramps the same way to
@@ -139,7 +139,7 @@ All in one block at the top of `app/src/servo_rudder.rs`.
 | `BACKOFF_STEPS` | 25 | Steps backed off the stop after homing; position 0 lives here. |
 | `HOME_DIR_LEVEL` | Low | DIR level that moves toward the home stop. **Verify on hardware first.** |
 | `HOMING_SPEED` | = `CRUISE_SPEED` | Open-loop homing speed, reached with the same ramp from `START_SPEED`, at `IRUN_HOMING`. The backoff runs at `START_SPEED`. |
-| `START_SPEED` / `CRUISE_SPEED` / `ACCEL` | 200 / 4000 steps/s, 5000 steps/s² | Constant-acceleration move profile (full steps). Bench-tuned (2026-09): ACCEL 8000+ stalled at any cruise speed with motor and driver cool; 5000 steps/s was too fast. |
+| `START_SPEED` / `CRUISE_SPEED` / `ACCEL` | 200 / 3000 steps/s, 5000 steps/s² | Constant-acceleration move profile (full steps). Bench-tuned (2026-09): ACCEL 8000+ stalled at any cruise speed with motor and driver cool; 5000 steps/s was too fast. Cruise lowered from 4000 (2026-10) after stalls returned. |
 | `WATCHDOG_TIMEOUT` | 2 s | Setpoint watchdog. |
 | `BOOT_HOME_DELAY` | 1 s | Delay before the automatic power-up homing, and how long an Armed ThrottleState (every 200 ms) is waited for. |
 
