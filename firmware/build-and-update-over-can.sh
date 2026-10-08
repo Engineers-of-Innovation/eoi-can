@@ -11,29 +11,23 @@
 # Usage: ./build-and-update-over-can.sh [-i <iface>] [board]
 #
 #   -i     CAN interface to use (default: can0).
-#   board  one of rudder-controller | height-sensor-controller | dashboard.
-#          Omit to build and flash all three.
+#   board  one of rudder-controller | height-sensor-controller | dashboard |
+#          foiling. Omit to build and flash all four.
 #
 # The flash tool picks its target from the ELF's app type, so each ELF can
 # only ever end up on its own board. Boards that fail to flash are reported
 # at the end; the script keeps going so the remaining boards still update.
 #
-# The foiling display is deliberately absent. It has no bootloader deployed, so
-# it is flashed over SWD from an image linked at 0x08000000:
-#
-#     cargo build --release --bin foiling      # note: no --features bootloader
-#
-# `bootloader` is a crate-wide feature, so it cannot be on for some binaries and
-# off for others in one invocation. That is why the three boards below are named
-# explicitly instead of using `--bins`: `--bins --features bootloader` would also
-# produce a `foiling` image at the bootloader offset, which is wrong for that
-# board and indistinguishable from a good one by eye. The two builds also share a
-# target directory, so each overwrites the other's `foiling` — rebuild it after
-# running this script.
+# Every board, the foiling display included, runs the CAN bootloader, so every
+# image is built with `--features bootloader` and linked at 0x08014800. A plain
+# `cargo build --bin foiling` (no feature) links flat at 0x08000000; flashing
+# that over SWD overwrites the bootloader and takes the board off CAN OTA. To
+# put the bootloader back over SWD, `cargo run --release --features bootloader
+# --bin foiling` -- the runner flashes bootloader, header and app together.
 
 set -e
 
-all_boards=(rudder-controller height-sensor-controller dashboard)
+all_boards=(rudder-controller height-sensor-controller dashboard foiling)
 iface="can0"
 
 usage() {
@@ -70,8 +64,8 @@ cd "$(dirname "$0")"
 (cd flash-tool && cargo build --release)
 
 # Build firmware binaries (host cargo, default target = thumbv7em-none-eabihf).
-# Every board is named explicitly -- never `--bins` -- so the bootloader-offset
-# build can never sweep up the SWD-flashed `foiling` image. See the header.
+# Boards are named explicitly rather than with `--bins`, so the script flashes
+# only what it was asked to.
 bin_args=()
 for board in "${boards[@]}"; do
     bin_args+=(--bin "${board}")

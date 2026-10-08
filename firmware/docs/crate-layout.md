@@ -61,27 +61,24 @@ PA9-PA12 also keep full 5 V tolerance — which matters, because PA12 carries
 ## Building
 
 ```sh
-# The three boards with a bootloader, flashed over CAN
+# All four boards, flashed over CAN through their bootloaders
 ./build-and-update-over-can.sh
 
-# The foiling board: no bootloader, linked flat at 0x08000000, flashed over SWD
-cargo build --release --bin foiling
+# One board over SWD instead: bootloader, header and app in one go
+cargo run --release --features bootloader --bin foiling
 ```
 
-`bootloader` is a **crate-wide** feature, so it cannot be on for some binaries
-and off for others in one invocation. Consequences:
+Every board runs the CAN bootloader, so every image is built with
+`--features bootloader` and linked at 0x08014800. Without the feature an image
+links flat at 0x08000000 and owns all of flash: flashing one over SWD silently
+overwrites the bootloader, and the board drops off CAN OTA until it is
+reflashed as above.
 
-- Never `cargo build --bins --features bootloader`. It also produces a `foiling`
-  image at the bootloader offset, which is wrong for that board and looks no
-  different from a good one.
-- The two builds share a target directory, so each overwrites the other's
-  `foiling`. Rebuild it after running the OTA script.
-
-Confirm what you flashed:
+Confirm what you built:
 
 ```sh
 readelf -l target/thumbv7em-none-eabihf/release/foiling | awk '/LOAD/{print $3; exit}'
-# 0x08000000 for foiling, 0x08014800 for the bootloader-hosted boards
+# 0x08014800 with the bootloader, 0x08000000 without
 ```
 
 ## Display boards
@@ -99,21 +96,15 @@ Both layouts are linked into both images, because `Layout::draw` matches over th
 enum. At ~99 KB of a 1 MB part that is not worth avoiding; if flash ever gets
 tight, gate the layout behind a feature so LTO can drop the unused one.
 
-## TODO: bootloader on the foiling board
+## The foiling board's bootloader
 
-Deferred deliberately. The board is flashed over SWD and nothing answers on its
-bootloader address. To deploy CAN OTA on it later:
+Deployed 2026-08-29 (`00fe322`). The bootloader is board-generic apart from the
+app type it expects, so the foiling variant is just the `foiling` feature in
+`boot` selecting `AppType::FoilTuning` (0x04). It answers on its own CAN
+address, and `eoi-flash-tool --board foiling` reaches it like any other board.
 
-1. Add a `foil-tuning` feature to `boot` selecting `AppType::FoilTuning`, which
-   already exists.
-2. Add `FoilTuning` to the flash tool's `Board` enum — left out on purpose today
-   so the CLI cannot offer a target that only times out.
-3. Build the `foiling` binary with `--features bootloader`, which means splitting
-   it out of the same invocation as the other three, or giving every board a
-   bootloader.
-4. Check `linker/boot.x`: `__app_end` is hardcoded to `0x080FF000`. Correct for
-   1 MB, so an L476RG needs no change — but it *would* have for the 512 KB
-   L471RE that was briefly the plan, so verify against the fitted part.
+`linker/boot.x` hardcodes `__app_end` at `0x080FF000`, which is right for the
+1 MB L476RG. Recheck it if the board is ever built on a smaller part.
 
 **Never let two boards on the bus report the same app type.** The app type *is*
 the bootloader's CAN address, so a `REBOOT` or a flash aimed at one would hit
