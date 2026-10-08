@@ -28,6 +28,7 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x106 | CellVoltages13To14PackAndStack | Battery Management System |
 | 0x107 | TemperaturesAndStates | Battery Management System |
 | 0x108 | BatteryUptime | Battery Management System |
+| 0x10C | BmsShutdown | Battery Management System |
 | 0x109 | ThrottleToVescCurrent | Throttle Controller |
 | 0xA09 | ThrottleToVescCurrentRelative | Throttle Controller |
 | 0x200 | GnssStatus | GNSS |
@@ -193,6 +194,10 @@ the command ID against their own application type — rebooting one board leaves
 | | | | 6 | Charge state | u8 enum | | 0=Init, 1=Idle, 2=RelayOn, 3=FetOn, 4=Error, 5=FetOff |
 | | | | 7 | Discharge state | u8 enum | | 0=Init, 1=Idle, 2=PreChargeOn, 3=On, 4=PreChargeTimeout, 5=Error |
 | BatteryUptime | 0x108 | 4 | 0–3 | Uptime | u32 | LE | Milliseconds |
+| BmsShutdown | 0x10C | 7 | 0 | Reason | u8 enum | | 0=None, 1=Battery key, 2=Safety key, 3=Other. Event, sent once ~200 µs after a key opens, when the 24 V is already gone. The display boards paint the EoI logo on it. |
+| | | | 1 | Charge state | u8 enum | | State at the moment of the shutdown |
+| | | | 2 | Motor state | u8 enum | | State at the moment of the shutdown |
+| | | | 3–6 | Uptime | u32 | LE | Seconds (not milliseconds, unlike 0x108) |
 
 ## GNSS
 

@@ -12,6 +12,7 @@
 use defmt::*;
 use draw_display::{DisplayData, ScreenSelector};
 use embassy_executor::Spawner;
+use embassy_futures::select::{Either, select};
 use embassy_futures::yield_now;
 use embassy_stm32::can::{
     BufferedCanReceiver, BufferedCanSender, Can, Fifo, Rx0InterruptHandler, Rx1InterruptHandler,
@@ -27,7 +28,8 @@ use embassy_stm32::wdg::IndependentWatchdog;
 use embassy_stm32::{Peripherals, dma, spi};
 use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
-use embassy_time::{Delay, Duration, Ticker, Timer};
+use embassy_sync::signal::Signal;
+use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
 use embedded_graphics::pixelcolor::BinaryColor;
 use embedded_graphics::prelude::*;
 use eoi_can_decoder::can_collector::CanCollector;
@@ -45,6 +47,44 @@ use crate::can::handle_bootloader_command;
 /// `ThreadModeRawMutex` is sound here because both halves run on the same
 /// thread-mode executor; nothing touches this from an interrupt.
 pub static COLLECTOR: Mutex<ThreadModeRawMutex, CanCollector> = Mutex::new(CanCollector::new());
+
+/// The battery's `BmsShutdown` event: a key has opened and the 24 V is already
+/// gone. The BMS sends it once, ~200 us after the key opens, and from then on
+/// this board runs on whatever the rail capacitance still holds.
+pub const SHUTDOWN_WARNING_ID: u16 = 0x10C;
+
+/// Raised by the RX task the moment [`SHUTDOWN_WARNING_ID`] arrives, carrying
+/// when it did, so the render loop can drop what it is doing instead of finding
+/// out on its next pass through the collector.
+static SHUTDOWN: Signal<ThreadModeRawMutex, Instant> = Signal::new();
+
+/// Bytes in one panel framebuffer: 792 x 272 at one bit per pixel.
+const FRAME_BYTES: usize = 26_928;
+
+/// The logo painted on [`SHUTDOWN_WARNING_ID`], already in the panel's own
+/// layout so it goes from flash to the panel with no rendering at all. Generated
+/// by `support/logo-to-epd.py`; see the `-preview.png` next to it.
+static SHUTDOWN_LOGO_UPRIGHT: [u8; FRAME_BYTES] = *include_bytes!("../assets/shutdown-logo.bin");
+static SHUTDOWN_LOGO_INVERTED: [u8; FRAME_BYTES] = rotate_180(&SHUTDOWN_LOGO_UPRIGHT);
+
+/// A framebuffer turned half a turn: what [`DisplayRotation::Rotate180`] would
+/// have drawn. The last pixel becomes the first, so the bytes run backwards and
+/// the bits within each byte do too. Exact only because 792 is a multiple of 8,
+/// leaving no padding at the end of a row.
+const fn rotate_180(src: &[u8; FRAME_BYTES]) -> [u8; FRAME_BYTES] {
+    let mut out = [0; FRAME_BYTES];
+    let mut i = 0;
+    while i < FRAME_BYTES {
+        out[FRAME_BYTES - 1 - i] = src[i].reverse_bits();
+        i += 1;
+    }
+    out
+}
+
+/// How long the logo stays up before the board goes back to the live screens.
+/// Only matters when the 24 V does *not* go away after all; normally the board
+/// is dead long before this runs out.
+const SHUTDOWN_LOGO_HOLD: Duration = Duration::from_secs(30);
 
 /// Wraps [`Display5in79`] so the shared `draw_display` code (which uses the
 /// standard embedded-graphics convention, `On` = white) renders correctly on
@@ -81,6 +121,13 @@ impl PanelMounting {
         match self {
             Self::Upright => DisplayRotation::Rotate0,
             Self::Inverted => DisplayRotation::Rotate180,
+        }
+    }
+
+    fn shutdown_logo(self) -> &'static [u8] {
+        match self {
+            Self::Upright => &SHUTDOWN_LOGO_UPRIGHT,
+            Self::Inverted => &SHUTDOWN_LOGO_INVERTED,
         }
     }
 }
@@ -208,6 +255,12 @@ pub async fn dashboard_can_rx_task(
         match rx.receive().await {
             Ok(envelope) => {
                 let frame = &envelope.frame;
+                // First, ahead of the collector lock: the render loop is waiting
+                // on nothing else once this is raised.
+                if matches!(frame.id(), embassy_stm32::can::Id::Standard(id) if id.as_raw() == SHUTDOWN_WARNING_ID)
+                {
+                    SHUTDOWN.signal(envelope.ts);
+                }
                 handle_bootloader_command(frame, app_type, &mut tx);
 
                 // `from_encoded` takes a slice, which keeps the decoder's
@@ -415,9 +468,41 @@ pub async fn run_display<I: DisplayIrqs>(
     const MIN_LOOP_PERIOD: Duration = Duration::from_secs(1);
     let mut ticker = Ticker::every(MIN_LOOP_PERIOD);
 
+    let shutdown_logo = mounting.shutdown_logo();
+    // A shutdown warning caught by one of the awaits below, which consume it.
+    let mut warning: Option<Instant> = None;
+
     info!("Starting main loop");
 
     loop {
+        if let Some(received) = warning.take().or_else(|| SHUTDOWN.try_take()) {
+            red_led.set_low();
+            let started = Instant::now();
+            // Straight from flash: no render, and the quick refresh because the
+            // full one takes ~2 s. Any refresh this replaced was cancelled while
+            // writing or has finished, so the panel is idle or nearly so.
+            epd.display_refresh_all_async(&mut epd_spi_device, shutdown_logo, &mut Delay)
+                .await
+                .unwrap();
+            let done = Instant::now();
+            info!(
+                "Shutdown logo up {} ms after the warning: {} ms to reach it, {} ms to write and refresh",
+                (done - received).as_millis(),
+                (started - received).as_millis(),
+                (done - started).as_millis(),
+            );
+            red_led.set_high();
+
+            // Normally the board is dead long before this. If it is not, the
+            // shutdown did not happen after all: go back to the live screens with
+            // a full refresh, which also clears the logo's ghost.
+            Timer::after(SHUTDOWN_LOGO_HOLD).await;
+            quick_count = FULL_REFRESH_EVERY;
+            last_buffer_hash = None;
+            ticker.reset();
+            continue;
+        }
+
         // `mem::take` leaves an empty collector for the RX task to keep filling
         // while we decode, so it is blocked on the lock for as short as possible.
         let snapshot = {
@@ -461,6 +546,14 @@ pub async fn run_display<I: DisplayIrqs>(
         screens.draw(display, &display_data).unwrap();
         let buffer_hash = fnv1a_hash(display.buffer());
 
+        // The render is synchronous, so a warning that arrived during it is still
+        // sitting in the RX buffer. Let the RX task see it before committing to
+        // a refresh.
+        yield_now().await;
+        if SHUTDOWN.signaled() {
+            continue;
+        }
+
         if last_buffer_hash == Some(buffer_hash) {
             debug!("Display unchanged, skipping refresh");
         } else {
@@ -482,9 +575,24 @@ pub async fn run_display<I: DisplayIrqs>(
                 quick_count = 0;
             } else {
                 info!("Updating display (quick refresh)");
-                epd.display_refresh_all_async(&mut epd_spi_device, display.buffer(), &mut Delay)
-                    .await
-                    .unwrap();
+                // Abandoned on a shutdown warning. Safe to drop at any await: the
+                // logo rewrites both RAM planes, and the driver waits for BUSY
+                // before writing, so a refresh already running just finishes.
+                // The full refresh above is not abandoned, because dropping it
+                // inside `wake_up_async` would leave the panel half initialised.
+                let mut delay = Delay;
+                let refresh = epd.display_refresh_all_async(
+                    &mut epd_spi_device,
+                    display.buffer(),
+                    &mut delay,
+                );
+                match select(refresh, SHUTDOWN.wait()).await {
+                    Either::First(result) => result.unwrap(),
+                    Either::Second(received) => {
+                        warning = Some(received);
+                        continue;
+                    }
+                }
                 quick_count += 1;
             }
             last_buffer_hash = Some(buffer_hash);
@@ -505,6 +613,8 @@ pub async fn run_display<I: DisplayIrqs>(
         // collector stayed empty and the RX path looked dead from the inside).
         yield_now().await;
 
-        ticker.next().await;
+        if let Either::Second(received) = select(ticker.next(), SHUTDOWN.wait()).await {
+            warning = Some(received);
+        }
     }
 }
