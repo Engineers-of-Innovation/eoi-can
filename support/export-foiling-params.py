@@ -40,7 +40,8 @@ AXIS_PARAMS = {
 }
 
 # ArduPilot name -> foil_tune.lua PT index, the wire contract for 0x260/0x261/0x262.
-# Mirrors tools/foil_tune.py's PARAMS at PROTO_VERSION 10. 13-15 and 46-47 are
+# Mirrors tools/foil_tune.py's PARAMS at PROTO_VERSION 11 (v11 only widened HYD_FRNTFF
+# to 0..1.2 for the hydrofoils.lua rev 27 feed-forward of 0.944). 13-15 and 46-47 are
 # unused; 37-38, 54 and 58 are retired (HYD_HSRC, HYD_HDIV, HYD_RKP, HYD_IGATE) and
 # must never be reused. 59 (HYD_RTKI) is absent because the screen no longer draws it -- the
 # parameter and its whitelist entry still exist on the flight controller, so the
@@ -103,7 +104,7 @@ LIMITS = {
     "HYD_ARM":            (0,    3.8,  0.05,  0.2,  False),
     "HYD_RSCALE":         (0.5,  1.2,  0.02,  0.1,  False),
     "HYD_RSCHED":         (0,    1200, 5,     25,   False),
-    "HYD_FRNTFF":         (0,    0.5,  0.01,  0.05, False),
+    "HYD_FRNTFF":         (0,    1.2,  0.01,  0.05, False),
     "TRN_ENABLE":         (0,    1,    1,     1,    False),
     "TRN_ON":             (5,    60,   1,     5,    False),
     "TRN_FULL":           (10,   100,  1,     5,    False),

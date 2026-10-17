@@ -686,7 +686,7 @@ pub enum PairHalf {
 /// agree with; `FOILING_PARAMETERS.csv` carries the same mapping outwards for the
 /// datalogger, and a test checks the two agree.
 ///
-/// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 10. 13-15 and 46-47
+/// Indices are `foil_tune.lua`'s `PT` table at PROTO_VERSION 11 (same indices as 10). 13-15 and 46-47
 /// are unused; 37-38, 54 and 58 are retired and must never be reused. 59 (`HYD_RTKI`)
 /// is still on the flight controller's whitelist but has no cell here, so the
 /// screen cannot reach it -- the index stays spoken for either way.
@@ -1254,7 +1254,7 @@ mod tests {
         }
         assert_eq!(
             checked, 49,
-            "foil_tune.lua PROTO_VERSION 10 has 49 parameters the screen draws"
+            "foil_tune.lua PROTO_VERSION 10 and 11 have 49 parameters the screen draws"
         );
     }
 

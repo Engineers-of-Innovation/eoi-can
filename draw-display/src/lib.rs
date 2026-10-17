@@ -2305,7 +2305,7 @@ mod foil_ingest_tests {
         assert_eq!(
             indices.len(),
             49,
-            "foil_tune.lua PROTO_VERSION 10 has 49 the screen draws"
+            "foil_tune.lua PROTO_VERSION 10 and 11 have 49 the screen draws"
         );
         // 54 was HYD_RKP, retired at PROTO_VERSION 10: it must NOT land anywhere.
         assert!(render::foiling::cell_for_index(54).is_none());

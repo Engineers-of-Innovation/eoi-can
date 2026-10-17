@@ -100,7 +100,7 @@ which at a 12px cap reads as a small capital.
 | `b` | Mid | 7 | ARM | `HYD_ARM` | 0 | 3.8 | 0.05 / 0.2 |  |
 | `W` | Mid | 10 | RSCALE | `HYD_RSCALE` | 0.5 | 1.2 | 0.02 / 0.1 |  |
 | `Y` | Mid | 11 | RSCHED | `HYD_RSCHED` | 0 | 1200 | 5 / 25 |  |
-| `V` | Mid | 12 | FRNTFF | `HYD_FRNTFF` | 0 | 0.5 | 0.01 / 0.05 |  |
+| `V` | Mid | 12 | FRNTFF | `HYD_FRNTFF` | 0 | 1.2 | 0.01 / 0.05 |  |
 | `N` | Right | 1 | ENABLE | `TRN_ENABLE` | 0 | 1 | 1 / 1 |  |
 | `U` | Right | 2 | ON | `TRN_ON` | 5 | 60 | 1 / 5 |  |
 | `A` | Right | 3 | FULL | `TRN_FULL` | 10 | 100 | 1 / 5 |  |
