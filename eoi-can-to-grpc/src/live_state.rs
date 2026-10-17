@@ -52,8 +52,10 @@ use eoi_can_decoder::can_frame::CanFrame;
 use eoi_can_decoder::{
     parse_eoi_can_data, BatteryState, ChargeState, DischargeState, EoiBattery, EoiCanData,
     GanMpptPacket, GanPhaseFault, GanPhaseMode, GnssData, HeightSensorData, HeightSensorState,
-    HydrofoilData, MpptChannel, MpptInfo, RudderControllerData, ServoData, ServoFaultCause,
-    ServoState, TemperatureData, ThrottleData, ThrottleErrors, ThrottleTwiErrors, VescData,
+    HydrofoilData, HydrofoilDebugHeightLoop, HydrofoilDebugLoop, HydrofoilDebugPhase,
+    HydrofoilDebugRear, HydrofoilDebugTrim, MpptChannel, MpptInfo, RudderControllerData, ServoData,
+    ServoFaultCause, ServoState, TemperatureData, ThrottleData, ThrottleErrors, ThrottleTwiErrors,
+    VescData,
 };
 
 pub const STALE_AFTER: Duration = Duration::from_secs(5);
@@ -177,6 +179,12 @@ pub struct LiveState {
     /// Last HydrofoilAlarm (0x253): causes, blocked code, rear state (255 = none),
     /// rear fault, active.
     hydrofoil_alarm: Option<Timed<(u32, u32, u32, u32, bool)>>,
+    /// hydrofoils.lua debug frames 0x270-0x274, each as last received.
+    dbg_phase: Option<Timed<HydrofoilDebugPhase>>,
+    dbg_height_loop: Option<Timed<HydrofoilDebugHeightLoop>>,
+    dbg_rear: Option<Timed<HydrofoilDebugRear>>,
+    dbg_trim: Option<Timed<HydrofoilDebugTrim>>,
+    dbg_loop: Option<Timed<HydrofoilDebugLoop>>,
     /// Tracks whether optional height fields were valid on the last State frame so
     /// a subsequent invalid (0xFFFF) wire value can clear the held reading.
     lua_height_valid: bool,
@@ -609,6 +617,13 @@ impl LiveState {
                     at: now,
                 });
             }
+            HydrofoilData::DebugPhase(p) => self.dbg_phase = Some(Timed { value: p, at: now }),
+            HydrofoilData::DebugHeightLoop(h) => {
+                self.dbg_height_loop = Some(Timed { value: h, at: now })
+            }
+            HydrofoilData::DebugRear(r) => self.dbg_rear = Some(Timed { value: r, at: now }),
+            HydrofoilData::DebugTrim(t) => self.dbg_trim = Some(Timed { value: t, at: now }),
+            HydrofoilData::DebugLoop(l) => self.dbg_loop = Some(Timed { value: l, at: now }),
         }
     }
 
@@ -803,6 +818,11 @@ impl LiveState {
             elevon_left_us: self.elevon_left_us.and_then(|t| t.fresh(now)),
             elevon_right_us: self.elevon_right_us.and_then(|t| t.fresh(now)),
             hydrofoil_alarm: self.hydrofoil_alarm.and_then(|t| t.fresh(now)),
+            dbg_phase: self.dbg_phase.and_then(|t| t.fresh(now)),
+            dbg_height_loop: self.dbg_height_loop.and_then(|t| t.fresh(now)),
+            dbg_rear: self.dbg_rear.and_then(|t| t.fresh(now)),
+            dbg_trim: self.dbg_trim.and_then(|t| t.fresh(now)),
+            dbg_loop: self.dbg_loop.and_then(|t| t.fresh(now)),
             hottest_mppt: hottest_mppt.clone(),
             hottest_battery: hottest_battery.clone(),
             warnings: WarningsView {
@@ -1200,6 +1220,11 @@ pub struct SnapshotView {
     pub elevon_right_us: Option<u32>,
     /// (causes, blocked code, rear state, rear fault, active) of the last 0x253.
     pub hydrofoil_alarm: Option<(u32, u32, u32, u32, bool)>,
+    pub dbg_phase: Option<HydrofoilDebugPhase>,
+    pub dbg_height_loop: Option<HydrofoilDebugHeightLoop>,
+    pub dbg_rear: Option<HydrofoilDebugRear>,
+    pub dbg_trim: Option<HydrofoilDebugTrim>,
+    pub dbg_loop: Option<HydrofoilDebugLoop>,
     pub hottest_mppt: Option<(String, f32)>,
     pub hottest_battery: Option<(String, f32)>,
     pub warnings: WarningsView,

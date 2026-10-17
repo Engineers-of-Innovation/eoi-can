@@ -991,6 +991,16 @@ pub enum HydrofoilData {
     Elevons(Elevons),
     /// `0x253` — why the flight controller's beeper sounded (sent with every beep).
     Alarm(HydrofoilAlarm),
+    /// `0x270` — debug: flight phase (unstick, takeoff hold) and loop flags.
+    DebugPhase(HydrofoilDebugPhase),
+    /// `0x271` — debug: the height loop's P, I and D terms and its pitch demand.
+    DebugHeightLoop(HydrofoilDebugHeightLoop),
+    /// `0x272` — debug: rear-foil schedule, trim offload bias, command and lag.
+    DebugRear(HydrofoilDebugRear),
+    /// `0x273` — debug: trim offload state and pause reason, speed, front trims.
+    DebugTrim(HydrofoilDebugTrim),
+    /// `0x274` — debug: script loop health.
+    DebugLoop(HydrofoilDebugLoop),
 }
 
 /// Boat attitude from the hydrofoil controller (`0x250`).
@@ -1082,6 +1092,121 @@ pub struct Elevons {
 
 fn optional_height_mm(raw: u16) -> Option<f32> {
     (raw != 0xFFFF).then_some(raw as f32)
+}
+
+// --- Hydrofoil debug (0x270-0x274, hydrofoils.lua at 2 Hz) ---
+//
+// Every i16 field is centidegrees (or mm) with `i16::MIN` meaning "no value", and every
+// u16 field uses `0xFFFF` for the same. Layouts: CAN_MESSAGES.md "Hydrofoil debug".
+
+/// Where the controller thinks it is, from `0x270`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDebugPhase {
+    /// See `HYDROFOIL_PHASE_*`.
+    pub phase: u8,
+    /// Bitfield — see `HYDROFOIL_DEBUG_*`.
+    pub flags: u8,
+    /// The height the loop controls on (EKF height moved to the reference point).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control_height_mm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target_mm: Option<f32>,
+    /// Seconds since the hull last cleared the unstick height; `0` = hull down.
+    pub since_unstick_s: f32,
+}
+
+pub const HYDROFOIL_PHASE_DISABLED: u8 = 0;
+pub const HYDROFOIL_PHASE_ROLL_TEST: u8 = 1;
+pub const HYDROFOIL_PHASE_HULL: u8 = 2;
+pub const HYDROFOIL_PHASE_TAKEOFF_HOLD: u8 = 3;
+pub const HYDROFOIL_PHASE_FOILING: u8 = 4;
+pub const HYDROFOIL_PHASE_FOILING_CONFIRMED: u8 = 5;
+pub const HYDROFOIL_PHASE_NO_HEIGHT: u8 = 6;
+
+pub const HYDROFOIL_DEBUG_PITCH_IMAX_HELD: u8 = 1 << 0;
+pub const HYDROFOIL_DEBUG_FOILED_SINCE_SLOW: u8 = 1 << 1;
+pub const HYDROFOIL_DEBUG_TAKEOFF_HOLD: u8 = 1 << 2;
+pub const HYDROFOIL_DEBUG_FLYUP_OVER_TARGET: u8 = 1 << 3;
+pub const HYDROFOIL_DEBUG_INTEGRATOR_CLAMPED: u8 = 1 << 4;
+pub const HYDROFOIL_DEBUG_REAR_TRIM_LATCHED: u8 = 1 << 5;
+pub const HYDROFOIL_DEBUG_SPEED_OK: u8 = 1 << 6;
+pub const HYDROFOIL_DEBUG_SPEED_FROM_ERPM: u8 = 1 << 7;
+
+/// The height loop's terms from `0x271`, in degrees of pitch demand.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDebugHeightLoop {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub p_deg: Option<f32>,
+    /// The standing trim demand the rear-trim offload drains.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub i_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub d_deg: Option<f32>,
+    /// What FBWA was asked for, after clamps and slew.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub demand_deg: Option<f32>,
+}
+
+/// The rear foil from `0x272`, in degrees of angle of attack.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDebugRear {
+    /// The speed schedule alone.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schedule_deg: Option<f32>,
+    /// The trim offload's bias on top of it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bias_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub command_deg: Option<f32>,
+    /// Where the rear is minus where it was told to be.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lag_deg: Option<f32>,
+}
+
+/// Trim offload state, speed and the moving front trims from `0x273`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDebugTrim {
+    /// `1` integrate, `2` hold, `3` decay (`0` before the first run).
+    pub offload_state: u8,
+    /// Why a latched hold is paused: `1` rear at a schedule cap, `2` a front servo
+    /// within 40 µs of its stop, `0` otherwise.
+    pub pause_reason: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed_m_s: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_left_us: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub trim_right_us: Option<u16>,
+}
+
+/// Script loop health from `0x274`.
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDebugLoop {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dt_ms: Option<u16>,
+    /// `HYD_LIVE` modulo 65536: advances once per completed iteration.
+    pub live: u16,
+    /// Consecutive CAN transmit failures, saturating at 255.
+    pub tx_fail: u8,
+    /// Parameter writes that failed at boot, saturating at 255.
+    pub set_fail: u8,
+    /// The rear stepper's own reported position (`0x020`, setpoint units) as the flight
+    /// controller last saw it; `None` = no fresh status.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub rear_position: Option<u16>,
+}
+
+fn optional_i16(raw: i16, scale: f32) -> Option<f32> {
+    (raw != i16::MIN).then(|| raw as f32 / scale)
+}
+
+fn optional_u16(raw: u16) -> Option<u16> {
+    (raw != 0xFFFF).then_some(raw)
 }
 
 #[derive(Debug, Serialize)]
@@ -1333,6 +1458,51 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
             rear_fault: *data.get(3)?,
             active: *data.get(4)? != 0,
         }))),
+        // Hydrofoil debug — 2 Hz.
+        0x270 => Some(EoiCanData::Hydrofoil(HydrofoilData::DebugPhase(
+            HydrofoilDebugPhase {
+                phase: *data.first()?,
+                flags: *data.get(1)?,
+                control_height_mm: optional_i16(bytes_le_to_i16(data.get(2..4)?)?, 1.0),
+                target_mm: optional_height_mm(bytes_le_to_u16(data.get(4..6)?)?),
+                since_unstick_s: bytes_le_to_u16(data.get(6..8)?)? as f32 / 10.0,
+            },
+        ))),
+        0x271 => Some(EoiCanData::Hydrofoil(HydrofoilData::DebugHeightLoop(
+            HydrofoilDebugHeightLoop {
+                p_deg: optional_i16(bytes_le_to_i16(data.get(0..2)?)?, 100.0),
+                i_deg: optional_i16(bytes_le_to_i16(data.get(2..4)?)?, 100.0),
+                d_deg: optional_i16(bytes_le_to_i16(data.get(4..6)?)?, 100.0),
+                demand_deg: optional_i16(bytes_le_to_i16(data.get(6..8)?)?, 100.0),
+            },
+        ))),
+        0x272 => Some(EoiCanData::Hydrofoil(HydrofoilData::DebugRear(
+            HydrofoilDebugRear {
+                schedule_deg: optional_i16(bytes_le_to_i16(data.get(0..2)?)?, 100.0),
+                bias_deg: optional_i16(bytes_le_to_i16(data.get(2..4)?)?, 100.0),
+                command_deg: optional_i16(bytes_le_to_i16(data.get(4..6)?)?, 100.0),
+                lag_deg: optional_i16(bytes_le_to_i16(data.get(6..8)?)?, 100.0),
+            },
+        ))),
+        0x273 => Some(EoiCanData::Hydrofoil(HydrofoilData::DebugTrim(
+            HydrofoilDebugTrim {
+                offload_state: *data.first()?,
+                pause_reason: *data.get(1)?,
+                speed_m_s: optional_u16(bytes_le_to_u16(data.get(2..4)?)?)
+                    .map(|v| v as f32 / 100.0),
+                trim_left_us: optional_u16(bytes_le_to_u16(data.get(4..6)?)?),
+                trim_right_us: optional_u16(bytes_le_to_u16(data.get(6..8)?)?),
+            },
+        ))),
+        0x274 => Some(EoiCanData::Hydrofoil(HydrofoilData::DebugLoop(
+            HydrofoilDebugLoop {
+                dt_ms: optional_u16(bytes_le_to_u16(data.get(0..2)?)?),
+                live: bytes_le_to_u16(data.get(2..4)?)?,
+                tx_fail: *data.get(4)?,
+                set_fail: *data.get(5)?,
+                rear_position: optional_u16(bytes_le_to_u16(data.get(6..8)?)?),
+            },
+        ))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
             PackAndPerriCurrent {
                 pack_current: bytes_le_to_f32(data.get(0..4)?)?,
@@ -2150,6 +2320,91 @@ mod tests {
         };
         assert_eq!(a.rear_state, None);
         assert!(!a.active);
+    }
+
+    fn hydrofoil(id: u16, bytes: &[u8]) -> HydrofoilData {
+        let can_frame = can_frame::CanFrame::from_encoded(
+            embedded_can::Id::Standard(StandardId::new(id).unwrap()),
+            bytes,
+        );
+        let EoiCanData::Hydrofoil(h) = parse_eoi_can_data(&can_frame).unwrap() else {
+            panic!("Unexpected data type");
+        };
+        h
+    }
+
+    #[test]
+    fn hydrofoil_debug() {
+        // Foiling above confirm, foiled since slow + offload latched + speed ok,
+        // 300 mm against 250 mm, 12.3 s since unstick.
+        let HydrofoilData::DebugPhase(p) =
+            hydrofoil(0x270, &[0x05, 0x62, 0x2C, 0x01, 0xFA, 0x00, 0x7B, 0x00])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(p.phase, HYDROFOIL_PHASE_FOILING_CONFIRMED);
+        assert_eq!(
+            p.flags,
+            HYDROFOIL_DEBUG_FOILED_SINCE_SLOW
+                | HYDROFOIL_DEBUG_REAR_TRIM_LATCHED
+                | HYDROFOIL_DEBUG_SPEED_OK
+        );
+        assert_eq!(p.control_height_mm, Some(300.0));
+        assert_eq!(p.target_mm, Some(250.0));
+        assert!((p.since_unstick_s - 12.3).abs() < 1e-4);
+
+        // No height and no target: the i16 and u16 sentinels.
+        let HydrofoilData::DebugPhase(p) =
+            hydrofoil(0x270, &[0x02, 0x01, 0x00, 0x80, 0xFF, 0xFF, 0x00, 0x00])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(p.phase, HYDROFOIL_PHASE_HULL);
+        assert_eq!(p.control_height_mm, None);
+        assert_eq!(p.target_mm, None);
+
+        // P -1.50, I +2.25, D none, demand +0.75 (centidegrees, LE i16).
+        let HydrofoilData::DebugHeightLoop(h) =
+            hydrofoil(0x271, &[0x6A, 0xFF, 0xE1, 0x00, 0x00, 0x80, 0x4B, 0x00])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(h.p_deg, Some(-1.5));
+        assert_eq!(h.i_deg, Some(2.25));
+        assert_eq!(h.d_deg, None);
+        assert_eq!(h.demand_deg, Some(0.75));
+
+        // Schedule 5.60, bias -0.40, command 5.20, lag 0.
+        let HydrofoilData::DebugRear(r) =
+            hydrofoil(0x272, &[0x30, 0x02, 0xD8, 0xFF, 0x08, 0x02, 0x00, 0x00])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(r.schedule_deg, Some(5.6));
+        assert_eq!(r.bias_deg, Some(-0.4));
+        assert_eq!(r.command_deg, Some(5.2));
+        assert_eq!(r.lag_deg, Some(0.0));
+
+        // Hold, paused by a front servo near its stop, 7.50 m/s, left trim 1685, no right.
+        let HydrofoilData::DebugTrim(t) =
+            hydrofoil(0x273, &[0x02, 0x02, 0xEE, 0x02, 0x95, 0x06, 0xFF, 0xFF])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!((t.offload_state, t.pause_reason), (2, 2));
+        assert_eq!(t.speed_m_s, Some(7.5));
+        assert_eq!(t.trim_left_us, Some(1685));
+        assert_eq!(t.trim_right_us, None);
+
+        let HydrofoilData::DebugLoop(l) =
+            hydrofoil(0x274, &[0x64, 0x00, 0x34, 0x12, 0x00, 0x01, 0xD6, 0x06])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(l.dt_ms, Some(100));
+        assert_eq!(l.live, 0x1234);
+        assert_eq!((l.tx_fail, l.set_fail), (0, 1));
+        assert_eq!(l.rear_position, Some(1750));
     }
 
     #[test]

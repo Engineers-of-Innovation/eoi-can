@@ -565,7 +565,38 @@ fn hydrofoil_columns() -> &'static [&'static str] {
         "hydrofoil.alarm_rear_state",
         "hydrofoil.alarm_rear_fault",
         "hydrofoil.alarm_active",
+        "hydrofoil.dbg_phase",
+        "hydrofoil.dbg_flags",
+        "hydrofoil.dbg_control_height_mm",
+        "hydrofoil.dbg_target_mm",
+        "hydrofoil.dbg_since_unstick_s",
+        "hydrofoil.dbg_p_deg",
+        "hydrofoil.dbg_i_deg",
+        "hydrofoil.dbg_d_deg",
+        "hydrofoil.dbg_demand_deg",
+        "hydrofoil.dbg_rear_schedule_deg",
+        "hydrofoil.dbg_rear_bias_deg",
+        "hydrofoil.dbg_rear_command_deg",
+        "hydrofoil.dbg_rear_lag_deg",
+        "hydrofoil.dbg_offload_state",
+        "hydrofoil.dbg_pause_reason",
+        "hydrofoil.dbg_speed_m_s",
+        "hydrofoil.dbg_trim_left_us",
+        "hydrofoil.dbg_trim_right_us",
+        "hydrofoil.dbg_dt_ms",
+        "hydrofoil.dbg_live",
+        "hydrofoil.dbg_tx_fail",
+        "hydrofoil.dbg_set_fail",
+        "hydrofoil.dbg_rear_position",
     ]
+}
+
+/// Pushes `name` = `v` when there is a value. A `None` leaves the cell empty, so a gap
+/// in the CSV is "the FC sent no value", not a zero.
+fn push_opt<T: ToString>(out: &mut Vec<(String, String)>, name: &str, v: Option<T>) {
+    if let Some(v) = v {
+        out.push((name.into(), v.to_string()));
+    }
 }
 
 fn flatten_hydrofoil(h: &HydrofoilData, out: &mut Vec<(String, String)>) {
@@ -595,12 +626,75 @@ fn flatten_hydrofoil(h: &HydrofoilData, out: &mut Vec<(String, String)>) {
         }
         HydrofoilData::Alarm(a) => {
             out.push(("hydrofoil.alarm_causes".into(), a.causes.to_string()));
-            out.push(("hydrofoil.alarm_blocked_code".into(), a.blocked_code.to_string()));
+            out.push((
+                "hydrofoil.alarm_blocked_code".into(),
+                a.blocked_code.to_string(),
+            ));
             if let Some(s) = a.rear_state {
                 out.push(("hydrofoil.alarm_rear_state".into(), s.to_string()));
             }
-            out.push(("hydrofoil.alarm_rear_fault".into(), a.rear_fault.to_string()));
-            out.push(("hydrofoil.alarm_active".into(), u8::from(a.active).to_string()));
+            out.push((
+                "hydrofoil.alarm_rear_fault".into(),
+                a.rear_fault.to_string(),
+            ));
+            out.push((
+                "hydrofoil.alarm_active".into(),
+                u8::from(a.active).to_string(),
+            ));
+        }
+        HydrofoilData::DebugPhase(p) => {
+            out.push(("hydrofoil.dbg_phase".into(), p.phase.to_string()));
+            out.push(("hydrofoil.dbg_flags".into(), p.flags.to_string()));
+            push_opt(
+                out,
+                "hydrofoil.dbg_control_height_mm",
+                p.control_height_mm.map(fmt_f),
+            );
+            push_opt(out, "hydrofoil.dbg_target_mm", p.target_mm.map(fmt_f));
+            out.push((
+                "hydrofoil.dbg_since_unstick_s".into(),
+                fmt_f(p.since_unstick_s),
+            ));
+        }
+        HydrofoilData::DebugHeightLoop(h) => {
+            push_opt(out, "hydrofoil.dbg_p_deg", h.p_deg.map(fmt_f));
+            push_opt(out, "hydrofoil.dbg_i_deg", h.i_deg.map(fmt_f));
+            push_opt(out, "hydrofoil.dbg_d_deg", h.d_deg.map(fmt_f));
+            push_opt(out, "hydrofoil.dbg_demand_deg", h.demand_deg.map(fmt_f));
+        }
+        HydrofoilData::DebugRear(r) => {
+            push_opt(
+                out,
+                "hydrofoil.dbg_rear_schedule_deg",
+                r.schedule_deg.map(fmt_f),
+            );
+            push_opt(out, "hydrofoil.dbg_rear_bias_deg", r.bias_deg.map(fmt_f));
+            push_opt(
+                out,
+                "hydrofoil.dbg_rear_command_deg",
+                r.command_deg.map(fmt_f),
+            );
+            push_opt(out, "hydrofoil.dbg_rear_lag_deg", r.lag_deg.map(fmt_f));
+        }
+        HydrofoilData::DebugTrim(t) => {
+            out.push((
+                "hydrofoil.dbg_offload_state".into(),
+                t.offload_state.to_string(),
+            ));
+            out.push((
+                "hydrofoil.dbg_pause_reason".into(),
+                t.pause_reason.to_string(),
+            ));
+            push_opt(out, "hydrofoil.dbg_speed_m_s", t.speed_m_s.map(fmt_f));
+            push_opt(out, "hydrofoil.dbg_trim_left_us", t.trim_left_us);
+            push_opt(out, "hydrofoil.dbg_trim_right_us", t.trim_right_us);
+        }
+        HydrofoilData::DebugLoop(l) => {
+            push_opt(out, "hydrofoil.dbg_dt_ms", l.dt_ms);
+            out.push(("hydrofoil.dbg_live".into(), l.live.to_string()));
+            out.push(("hydrofoil.dbg_tx_fail".into(), l.tx_fail.to_string()));
+            out.push(("hydrofoil.dbg_set_fail".into(), l.set_fail.to_string()));
+            push_opt(out, "hydrofoil.dbg_rear_position", l.rear_position);
         }
     }
 }

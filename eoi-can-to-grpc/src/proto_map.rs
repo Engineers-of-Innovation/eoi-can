@@ -126,6 +126,7 @@ pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot
             alarm_rear_state: view.hydrofoil_alarm.map(|a| a.2),
             alarm_rear_fault: view.hydrofoil_alarm.map(|a| a.3),
             alarm_active: view.hydrofoil_alarm.map(|a| a.4),
+            debug: hydrofoil_debug(view),
         }),
         hottest_mppt: view
             .hottest_mppt
@@ -161,6 +162,46 @@ pub fn to_proto(view: &SnapshotView, seq: u64, session_id: &str) -> v1::Snapshot
             decode_errors: view.bus.decode_errors,
         }),
     }
+}
+
+/// The five debug frames as one message, or `None` until any of them has been heard -
+/// a boat on an older hydrofoils.lua then sends no empty `debug` at all.
+fn hydrofoil_debug(view: &SnapshotView) -> Option<v1::HydrofoilDebug> {
+    let (p, h, r, t, l) = (
+        view.dbg_phase,
+        view.dbg_height_loop,
+        view.dbg_rear,
+        view.dbg_trim,
+        view.dbg_loop,
+    );
+    if p.is_none() && h.is_none() && r.is_none() && t.is_none() && l.is_none() {
+        return None;
+    }
+    Some(v1::HydrofoilDebug {
+        phase: p.map(|p| p.phase.into()),
+        flags: p.map(|p| p.flags.into()),
+        control_height_mm: p.and_then(|p| p.control_height_mm),
+        target_mm: p.and_then(|p| p.target_mm),
+        since_unstick_s: p.map(|p| p.since_unstick_s),
+        p_deg: h.and_then(|h| h.p_deg),
+        i_deg: h.and_then(|h| h.i_deg),
+        d_deg: h.and_then(|h| h.d_deg),
+        demand_deg: h.and_then(|h| h.demand_deg),
+        rear_schedule_deg: r.and_then(|r| r.schedule_deg),
+        rear_bias_deg: r.and_then(|r| r.bias_deg),
+        rear_command_deg: r.and_then(|r| r.command_deg),
+        rear_lag_deg: r.and_then(|r| r.lag_deg),
+        offload_state: t.map(|t| t.offload_state.into()),
+        pause_reason: t.map(|t| t.pause_reason.into()),
+        speed_m_s: t.and_then(|t| t.speed_m_s),
+        trim_left_us: t.and_then(|t| t.trim_left_us).map(u32::from),
+        trim_right_us: t.and_then(|t| t.trim_right_us).map(u32::from),
+        dt_ms: l.and_then(|l| l.dt_ms).map(u32::from),
+        live: l.map(|l| l.live.into()),
+        tx_fail: l.map(|l| l.tx_fail.into()),
+        set_fail: l.map(|l| l.set_fail.into()),
+        rear_position: l.and_then(|l| l.rear_position).map(u32::from),
+    })
 }
 
 fn quality(q: Quality) -> v1::Quality {

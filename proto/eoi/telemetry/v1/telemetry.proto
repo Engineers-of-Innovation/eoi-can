@@ -191,6 +191,42 @@ message Hydrofoil {
   optional uint32 alarm_rear_state = 13; // ServoRudderStatus state; 255 = no status
   optional uint32 alarm_rear_fault = 14;
   optional bool alarm_active = 15; // false on the frame sent when an alarm clears
+  // hydrofoils.lua debug state, CAN 0x270-0x274 at 2 Hz. Absent until one is heard.
+  HydrofoilDebug debug = 16;
+}
+
+// The flight controller's internal state for diagnosis (CAN 0x270-0x274, 2 Hz) - see
+// CAN_MESSAGES.md "Hydrofoil debug". Each field is absent when its frame is stale or the
+// controller sent "no value". Angles in degrees.
+message HydrofoilDebug {
+  // 0x270
+  optional uint32 phase = 1; // 0 disabled, 1 roll test, 2 hull, 3 takeoff hold, 4 foiling, 5 foiling confirmed, 6 no height
+  optional uint32 flags = 2; // bitfield - see CAN_MESSAGES.md HydrofoilDebugPhase
+  optional float control_height_mm = 3;
+  optional float target_mm = 4;
+  optional float since_unstick_s = 5; // 0 = hull down
+  // 0x271, pitch demand
+  optional float p_deg = 6;
+  optional float i_deg = 7;
+  optional float d_deg = 8;
+  optional float demand_deg = 9;
+  // 0x272, rear angle of attack
+  optional float rear_schedule_deg = 10;
+  optional float rear_bias_deg = 11;
+  optional float rear_command_deg = 12;
+  optional float rear_lag_deg = 13;
+  // 0x273
+  optional uint32 offload_state = 14; // 1 integrate, 2 hold, 3 decay
+  optional uint32 pause_reason = 15; // 1 rear at a cap, 2 a front servo near its stop
+  optional float speed_m_s = 16;
+  optional uint32 trim_left_us = 17;
+  optional uint32 trim_right_us = 18;
+  // 0x274
+  optional uint32 dt_ms = 19;
+  optional uint32 live = 20; // advances once per completed script iteration
+  optional uint32 tx_fail = 21;
+  optional uint32 set_fail = 22;
+  optional uint32 rear_position = 23; // stepper's reported position, setpoint units
 }
 
 message Warnings {

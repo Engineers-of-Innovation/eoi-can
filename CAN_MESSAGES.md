@@ -55,6 +55,12 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x262 | FoilParamRequest | Foil Tuner (Data Logger) |
 | 0x263 | FoilConfigSlot | Data Logger |
 | 0x264 | FoilConfigEvent | Data Logger |
+| 0x270 | HydrofoilDebugPhase | Hydrofoil (debug) |
+| 0x271 | HydrofoilDebugHeightLoop | Hydrofoil (debug) |
+| 0x272 | HydrofoilDebugRear | Hydrofoil (debug) |
+| 0x273 | HydrofoilDebugTrim | Hydrofoil (debug) |
+| 0x274 | HydrofoilDebugLoop | Hydrofoil (debug) |
+| 0x275–0x27F | _reserved for more hydrofoil debug_ | Hydrofoil (debug) |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x339 | ThrottleState | Throttle Controller |
@@ -304,6 +310,58 @@ what made it beep. Cause bits in byte 0:
 | 5 | SpeedHeight | Foiling height with a speed that says it cannot be — height mode only |
 | 6 | Rear | Rear stepper not Operational, reporting a fault, or silent > 1 s (`0x020`) — height mode only |
 | 7 | Enabled | The foiling system is switched on |
+
+## Hydrofoil debug
+
+The flight controller's internal state, for diagnosis from a candump without the FC's SD
+card: which phase it thinks it is in (when it decided the boat unstuck), the height
+loop's terms, and the rear-trim offload with the reason it is paused. `hydrofoils.lua`
+sends all five every 500 ms in every mode, after each completed loop iteration (so they
+stop if the script stops; `0x274` Live says the same). 0x275–0x27F are reserved for more.
+
+All fields are little-endian. An `i16` of `-32768` and a `u16` of `0xFFFF` mean "no
+value". Angles are centidegrees: pitch demand for `0x271`, angle of attack for `0x272`.
+ArduPlane's own pitch-rate integrator (`PTCH_RATE_I`) is not here: Lua cannot read it,
+it is in the FC log only (`PIDP.I`).
+
+| Message | CAN ID | DLC | Byte | Field | Type | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- |
+| HydrofoilDebugPhase | 0x270 | 8 | 0 | Phase | u8 | `0` disabled, `1` roll test, `2` on the hull, `3` takeoff hold (hull clear, height integrator held), `4` foiling (hull clear, ride height > 0.18 m), `5` foiling confirmed (> 0.24 m), `6` enabled with no height (demand frozen) |
+| | | | 1 | Flags | u8 bitfield | See below |
+| | | | 2–3 | Control height | i16 | mm. The height the loop controls on. |
+| | | | 4–5 | Target | u16 | mm, after any bank compensation |
+| | | | 6–7 | Since unstick | u16 | 0.1 s since the hull last cleared 0.18 m; `0` = hull down |
+| HydrofoilDebugHeightLoop | 0x271 | 8 | 0–1 | P | i16 | Centidegrees of pitch demand |
+| | | | 2–3 | I | i16 | The standing trim demand the rear offload drains |
+| | | | 4–5 | D | i16 | |
+| | | | 6–7 | Demand | i16 | What FBWA was asked for, after clamps and slew |
+| HydrofoilDebugRear | 0x272 | 8 | 0–1 | Schedule | i16 | Centidegrees AoA from the speed schedule alone |
+| | | | 2–3 | Offload bias | i16 | Trim moved off the height integrator onto the rear |
+| | | | 4–5 | Command | i16 | Schedule + bias, capped |
+| | | | 6–7 | Lag | i16 | Rear actual minus wanted |
+| HydrofoilDebugTrim | 0x273 | 8 | 0 | Offload state | u8 | `1` integrate, `2` hold, `3` decay (`HYDR.St`) |
+| | | | 1 | Pause reason | u8 | While holding: `1` rear at a schedule cap, `2` a front servo within 40 µs of its stop, `0` other (`HYDR.Pz`) |
+| | | | 2–3 | Speed | u16 | cm/s, the schedule's speed |
+| | | | 4–5 | SERVO1 trim | u16 | µs, front-left, as moved by the feed-forward |
+| | | | 6–7 | SERVO2 trim | u16 | µs, front-right |
+| HydrofoilDebugLoop | 0x274 | 8 | 0–1 | dt | u16 | ms, measured loop period (nominal 100) |
+| | | | 2–3 | Live | u16 | Completed iterations, mod 65536 (`HYD_LIVE`) |
+| | | | 4 | TX failures | u8 | Consecutive CAN transmit failures, saturating |
+| | | | 5 | Param-set failures | u8 | Boot parameter writes that failed, saturating |
+| | | | 6–7 | Rear position | u16 | The stepper's own position from `0x020` (setpoint units) |
+
+Flags in `HydrofoilDebugPhase` byte 1:
+
+| Bit | Name | Meaning |
+| --- | --- | --- |
+| 0 | PitchImaxHeld | `PTCH_RATE_IMAX` held at 0 by the hull gate |
+| 1 | FoiledSinceSlow | Has unstuck since the speed was last below foiling speed |
+| 2 | TakeoffHold | Takeoff hold armed or holding the height integrator |
+| 3 | FlyUpOverTarget | The fly-up has passed the target (releases the hold) |
+| 4 | IntegratorClamped | Height integrator held because the demand is at its clamp |
+| 5 | RearTrimLatched | Rear-trim offload latched on (confirmed foiling) |
+| 6 | SpeedOk | Speed from GPS/EKF is healthy |
+| 7 | SpeedFromErpm | Speed is the VESC ERPM fallback |
 
 ## Foil Tuning
 
