@@ -30,17 +30,14 @@ use embassy_sync::blocking_mutex::raw::ThreadModeRawMutex;
 use embassy_sync::mutex::Mutex;
 use embassy_sync::signal::Signal;
 use embassy_time::{Delay, Duration, Instant, Ticker, Timer};
-use embedded_graphics::pixelcolor::BinaryColor;
-use embedded_graphics::prelude::*;
 use eoi_can_decoder::can_collector::CanCollector;
 use eoi_can_decoder::can_frame::CanFrame;
-use epd_waveshare::epd5in79::{Display5in79, Epd5in79};
-use epd_waveshare::graphics::DisplayRotation;
-use epd_waveshare::prelude::Color;
-use static_cell::StaticCell;
+use epd_waveshare::epd5in79::Epd5in79;
+use static_cell::{ConstStaticCell, StaticCell};
 
 use crate::app_type::AppType;
 use crate::can::handle_bootloader_command;
+use crate::framebuffer::{FRAME_BYTES, Framebuffer};
 
 /// Frames the CAN RX task has drained but the render loop has not consumed yet.
 ///
@@ -58,16 +55,13 @@ pub const SHUTDOWN_WARNING_ID: u16 = 0x10C;
 /// out on its next pass through the collector.
 static SHUTDOWN: Signal<ThreadModeRawMutex, Instant> = Signal::new();
 
-/// Bytes in one panel framebuffer: 792 x 272 at one bit per pixel.
-const FRAME_BYTES: usize = 26_928;
-
 /// The logo painted on [`SHUTDOWN_WARNING_ID`], already in the panel's own
 /// layout so it goes from flash to the panel with no rendering at all. Generated
 /// by `support/logo-to-epd.py`; see the `-preview.png` next to it.
 static SHUTDOWN_LOGO_UPRIGHT: [u8; FRAME_BYTES] = *include_bytes!("../assets/shutdown-logo.bin");
 static SHUTDOWN_LOGO_INVERTED: [u8; FRAME_BYTES] = rotate_180(&SHUTDOWN_LOGO_UPRIGHT);
 
-/// A framebuffer turned half a turn: what [`DisplayRotation::Rotate180`] would
+/// A framebuffer turned half a turn: what [`Framebuffer::set_rotate_180`] would
 /// have drawn. The last pixel becomes the first, so the bytes run backwards and
 /// the bits within each byte do too. Exact only because 792 is a multiple of 8,
 /// leaving no padding at the end of a row.
@@ -86,26 +80,12 @@ const fn rotate_180(src: &[u8; FRAME_BYTES]) -> [u8; FRAME_BYTES] {
 /// is dead long before this runs out.
 const SHUTDOWN_LOGO_HOLD: Duration = Duration::from_secs(30);
 
-/// Wraps [`Display5in79`] so the shared `draw_display` code (which uses the
-/// standard embedded-graphics convention, `On` = white) renders correctly on
-/// the panel.
-///
-/// epd-waveshare's built-in `From<BinaryColor> for Color` maps `On -> Black`,
-/// the opposite of the simulator/framebuffer. The epd5in79 driver writes the
-/// buffer raw with `Color::White` = bit 1 = white on the panel, so without
-/// this wrapper `clear(BinaryColor::On)` would paint a black background. It
-/// maps `On -> White` / `Off -> Black` so all three outputs (firmware,
-/// simulator, framebuffer) match. If the panel turns out inverted on the
-/// bench, flip the mapping here — single point of change.
-pub struct EpdDisplay(pub Display5in79);
-
 /// Which way up the panel sits in its case.
 ///
 /// A property of the installation, not of the layout, so each binary states it
-/// for its own board. Deliberately not [`DisplayRotation`]: both layouts are
-/// drawn for a 792x272 landscape panel, and the quarter-turn rotations swap
-/// [`OriginDimensions::size`] to 272x792, which would put most of the screen
-/// off the panel.
+/// for its own board. Only the half turn exists: both layouts are drawn for a
+/// 792x272 landscape panel, and a quarter turn would put most of the screen off
+/// it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum PanelMounting {
     /// Ribbon cable at the bottom, the orientation the panel is drawn for.
@@ -117,11 +97,8 @@ pub enum PanelMounting {
 }
 
 impl PanelMounting {
-    const fn rotation(self) -> DisplayRotation {
-        match self {
-            Self::Upright => DisplayRotation::Rotate0,
-            Self::Inverted => DisplayRotation::Rotate180,
-        }
+    const fn rotate_180(self) -> bool {
+        matches!(self, Self::Inverted)
     }
 
     fn shutdown_logo(self) -> &'static [u8] {
@@ -129,53 +106,6 @@ impl PanelMounting {
             Self::Upright => &SHUTDOWN_LOGO_UPRIGHT,
             Self::Inverted => &SHUTDOWN_LOGO_INVERTED,
         }
-    }
-}
-
-impl EpdDisplay {
-    pub fn new(mounting: PanelMounting) -> Self {
-        let mut display = Display5in79::default();
-        // Rotating the draw target rather than the layout keeps the render code
-        // writing in normal top-left coordinates: `set_pixel` remaps each pixel
-        // on its way into the framebuffer, so what is clocked out to the panel
-        // is already the right way up. Free, and invisible to `draw_display`.
-        display.set_rotation(mounting.rotation());
-        Self(display)
-    }
-
-    pub fn buffer(&self) -> &[u8] {
-        self.0.buffer()
-    }
-}
-
-impl Default for EpdDisplay {
-    fn default() -> Self {
-        Self::new(PanelMounting::default())
-    }
-}
-
-impl OriginDimensions for EpdDisplay {
-    fn size(&self) -> Size {
-        self.0.size()
-    }
-}
-
-impl DrawTarget for EpdDisplay {
-    type Color = BinaryColor;
-    type Error = core::convert::Infallible;
-
-    fn draw_iter<I>(&mut self, pixels: I) -> Result<(), Self::Error>
-    where
-        I: IntoIterator<Item = Pixel<Self::Color>>,
-    {
-        self.0
-            .draw_iter(pixels.into_iter().map(|Pixel(point, color)| {
-                let color = match color {
-                    BinaryColor::On => Color::White,
-                    BinaryColor::Off => Color::Black,
-                };
-                Pixel(point, color)
-            }))
     }
 }
 
@@ -283,9 +213,9 @@ const CAN_RX_BUF_SIZE: usize = 256;
 
 static RX_BUF: StaticCell<RxBuf<CAN_RX_BUF_SIZE>> = StaticCell::new();
 static TX_BUF: StaticCell<TxBuf<4>> = StaticCell::new();
-/// The framebuffer is an inline `[u8; 26928]`. `init_with` builds it in place;
-/// passing it by value risks a 27 KB stack temporary at `opt-level = "z"`.
-static DISPLAY: StaticCell<EpdDisplay> = StaticCell::new();
+/// The framebuffer is an inline `[u8; 26928]`. Built at compile time, in .bss,
+/// so there is never a 27 KB stack temporary at `opt-level = "z"`.
+static DISPLAY: ConstStaticCell<Framebuffer> = ConstStaticCell::new(Framebuffer::new());
 
 /// Interrupts a display board's `bind_interrupts!` has to cover.
 ///
@@ -436,7 +366,8 @@ pub async fn run_display<I: DisplayIrqs>(
     info!("Init done");
     red_led.set_high();
 
-    let display = DISPLAY.init_with(|| EpdDisplay::new(mounting));
+    let display = DISPLAY.take();
+    display.set_rotate_180(mounting.rotate_180());
     let mut display_data = DisplayData::default();
     // Nothing has been ingested yet, so this is the idle screen on a board that
     // has one: something readable up while the first frames arrive.
@@ -445,6 +376,7 @@ pub async fn run_display<I: DisplayIrqs>(
     epd.update_and_display_frame_async(&mut epd_spi_device, display.buffer(), &mut Delay)
         .await
         .unwrap();
+    let mut last_refresh = Instant::now();
 
     // The quick refresh drives every pixel, but only a mode-1 full refresh clears
     // the ghosting that mode 2 accumulates. Starting at the threshold makes the
@@ -453,13 +385,22 @@ pub async fn run_display<I: DisplayIrqs>(
     let mut quick_count: u32 = FULL_REFRESH_EVERY;
     // Skipping identical frames spares the panel a drive cycle.
     let mut last_buffer_hash: Option<u64> = None;
+    // ...but not forever. An undriven image fades, quick-refreshed ones fastest
+    // and faster still in the cold, and the foiling screen can sit unchanged for
+    // minutes between tuning steps. A full refresh rather than a quick one: it is
+    // the stronger waveform, and on a screen nobody is watching change the flash
+    // costs nothing.
+    const STATIC_REINK_AFTER: Duration = Duration::from_secs(20);
     // Detects a stalled RX path instead of rendering stale-value dashes forever.
     // Iterations, not seconds — the loop period is work-bound.
     const RX_STALL_ITERATIONS: u32 = 5;
     let mut empty_snapshots: u32 = 0;
 
-    // A floor on the loop period. Must stay comfortably above the ~490 ms that
-    // `draw_display` + `fnv1a_hash` cost, or the ticker never gets to wait:
+    // A floor on the loop period while the frame is unchanged; a pass that
+    // refreshed skips it (see the bottom of the loop). Must stay comfortably
+    // above what `draw_display` + `fnv1a_hash` cost (~490 ms before the
+    // framebuffer learnt to clear with a memset; logged at debug level), or the
+    // ticker never gets to wait:
     // `Ticker::next` advances `expires_at` by exactly one period per call, so
     // once it falls behind it only claws back (period - body) per iteration and
     // returns `Ready` immediately until it catches up. With a 500 ms period that
@@ -543,8 +484,10 @@ pub async fn run_display<I: DisplayIrqs>(
         debug!("Parsed frames: {}", parsed_frames);
 
         // Once per redraw, which is what `ScreenSelector` counts activity in.
+        let render_started = Instant::now();
         screens.draw(display, &display_data).unwrap();
         let buffer_hash = fnv1a_hash(display.buffer());
+        debug!("Rendered in {} ms", render_started.elapsed().as_millis());
 
         // The render is synchronous, so a warning that arrived during it is still
         // sitting in the RX buffer. Let the RX task see it before committing to
@@ -554,10 +497,19 @@ pub async fn run_display<I: DisplayIrqs>(
             continue;
         }
 
-        if last_buffer_hash == Some(buffer_hash) {
+        let mut refreshed = false;
+        let unchanged = last_buffer_hash == Some(buffer_hash);
+        if unchanged && last_refresh.elapsed() < STATIC_REINK_AFTER {
             debug!("Display unchanged, skipping refresh");
         } else {
             red_led.set_low();
+            if unchanged {
+                info!(
+                    "Display unchanged for {} s, re-inking",
+                    STATIC_REINK_AFTER.as_secs()
+                );
+                quick_count = FULL_REFRESH_EVERY;
+            }
             if quick_count >= FULL_REFRESH_EVERY {
                 info!("Updating display (full refresh)");
                 // wake_up re-runs the standard init, which the mode-1 waveform
@@ -596,11 +548,13 @@ pub async fn run_display<I: DisplayIrqs>(
                 quick_count += 1;
             }
             last_buffer_hash = Some(buffer_hash);
+            last_refresh = Instant::now();
             info!("Display updated");
             red_led.set_high();
             // A refresh takes 0.7-2.5 s, many periods' worth. Without this the
             // ticker carries that debt forward and stops yielding afterwards.
             ticker.reset();
+            refreshed = true;
         }
 
         // The one await in this loop guaranteed to return `Pending`, and the
@@ -613,7 +567,13 @@ pub async fn run_display<I: DisplayIrqs>(
         // collector stayed empty and the RX path looked dead from the inside).
         yield_now().await;
 
-        if let Either::Second(received) = select(ticker.next(), SHUTDOWN.wait()).await {
+        // The floor is only for unchanged frames: a refresh already spaced this
+        // pass out by 0.7-2.5 s. Waiting here as well parked the loop a whole
+        // idle second after every refresh (`reset()` above is now + one period),
+        // so a value that changed during a refresh reached the panel ~1 s later
+        // than it had to.
+        if !refreshed && let Either::Second(received) = select(ticker.next(), SHUTDOWN.wait()).await
+        {
             warning = Some(received);
         }
     }

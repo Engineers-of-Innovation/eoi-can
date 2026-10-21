@@ -8,6 +8,7 @@ pub mod config;
 pub mod cooling_pump;
 pub mod display;
 pub mod flow_sensor;
+pub mod framebuffer;
 pub mod height_sensor;
 pub mod rudder_can;
 pub mod servo_rudder;
