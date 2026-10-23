@@ -231,8 +231,7 @@ impl StatusTracker {
     /// FailSafe is not one: it holds position and resumes on the next setpoint.
     fn locked_state_timeout(&self) -> Option<&ServoStatus> {
         let last = self.last.as_ref()?;
-        (last.state == ServoState::Uninitialized
-            && self.state_since.elapsed() > STATE_SETTLE_GRACE)
+        (last.state == ServoState::Uninitialized && self.state_since.elapsed() > STATE_SETTLE_GRACE)
             .then_some(last)
     }
 }
