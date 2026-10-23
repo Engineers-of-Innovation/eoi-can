@@ -4,11 +4,15 @@ Requires=eoi-can-init.service
 After=eoi-can-init.service
 
 [Service]
-ExecStart=/home/engineer/eoi-can-to-grpc --source can0 --bind 0.0.0.0:50051
+# Also pushes to the shore relay behind live.engineersofinnovation.nl (deploy/README.md
+# in eoi-grpc-telemetry). The relay only accepts it with RELAY_TOKEN, the stack's
+# INGEST_TOKEN, from the env file; without it the local server on :50051 still runs.
+ExecStart=/home/engineer/eoi-can-to-grpc --source can0 --bind 0.0.0.0:50051 --relay http://boi2.nl:50060
 WorkingDirectory=/home/engineer
 User=engineer
 Group=engineer
 Environment=RUST_LOG=info
+EnvironmentFile=-/home/engineer/eoi-can-to-grpc.env
 Restart=always
 RestartSec=10
 

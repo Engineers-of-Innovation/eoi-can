@@ -132,6 +132,7 @@ The `build-and-send.sh` script can be used to compile and send the related files
 
 The `support/` directory contains useful shell scripts and systemd service files for automating startup, power management, and monitoring on the data logger. For example:
 
+- `setup-sd.sh` — One-time base setup of a freshly flashed datalogger SD card
 - `install.sh` — Installs systemd services
 - `status.sh` — Checks service status
 - `auto-poweroff.sh` — Power management script
@@ -147,6 +148,32 @@ To install services (run this on the target, not your computer):
 cd support
 sudo ./install.sh
 ```
+
+### Setting up a new datalogger SD card
+
+1. Flash **Raspberry Pi OS Lite (64-bit)** with Raspberry Pi Imager. In its settings,
+   set user `engineer`, the Wi-Fi network, and enable SSH (add your public key).
+2. From your computer: `./build-and-send.sh engineer@<pi-ip>`
+3. On the Pi:
+
+   ```sh
+   sudo ~/support/setup-sd.sh   # packages, CAN/SPI/I2C overlays, display, eoi-can-init, pisugar-server
+   cp ~/support/eoi-can-to-mqtt.env.example ~/eoi-can-to-mqtt.env
+   cp ~/support/eoi-can-to-grpc.env.example ~/eoi-can-to-grpc.env
+   chmod 600 ~/eoi-can-*.env   # then set MQTT_PASSWORD and RELAY_TOKEN (the relay's INGEST_TOKEN)
+   sudo reboot
+   sudo ~/support/install.sh
+   ~/support/status.sh
+   ```
+
+4. The foil tuner (`eoi-foil-tune.service`) runs `tools/foil_tune.py` from the
+   ardupilot repo, which this repo doesn't send: copy it to `~/tools/` on the Pi. Pair
+   the Bluetooth keyboard with `bluetoothctl`; the tuner picks it up by itself.
+5. Remote access: install ZeroTier (`curl -s https://install.zerotier.com | sudo bash`),
+   `sudo zerotier-cli join <network id>`, and authorize the Pi in the ZeroTier console.
+
+`setup-sd.sh` lists the hardware it assumes (PiCAN Duo, 7" DSI display, PiSugar 3)
+at the top; update it there if the boat's hardware changes.
 
 ## Contributing
 

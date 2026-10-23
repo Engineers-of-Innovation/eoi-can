@@ -1,0 +1,32 @@
+[Unit]
+Description=Foil tuner: keyboard to flight controller parameters over CAN (foil_tune.py)
+Requires=eoi-can-init.service
+After=eoi-can-init.service
+# foil_tune.py is a curses app, so it gets a console of its own. tty1 is the one on
+# the DSI panel, under the display app; tty2 is never shown unless switched to
+# (sudo chvt 2), and the tuner's results reach the helm over 0x263/0x264 anyway.
+Conflicts=getty@tty2.service
+After=getty@tty2.service
+
+[Service]
+# From tools/foil_tune.py in the ardupilot repo. --evdev reads the Bluetooth
+# keyboard straight from /dev/input, and rescans every second, so it can start
+# before the keyboard has connected.
+ExecStart=/usr/bin/python3 /home/engineer/tools/foil_tune.py --evdev
+# Each session's set/ack CSV lands next to the candump logs.
+WorkingDirectory=/home/engineer/logs
+User=engineer
+Group=engineer
+SupplementaryGroups=input
+Environment=TERM=linux
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty2
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
