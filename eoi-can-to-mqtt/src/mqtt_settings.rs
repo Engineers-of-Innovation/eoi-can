@@ -1,4 +1,4 @@
-pub const BROKER: &str = "ssl://git.engineersofinnovation.nl:8883";
+pub const BROKER: &str = "ssl://mqtt.engineersofinnovation.nl:8883";
 pub const TOPIC: &str = "eoi-can-to-mqtt";
 
 pub const DISCOVERY_PREFIX: &str = "homeassistant";
