@@ -1,6 +1,6 @@
 #!/bin/bash
-# This script builds the eoi-gnss-to-can and eoi-can-display-framebuffer projects for the datalogger
-# and sends the binaries to the datalogger.
+# This script builds the datalogger's programs (eoi-gnss-to-can, eoi-foil-view, eoi-can-to-mqtt,
+# eoi-can-to-grpc) and sends the binaries to the datalogger.
 # Make sure you have cross and cargo installed (cargo install cross)
 #
 # argument is the ip address of the datalogger
@@ -42,7 +42,7 @@ cd eoi-gnss-to-can
 cross build --target ${arch} --release
 cd ..
 
-cd eoi-can-display-framebuffer
+cd eoi-foil-view
 cross build --target ${arch} --release
 cd ..
 
@@ -56,7 +56,7 @@ cd ..
 
 # # sending, make sure you have you ssh keys set up in the datalogger, you might need to run ssh-copy-id
 
-scp target/${arch}/release/eoi-can-display-framebuffer ${1}:~/eoi-can-display-framebuffer.new
+scp target/${arch}/release/eoi-foil-view ${1}:~/eoi-foil-view.new
 scp target/${arch}/release/eoi-gnss-to-can ${1}:~/eoi-gnss-to-can.new
 scp target/${arch}/release/eoi-can-to-mqtt ${1}:~/eoi-can-to-mqtt.new
 scp target/${arch}/release/eoi-can-to-grpc ${1}:~/eoi-can-to-grpc.new

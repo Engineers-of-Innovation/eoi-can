@@ -1,0 +1,36 @@
+# Wing calibrations and the drawing geometry for eoi-foil-view. Built into the binary;
+# pass --boat <file> to use an edited copy without rebuilding.
+#
+# Ported from python-data-analysis overlay/boat.yaml (c58198e). The front-wing numbers
+# are SERVO_LIMITS in hydrofoils.lua: when a script with other limits is flown, the
+# AoA shown here is wrong until this file is updated to match.
+
+[front_wings]
+# PWM (us) -> AoA (deg), linear between the stops. FR is mounted reversed.
+fl = { us_min = 1435, us_max = 1730, deg_at_min = -7.5, deg_at_max = 9.5 }
+fr = { us_min = 1300, us_max = 1540, deg_at_min = 9.5, deg_at_max = -7.5 }
+# "At stop" when within this of us_min / us_max.
+stop_tol_us = 2
+
+[rear_wing]
+# Physical mapping of the stepper's measured position (0x020, setpoint units). The node
+# homes to 2000 = mount 0 deg = the low-AoA stop.
+home_sp = 2000
+deg_per_unit = 0.012          # 1000 units = 12 deg of mount
+chord_below_mount_deg = 3.0
+
+[height]
+breach_m = 0.56               # the strut ventilates when the ride height reaches this
+foil_depth_at_h0_m = 0.66     # front-foil depth below the water when H = 0
+rest_m = 0.114                # H with the boat at rest (hull floating)
+
+# Schematic, metres from the stern along the hull.
+[hull]
+length_m = 7.9
+front_foil_x_m = 5.00
+rear_foil_x_m = 0.41
+depth_m = 0.35                # drawn hull depth
+beam_m = 1.10                 # hull width (stern view)
+half_track_m = 0.5            # front struts 1.0 m apart (stern view)
+foil_chord_m = 0.064
+foil_span_m = 0.50

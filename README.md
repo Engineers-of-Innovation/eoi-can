@@ -40,7 +40,13 @@ You do **not** need to be a Rust expert to get started! This guide will help you
   - Made in a way so it can be used for displaying data but also can easily be converted to JSON (to be send over MQTT)
 - `firmware/` — STM32L471 board firmware: rudder controller, height sensor controller, dashboard (e-paper display), CAN bootloader, and host-side flash tool
   - Its own Cargo workspace (builds for `thumbv7em-none-eabihf`); see [firmware/README.md](firmware/README.md)
-- `eoi-can-display-framebuffer/` — Framebuffer-based display application
+- `eoi-foil-view/` — The datalogger's LCD: live attitude, ride height and foil angles
+  - Side view, stern view (with the roll demand) and a 10 s strip chart, ported from the
+    python-data-analysis video overlay; anti-aliased with tiny-skia, straight to `/dev/fb0`
+  - Runs locally without hardware: `cargo run -p eoi-foil-view -- --demo --png out.png --at 31`,
+    `--replay <candump.log>`, or `--features window -- --demo --window`; see its README
+- `eoi-can-display-framebuffer/` — The e-ink layouts on a framebuffer (no longer deployed; the
+  datalogger runs `eoi-foil-view`)
   - Can be run on a linux machine with a standard Raspberry Pi display; the 792x272 rendering is centered in the framebuffer
 - `eoi-can-display-simulator/` — Simulator for the CAN display
   - Just runs on your computer, you only need to connect a CAN bus

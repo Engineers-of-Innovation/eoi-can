@@ -1,10 +1,13 @@
 [Unit]
-Description=CAN display application
+Description=Foil view: live attitude, ride height and foil angles on the LCD
 Requires=eoi-can-init.service
 After=eoi-can-init.service
 
 [Service]
-ExecStart=/home/engineer/eoi-can-display-framebuffer
+# The text console on tty1 shares /dev/fb0: hide its cursor and stop it blanking, or the
+# cursor blinks through the frames. "+" runs this as root; the program runs as engineer.
+ExecStartPre=+/bin/sh -c 'echo 0 > /sys/class/graphics/fbcon/cursor_blink; TERM=linux setterm --cursor off --blank 0 > /dev/tty1 < /dev/tty1'
+ExecStart=/home/engineer/eoi-foil-view
 WorkingDirectory=/home/engineer
 User=engineer
 Group=engineer

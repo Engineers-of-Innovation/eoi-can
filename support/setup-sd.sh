@@ -78,6 +78,13 @@ if grep -q "video=DSI-1" "$CMDLINE_TXT"; then
 else
     sed -i '1 s/$/ video=DSI-1:800x480-32@60/' "$CMDLINE_TXT"
 fi
+# The console on tty1 draws on the same framebuffer; without this its cursor blinks
+# through eoi-foil-view (eoi-can-display.service also hides it at every start).
+if grep -q "vt.global_cursor_default" "$CMDLINE_TXT"; then
+    echo "  -> Console cursor already off, skipping"
+else
+    sed -i '1 s/$/ vt.global_cursor_default=0/' "$CMDLINE_TXT"
+fi
 
 echo "Creating the candump log directory..."
 install -d -o "$USER_NAME" -g "$USER_NAME" "${USER_DIR}/logs"
