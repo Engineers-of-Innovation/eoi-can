@@ -588,6 +588,8 @@ fn hydrofoil_columns() -> &'static [&'static str] {
         "hydrofoil.dbg_tx_fail",
         "hydrofoil.dbg_set_fail",
         "hydrofoil.dbg_rear_position",
+        "hydrofoil.demand_roll_deg",
+        "hydrofoil.demand_pitch_deg",
     ]
 }
 
@@ -695,6 +697,10 @@ fn flatten_hydrofoil(h: &HydrofoilData, out: &mut Vec<(String, String)>) {
             out.push(("hydrofoil.dbg_tx_fail".into(), l.tx_fail.to_string()));
             out.push(("hydrofoil.dbg_set_fail".into(), l.set_fail.to_string()));
             push_opt(out, "hydrofoil.dbg_rear_position", l.rear_position);
+        }
+        HydrofoilData::Demand(d) => {
+            push_opt(out, "hydrofoil.demand_roll_deg", d.roll_deg.map(fmt_f));
+            push_opt(out, "hydrofoil.demand_pitch_deg", d.pitch_deg.map(fmt_f));
         }
     }
 }

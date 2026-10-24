@@ -1001,6 +1001,8 @@ pub enum HydrofoilData {
     DebugTrim(HydrofoilDebugTrim),
     /// `0x274` — debug: script loop health.
     DebugLoop(HydrofoilDebugLoop),
+    /// `0x275` — the roll and pitch FBWA is asked for, at 10 Hz beside `0x250`.
+    Demand(HydrofoilDemand),
 }
 
 /// Boat attitude from the hydrofoil controller (`0x250`).
@@ -1199,6 +1201,19 @@ pub struct HydrofoilDebugLoop {
     /// controller last saw it; `None` = no fresh status.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rear_position: Option<u16>,
+}
+
+/// The attitude demand from `0x275`, in degrees: what FBWA reads back from the
+/// script's RC override, so a demand past an attitude limit shows the limit.
+/// `None` = no demand (disabled, MANUAL).
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
+#[cfg_attr(feature = "defmt", derive(defmt::Format))]
+pub struct HydrofoilDemand {
+    /// Positive = starboard down, as `Attitude::roll_deg`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub roll_deg: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub pitch_deg: Option<f32>,
 }
 
 fn optional_i16(raw: i16, scale: f32) -> Option<f32> {
@@ -1501,6 +1516,13 @@ pub fn parse_eoi_can_data(can_frame: &can_frame::CanFrame) -> Option<EoiCanData>
                 tx_fail: *data.get(4)?,
                 set_fail: *data.get(5)?,
                 rear_position: optional_u16(bytes_le_to_u16(data.get(6..8)?)?),
+            },
+        ))),
+        // Attitude demand — 10 Hz. Bytes 4-7 are reserved.
+        0x275 => Some(EoiCanData::Hydrofoil(HydrofoilData::Demand(
+            HydrofoilDemand {
+                roll_deg: optional_i16(bytes_le_to_i16(data.get(0..2)?)?, 100.0),
+                pitch_deg: optional_i16(bytes_le_to_i16(data.get(2..4)?)?, 100.0),
             },
         ))),
         0x100 => Some(EoiCanData::EoiBattery(EoiBattery::PackAndPerriCurrent(
@@ -2405,6 +2427,26 @@ mod tests {
         assert_eq!(l.live, 0x1234);
         assert_eq!((l.tx_fail, l.set_fail), (0, 1));
         assert_eq!(l.rear_position, Some(1750));
+    }
+
+    #[test]
+    fn hydrofoil_demand() {
+        // Roll +3.00, pitch -1.25 (centidegrees, LE i16), reserved bytes as sent.
+        let HydrofoilData::Demand(d) =
+            hydrofoil(0x275, &[0x2C, 0x01, 0x83, 0xFF, 0x00, 0x80, 0x00, 0x80])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!(d.roll_deg, Some(3.0));
+        assert_eq!(d.pitch_deg, Some(-1.25));
+
+        // Disabled: no demand on either axis.
+        let HydrofoilData::Demand(d) =
+            hydrofoil(0x275, &[0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80])
+        else {
+            panic!("Unexpected data type");
+        };
+        assert_eq!((d.roll_deg, d.pitch_deg), (None, None));
     }
 
     #[test]

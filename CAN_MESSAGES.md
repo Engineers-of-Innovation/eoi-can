@@ -60,7 +60,8 @@ Any state byte value not listed maps to `Unknown` on the receiver side.
 | 0x272 | HydrofoilDebugRear | Hydrofoil (debug) |
 | 0x273 | HydrofoilDebugTrim | Hydrofoil (debug) |
 | 0x274 | HydrofoilDebugLoop | Hydrofoil (debug) |
-| 0x275–0x27F | _reserved for more hydrofoil debug_ | Hydrofoil (debug) |
+| 0x275 | HydrofoilDemand | Hydrofoil |
+| 0x276–0x27F | _reserved for more hydrofoil debug_ | Hydrofoil (debug) |
 | 0x309 | ThrottleToVescRpm | Throttle Controller |
 | 0x337 | ThrottleStatus / ThrottleConfig | Throttle Controller |
 | 0x339 | ThrottleState | Throttle Controller |
@@ -317,7 +318,8 @@ The flight controller's internal state, for diagnosis from a candump without the
 card: which phase it thinks it is in (when it decided the boat unstuck), the height
 loop's terms, and the rear-trim offload with the reason it is paused. `hydrofoils.lua`
 sends all five every 500 ms in every mode, after each completed loop iteration (so they
-stop if the script stops; `0x274` Live says the same). 0x275–0x27F are reserved for more.
+stop if the script stops; `0x274` Live says the same). `0x275` (below) shares the range
+but is not debug: it goes out every iteration, at 10 Hz. 0x276–0x27F are reserved for more.
 
 All fields are little-endian. An `i16` of `-32768` and a `u16` of `0xFFFF` mean "no
 value". Angles are centidegrees: pitch demand for `0x271`, angle of attack for `0x272`.
@@ -362,6 +364,20 @@ Flags in `HydrofoilDebugPhase` byte 1:
 | 5 | RearTrimLatched | Rear-trim offload latched on (confirmed foiling) |
 | 6 | SpeedOk | Speed from GPS/EKF is healthy |
 | 7 | SpeedFromErpm | Speed is the VESC ERPM fallback |
+
+### Attitude demand (`0x275`)
+
+The roll and pitch `hydrofoils.lua` asks FBWA for, sent after **every** completed loop
+iteration (10 Hz) beside the achieved attitude in `0x250`, so a display can draw the
+demand live. In the FC log they are `ATT.DesRoll`/`ATT.DesPitch`. Each value is the
+angle FBWA reads back from the script's RC override, so a demand past
+`ROLL_LIMIT_DEG`/`PTCH_LIM_*_DEG` shows the limit.
+
+| Message | CAN ID | DLC | Byte | Field | Type | Values / Range |
+| --- | --- | --- | --- | --- | --- | --- |
+| HydrofoilDemand | 0x275 | 8 | 0–1 | Roll demand | i16 | Centidegrees, positive = starboard down; `-32768` = none (disabled, MANUAL) |
+| | | | 2–3 | Pitch demand | i16 | Centidegrees, positive = nose up; `-32768` = none |
+| | | | 4–7 | Reserved | | `-32768`, `-32768` |
 
 ## Foil Tuning
 

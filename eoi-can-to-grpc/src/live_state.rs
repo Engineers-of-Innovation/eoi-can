@@ -624,6 +624,8 @@ impl LiveState {
             HydrofoilData::DebugRear(r) => self.dbg_rear = Some(Timed { value: r, at: now }),
             HydrofoilData::DebugTrim(t) => self.dbg_trim = Some(Timed { value: t, at: now }),
             HydrofoilData::DebugLoop(l) => self.dbg_loop = Some(Timed { value: l, at: now }),
+            // Not in the telemetry proto yet.
+            HydrofoilData::Demand(_) => {}
         }
     }
 
