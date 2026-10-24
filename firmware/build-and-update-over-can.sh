@@ -18,6 +18,14 @@
 # only ever end up on its own board. Boards that fail to flash are reported
 # at the end; the script keeps going so the remaining boards still update.
 #
+# A write is retried once. The bus is shared with a live boat, and a dropped
+# write ack shows up as `Timeout waiting for response` part way through -- seen
+# at 27% on the foiling board, with an identical retry succeeding. The retry is
+# safe and needs no recovery step: an interrupted board sits in `FlashingApp`,
+# which the flash tool counts as a bootloader state, so the next attempt goes
+# straight back to erase and resets the write pointer. The bootloader lives in
+# the first 80K and is never touched by this path.
+#
 # Every board, the foiling display included, runs the CAN bootloader, so every
 # image is built with `--features bootloader` and linked at 0x08014800. A plain
 # `cargo build --bin foiling` (no feature) links flat at 0x08000000; flashing
@@ -60,6 +68,17 @@ flash_tool="flash-tool/target/${host_arch}/release/eoi-flash-tool"
 
 cd "$(dirname "$0")"
 
+# `built` stamps the commit and a dirty flag into every image, and the flag is
+# repo-wide: any modified tracked file anywhere in the checkout sets it, not
+# just a firmware one. The boards then report `git <hash>-dirty` forever, which
+# is no longer traceable to a commit. Warn rather than refuse -- flashing a work
+# in progress to the bench is normal -- but say so before the build, not after.
+if [[ -n "$(git status --porcelain 2>/dev/null)" ]]; then
+    echo "WARNING: working tree is dirty; images will report 'git <hash>-dirty'."
+    echo "         Commit or stash first for a traceable build."
+    echo
+fi
+
 # Build flash-tool (separate crate, excluded from workspace).
 (cd flash-tool && cargo build --release)
 
@@ -75,10 +94,17 @@ cargo build --release -p eoi-firmware --features bootloader "${bin_args[@]}"
 # Flash each board over CAN; keep going if one fails.
 failed=()
 for board in "${boards[@]}"; do
-    echo "==> Flashing ${board} on ${iface}"
-    if ! "${flash_tool}" -i "${iface}" flash "target/${fw_arch}/release/${board}"; then
-        failed+=("${board}")
-    fi
+    for attempt in 1 2; do
+        echo "==> Flashing ${board} on ${iface} (attempt ${attempt})"
+        if "${flash_tool}" -i "${iface}" flash "target/${fw_arch}/release/${board}"; then
+            break
+        fi
+        if [[ ${attempt} -eq 2 ]]; then
+            failed+=("${board}")
+        else
+            echo "    write failed; retrying ${board}"
+        fi
+    done
 done
 
 echo
