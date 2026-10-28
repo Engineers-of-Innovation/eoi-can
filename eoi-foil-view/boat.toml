@@ -14,8 +14,10 @@ stop_tol_us = 2
 
 [rear_wing]
 # Physical mapping of the stepper's measured position (0x020, setpoint units). The node
-# homes to 2000 = mount 0 deg = the low-AoA stop.
-home_sp = 2000
+# homes to 2000, and that is the HIGH-AoA end: 1000 = the far stop = mount 0 deg.
+# Seen on the boat 2026-10-24 - the rear wing had been mounted backwards; hydrofoils.lua
+# c09ae83 ("Re-flip the rear foil") carries the same sense.
+zero_sp = 1000
 deg_per_unit = 0.012          # 1000 units = 12 deg of mount
 chord_below_mount_deg = 3.0
 

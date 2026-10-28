@@ -41,15 +41,19 @@ impl FrontWing {
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RearWing {
-    pub home_sp: f32,
+    pub zero_sp: f32,
     pub deg_per_unit: f32,
     pub chord_below_mount_deg: f32,
 }
 
 impl RearWing {
     /// AoA of the rear foil at a stepper position (or setpoint), in setpoint units.
+    ///
+    /// Higher setpoint = higher AoA: `zero_sp` (the far stop) is mount 0 deg and the
+    /// node's 2000 home stop is the high-AoA end. The rear wing was mounted backwards
+    /// until 2026-10-24; this matches hydrofoils.lua c09ae83 after the re-flip.
     pub fn aoa(&self, position: f32) -> f32 {
-        (self.home_sp - position) * self.deg_per_unit - self.chord_below_mount_deg
+        (position - self.zero_sp) * self.deg_per_unit - self.chord_below_mount_deg
     }
 }
 
@@ -122,10 +126,10 @@ mod tests {
     }
 
     #[test]
-    fn rear_wing_homes_at_the_low_stop() {
+    fn rear_wing_homes_at_the_high_aoa_stop() {
         let rear = BoatConfig::default().rear_wing;
-        assert_eq!(rear.aoa(2000.0), -3.0);
-        assert!((rear.aoa(1000.0) - 9.0).abs() < 1e-4);
+        assert_eq!(rear.aoa(1000.0), -3.0);
+        assert!((rear.aoa(2000.0) - 9.0).abs() < 1e-4);
     }
 
     #[test]

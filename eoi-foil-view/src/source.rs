@@ -141,7 +141,7 @@ pub fn demo_frames(t: f64) -> Vec<RawFrame> {
     } else {
         -3.0
     };
-    let rear_sp = 2000.0 - (rear_cmd_deg + 3.0) / 0.012;
+    let rear_sp = 1000.0 + (rear_cmd_deg + 3.0) / 0.012;
     let rear_pos = rear_sp + 20.0 * (t * 0.5 + 1.0).cos() * up;
 
     // Each strut sensor sees the ride height moved by the roll over half a metre.

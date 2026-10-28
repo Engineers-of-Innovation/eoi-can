@@ -142,7 +142,8 @@ impl FoilState {
         let fr_us = elevons.map(|e| e.1).filter(|&us| us != 0).map(f32::from);
         let wings = &cfg.front_wings;
         // The stepper reads 2000 (home) whenever it is not Operational, which would
-        // draw as a real angle: show nothing instead.
+        // draw as a real angle - and since 2026-10-24 that end is maximum lift, the
+        // most misleading one to show. Show nothing instead.
         let rear = fresh(&self.rear, now, MAX_AGE_S).filter(|r| r.operational);
 
         View {
@@ -284,14 +285,15 @@ mod tests {
         let mut s = FoilState::default();
         // FL at its low stop (1435 us), FR at 1420 us.
         s.ingest(&data(0x252, &[0x9B, 0x05, 0x8C, 0x05]), 1.0);
-        // Rear Operational, setpoint 1500, position 1750.
-        s.ingest(&data(0x020, &[1, 0xDC, 0x05, 0xD6, 0x06, 0]), 1.0);
+        // Rear Operational, setpoint 1400, position 1750. Asymmetric about the 1500
+        // midpoint on purpose: a mirrored mapping would pass on 1500.
+        s.ingest(&data(0x020, &[1, 0x78, 0x05, 0xD6, 0x06, 0]), 1.0);
         let v = s.view(1.0, &cfg);
         assert_eq!(v.fl_aoa_deg, Some(-7.5));
         assert!(v.fl_stop && !v.fr_stop);
         assert!((v.fr_aoa_deg.unwrap() - 1.0).abs() < 1e-4);
-        assert!((v.rear_aoa_deg.unwrap() - 0.0).abs() < 1e-4);
-        assert!((v.rear_cmd_aoa_deg.unwrap() - 3.0).abs() < 1e-4);
+        assert!((v.rear_aoa_deg.unwrap() - 6.0).abs() < 1e-4);
+        assert!((v.rear_cmd_aoa_deg.unwrap() - 1.8).abs() < 1e-4);
 
         // Homing: the position reads 2000 but is not an angle.
         s.ingest(&data(0x020, &[2, 0xD0, 0x07, 0xD0, 0x07, 0]), 1.1);
