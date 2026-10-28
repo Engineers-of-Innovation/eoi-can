@@ -1,0 +1,31 @@
+# Line endings are normalised to LF, everywhere, whatever wrote the file.
+#
+# On 2026-10-28 fourteen scripts under support/ and firmware/ turned up rewritten
+# CRLF and stripped of their executable bit, with no content change at all -- a
+# Windows-side tool touching the WSL checkout. Committed, each would have reached
+# the datalogger with a `#!/bin/bash\r` shebang and died with "bad interpreter".
+# Nothing prevented it: core.autocrlf was unset, which leaves the line endings to
+# whatever happened to write the file last.
+#
+# `text=auto` lets git decide what is text, and `eol=lf` fixes the checkout to LF
+# on every platform. The damage then normalises away on the next `git add` instead
+# of landing in a commit.
+#
+# Note what this does NOT cover: the executable bit. Git tracks the mode itself and
+# no attribute restores it, so a `mode change 100755 => 100644` in `git status` is
+# still worth a second look before committing -- `chmod 755` is the fix.
+* text=auto eol=lf
+
+# Binary assets: never converted, never diffed as text. A font blob or a packed
+# framebuffer has no line endings -- only bytes that happen to be 0x0D, and
+# "normalising" one corrupts it silently.
+*.png      -text
+*.raw      -text
+*.bin      -text
+*.ttf      -text
+*.u8g2font -text
+
+# Vendored verbatim, CRLF included: this is upstream's SIL licence text, and the
+# only tracked file that already carries CRLF. Normalising it would show as us
+# rewriting someone else's licence.
+draw-display/fonts/OFL.txt -text
