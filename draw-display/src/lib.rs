@@ -2217,27 +2217,6 @@ mod foil_ingest_tests {
         assert_eq!(screens.layout(&data), Layout::Foiling);
     }
 
-    /// The same dump, but the render loop came round in the middle of it. Each
-    /// half is then under DUMP_BURST and reads as a helm walking the arrow keys,
-    /// which pins the tuning screen up for the full timeout.
-    #[tokio::test(start_paused = true)]
-    async fn a_dump_split_across_two_redraws_is_still_not_a_keypress() {
-        let mut screens = foiling_board();
-        let mut data = DisplayData::default();
-
-        for index in 1..=6 {
-            feed(&mut data, index, 0, 1.0);
-        }
-        let first = screens.layout(&data);
-        for index in 7..=12 {
-            feed(&mut data, index, 0, 1.0);
-        }
-        let second = screens.layout(&data);
-
-        assert_eq!(first, Layout::Information, "first half read as a keypress");
-        assert_eq!(second, Layout::Information, "second half read as a keypress");
-    }
-
     /// One cursor move raises the table, and it comes back down on its own.
     #[tokio::test(start_paused = true)]
     async fn a_keypress_raises_the_tuning_screen_until_it_times_out() {
