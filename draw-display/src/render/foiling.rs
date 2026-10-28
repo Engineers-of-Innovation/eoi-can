@@ -34,7 +34,6 @@ use core::fmt::Write;
 
 use embedded_graphics::{
     pixelcolor::BinaryColor,
-    prelude::*,
     primitives::{PrimitiveStyle, Rectangle},
 };
 use heapless::String;

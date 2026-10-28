@@ -10,7 +10,6 @@ use core::fmt::Write;
 use embedded_graphics::{
     image::{Image, ImageRaw},
     pixelcolor::BinaryColor,
-    prelude::*,
     text::Alignment,
 };
 use eoi_can_decoder::{BatteryState, ChargeState, DischargeState};

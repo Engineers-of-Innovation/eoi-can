@@ -328,7 +328,7 @@ const fn dashes(decimals: usize) -> &'static str {
 /// Dead centre gets neither letter nor sign -- there is no side to name, and "R +0"
 /// would claim one. The threshold is half a step of what is drawn, so the reading
 /// says "0" exactly when it would otherwise round to zero.
-fn fmt_sided<'a>(buf: &'a mut String<16>, value: Option<f32>) -> &'a str {
+fn fmt_sided(buf: &mut String<16>, value: Option<f32>) -> &str {
     let Some(v) = value else {
         return "--";
     };

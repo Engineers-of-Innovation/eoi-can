@@ -60,6 +60,14 @@ use eoi_can_decoder::{
 
 pub const STALE_AFTER: Duration = Duration::from_secs(5);
 
+/// A `HydrofoilAlarm` (`0x253`) payload: causes, blocked code, rear state
+/// (255 = none), rear fault, active.
+///
+/// Named rather than written out at each of its two uses: as a bare tuple it is
+/// over clippy's `type_complexity` threshold, and five same-typed positions are
+/// worth labelling once where they are read back by index.
+type HydrofoilAlarm = (u32, u32, u32, u32, bool);
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Quality {
     #[default]
@@ -178,7 +186,7 @@ pub struct LiveState {
     elevon_right_us: Option<Timed<u32>>,
     /// Last HydrofoilAlarm (0x253): causes, blocked code, rear state (255 = none),
     /// rear fault, active.
-    hydrofoil_alarm: Option<Timed<(u32, u32, u32, u32, bool)>>,
+    hydrofoil_alarm: Option<Timed<HydrofoilAlarm>>,
     /// hydrofoils.lua debug frames 0x270-0x274, each as last received.
     dbg_phase: Option<Timed<HydrofoilDebugPhase>>,
     dbg_height_loop: Option<Timed<HydrofoilDebugHeightLoop>>,
@@ -1221,7 +1229,7 @@ pub struct SnapshotView {
     pub elevon_left_us: Option<u32>,
     pub elevon_right_us: Option<u32>,
     /// (causes, blocked code, rear state, rear fault, active) of the last 0x253.
-    pub hydrofoil_alarm: Option<(u32, u32, u32, u32, bool)>,
+    pub hydrofoil_alarm: Option<HydrofoilAlarm>,
     pub dbg_phase: Option<HydrofoilDebugPhase>,
     pub dbg_height_loop: Option<HydrofoilDebugHeightLoop>,
     pub dbg_rear: Option<HydrofoilDebugRear>,
