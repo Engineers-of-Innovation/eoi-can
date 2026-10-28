@@ -66,7 +66,7 @@ jobs:
         run: |
           cargo clippy -p eoi-firmware -- -D warnings
           cargo clippy -p eoi-boot-api -- -D warnings
-          for board in rudder-controller height-sensor-controller dashboard; do
+          for board in rudder-controller height-sensor-controller dashboard foiling; do
             cargo clippy -p eoi-boot --features $board -- -D warnings
           done
 
@@ -157,7 +157,7 @@ jobs:
       - name: Build bootloader for every board variant
         working-directory: firmware
         run: |
-          for board in rudder-controller height-sensor-controller dashboard; do
+          for board in rudder-controller height-sensor-controller dashboard foiling; do
             DEFMT_LOG=trace cargo build -p eoi-boot --features $board
           done
 
